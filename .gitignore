@@ -1,0 +1,48 @@
+# Build artifacts
+build/
+bin/
+lib/*.a
+lib/*.so
+lib/*.dylib
+*.o
+*.obj
+
+# CMake generated
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.ninja
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+.eggs/
+.pytest_cache/
+.coverage
+htmlcov/
+*.venv
+venv/
+ENV/
+
+# LLVM and lit
+.lit_test_times.txt
+Output/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Benchmark and run outputs
+*.npz
+*.png
+*.dot
+*.svg

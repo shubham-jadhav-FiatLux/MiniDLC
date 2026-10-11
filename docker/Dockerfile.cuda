@@ -1,0 +1,23 @@
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    ninja-build \
+    python3 \
+    python3-pip \
+    python3-dev \
+    git \
+    clang \
+    llvm-dev \
+    libmlir-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+# Install python dependencies
+RUN pip3 install --no-cache-dir numpy pytest
+
+CMD ["/bin/bash"]
