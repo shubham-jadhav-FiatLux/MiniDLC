@@ -46,3 +46,9 @@ Output/
 *.png
 *.dot
 *.svg
+
+# Files
+CS*_Learning.md
+ID*_Learning.md
+
+ResumeProjectsToBuild.md
