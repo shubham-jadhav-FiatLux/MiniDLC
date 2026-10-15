@@ -191,8 +191,34 @@ ModulePtr IRParser::parse() {
                     resultVal = builder.createMatmul(operands[0], operands[1], resType);
                 } else if (opName == "add" && operands.size() >= 2) {
                     resultVal = builder.createAdd(operands[0], operands[1], resType);
+                } else if (opName == "sub" && operands.size() >= 2) {
+                    resultVal = builder.createSub(operands[0], operands[1], resType);
+                } else if (opName == "mul" && operands.size() >= 2) {
+                    resultVal = builder.createMul(operands[0], operands[1], resType);
+                } else if (opName == "div" && operands.size() >= 2) {
+                    resultVal = builder.createDiv(operands[0], operands[1], resType);
                 } else if (opName == "relu" && operands.size() >= 1) {
                     resultVal = builder.createRelu(operands[0], resType);
+                } else if (opName == "gelu" && operands.size() >= 1) {
+                    resultVal = builder.createGelu(operands[0], resType);
+                } else if (opName == "exp" && operands.size() >= 1) {
+                    resultVal = builder.createExp(operands[0], resType);
+                } else if (opName == "log" && operands.size() >= 1) {
+                    resultVal = builder.createLog(operands[0], resType);
+                } else if (opName == "softmax" && operands.size() >= 1) {
+                    resultVal = builder.createSoftmax(operands[0], -1, resType);
+                } else if (opName == "log_softmax" && operands.size() >= 1) {
+                    resultVal = builder.createLogSoftmax(operands[0], -1, resType);
+                } else if (opName == "cross_entropy" && operands.size() >= 2) {
+                    resultVal = builder.createCrossEntropy(operands[0], operands[1], resType);
+                } else if (opName == "layernorm" && operands.size() >= 3) {
+                    resultVal = builder.createLayerNorm(operands[0], operands[1], operands[2], 1e-5, resType);
+                } else if (opName == "sum" && operands.size() >= 1) {
+                    resultVal = builder.createSum(operands[0], -1, false, resType);
+                } else if (opName == "mean" && operands.size() >= 1) {
+                    resultVal = builder.createMean(operands[0], -1, false, resType);
+                } else if (opName == "embedding" && operands.size() >= 2) {
+                    resultVal = builder.createEmbedding(operands[0], operands[1], resType);
                 } else {
                     auto genericOp = std::make_shared<Operation>(opName, operands, resType ? std::vector<TypePtr>{resType} : std::vector<TypePtr>{});
                     builder.getInsertBlock()->addOperation(genericOp);

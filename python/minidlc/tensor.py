@@ -14,12 +14,14 @@ class Tensor:
         inputs: Optional[List[Tensor]] = None,
         data: Optional[np.ndarray] = None,
         name: Optional[str] = None,
+        attrs: Optional[Dict[str, Any]] = None,
     ):
         self.shape: Tuple[int, ...] = tuple(shape)
         self.dtype: str = dtype
         self.op: Optional[str] = op
         self.inputs: List[Tensor] = inputs or []
         self.data: Optional[np.ndarray] = data
+        self.attrs: Dict[str, Any] = attrs or {}
         self.id: int = Tensor._id_counter
         Tensor._id_counter += 1
         self.name: str = name or f"v{self.id}"

@@ -85,17 +85,23 @@ class ReferenceInterpreter:
                 x = values[node.inputs[0]]
                 gamma = values[node.inputs[1]]
                 beta = values[node.inputs[2]]
+                eps = node.attrs.get("eps", 1e-5)
                 mu = np.mean(x, axis=-1, keepdims=True)
                 var = np.var(x, axis=-1, keepdims=True)
-                rstd = 1.0 / np.sqrt(var + 1e-5)
+                rstd = 1.0 / np.sqrt(var + eps)
                 x_hat = (x - mu) * rstd
                 values[node] = gamma * x_hat + beta
             elif node.op == "sum":
-                values[node] = np.sum(values[node.inputs[0]])
+                axis = node.attrs.get("axis", None)
+                keepdims = node.attrs.get("keepdims", False)
+                values[node] = np.sum(values[node.inputs[0]], axis=axis, keepdims=keepdims)
             elif node.op == "mean":
-                values[node] = np.mean(values[node.inputs[0]])
+                axis = node.attrs.get("axis", None)
+                keepdims = node.attrs.get("keepdims", False)
+                values[node] = np.mean(values[node.inputs[0]], axis=axis, keepdims=keepdims)
             elif node.op == "transpose":
-                values[node] = np.transpose(values[node.inputs[0]])
+                perm = node.attrs.get("perm", None)
+                values[node] = np.transpose(values[node.inputs[0]], axes=perm)
             elif node.op == "reshape":
                 values[node] = np.reshape(values[node.inputs[0]], node.shape)
             elif node.op == "embedding":
@@ -147,10 +153,43 @@ class ReferenceInterpreter:
                 valA, valB = values[A], values[B]
                 grads[A] = grads.get(A, 0.0) + _unbroadcast(dY * valB, A.shape)
                 grads[B] = grads.get(B, 0.0) + _unbroadcast(dY * valA, B.shape)
+            elif node.op == "div":
+                A, B = node.inputs[0], node.inputs[1]
+                valA, valB = values[A], values[B]
+                dA = dY / valB
+                dB = -dY * valA / (valB ** 2)
+                grads[A] = grads.get(A, 0.0) + _unbroadcast(dA, A.shape)
+                grads[B] = grads.get(B, 0.0) + _unbroadcast(dB, B.shape)
             elif node.op == "relu":
                 X = node.inputs[0]
                 valX = values[X]
                 dX = dY * (valX > 0.0)
+                grads[X] = grads.get(X, 0.0) + dX
+            elif node.op == "gelu":
+                X = node.inputs[0]
+                valX = values[X]
+                t = np.tanh(np.sqrt(2.0 / np.pi) * (valX + 0.044715 * (valX ** 3)))
+                c = np.sqrt(2.0 / np.pi) * (1.0 + 3.0 * 0.044715 * (valX ** 2))
+                dX = dY * (0.5 * (1.0 + t) + 0.5 * valX * (1.0 - t ** 2) * c)
+                grads[X] = grads.get(X, 0.0) + dX
+            elif node.op == "exp":
+                X = node.inputs[0]
+                grads[X] = grads.get(X, 0.0) + dY * values[node]
+            elif node.op == "log":
+                X = node.inputs[0]
+                grads[X] = grads.get(X, 0.0) + dY / values[X]
+            elif node.op == "softmax":
+                X = node.inputs[0]
+                S = values[node]
+                axis = node.attrs.get("axis", -1)
+                dX = S * (dY - np.sum(dY * S, axis=axis, keepdims=True))
+                grads[X] = grads.get(X, 0.0) + dX
+            elif node.op == "log_softmax":
+                X = node.inputs[0]
+                axis = node.attrs.get("axis", -1)
+                val_log = values[node]
+                S = np.exp(val_log)
+                dX = dY - S * np.sum(dY, axis=axis, keepdims=True)
                 grads[X] = grads.get(X, 0.0) + dX
             elif node.op == "cross_entropy":
                 logits = node.inputs[0]
@@ -165,12 +204,63 @@ class ReferenceInterpreter:
                 one_hot[np.arange(N), valTargets] = 1.0
                 dLogits = (softmax_vals - one_hot) / N
                 grads[logits] = grads.get(logits, 0.0) + dY * dLogits
+            elif node.op == "layernorm":
+                x, gamma, beta = node.inputs[0], node.inputs[1], node.inputs[2]
+                val_x = values[x]
+                val_gamma = values[gamma]
+                eps = node.attrs.get("eps", 1e-5)
+                mu = np.mean(val_x, axis=-1, keepdims=True)
+                var = np.var(val_x, axis=-1, keepdims=True)
+                rstd = 1.0 / np.sqrt(var + eps)
+                x_hat = (val_x - mu) * rstd
+                reduce_axes = tuple(range(len(dY.shape) - 1)) if len(dY.shape) > 1 else ()
+                dbeta = np.sum(dY, axis=reduce_axes) if reduce_axes else dY
+                dgamma = np.sum(dY * x_hat, axis=reduce_axes) if reduce_axes else dY * x_hat
+                g = dY * val_gamma
+                D = val_x.shape[-1]
+                sum_g = np.sum(g, axis=-1, keepdims=True)
+                sum_g_xhat = np.sum(g * x_hat, axis=-1, keepdims=True)
+                dx = (rstd / D) * (D * g - sum_g - x_hat * sum_g_xhat)
+                grads[beta] = grads.get(beta, 0.0) + _unbroadcast(dbeta, beta.shape)
+                grads[gamma] = grads.get(gamma, 0.0) + _unbroadcast(dgamma, gamma.shape)
+                grads[x] = grads.get(x, 0.0) + dx
             elif node.op == "sum":
                 inp = node.inputs[0]
-                grads[inp] = grads.get(inp, 0.0) + np.broadcast_to(dY, inp.shape)
+                axis = node.attrs.get("axis", None)
+                keepdims = node.attrs.get("keepdims", False)
+                if axis is None:
+                    expanded_dY = dY
+                else:
+                    expanded_dY = dY if keepdims else np.expand_dims(dY, axis=axis)
+                grads[inp] = grads.get(inp, 0.0) + np.broadcast_to(expanded_dY, inp.shape)
             elif node.op == "mean":
                 inp = node.inputs[0]
-                n_elem = np.prod(inp.shape)
-                grads[inp] = grads.get(inp, 0.0) + (np.broadcast_to(dY, inp.shape) / n_elem)
+                axis = node.attrs.get("axis", None)
+                keepdims = node.attrs.get("keepdims", False)
+                n_elem = inp.shape[axis] if axis is not None else np.prod(inp.shape)
+                if axis is None:
+                    expanded_dY = dY
+                else:
+                    expanded_dY = dY if keepdims else np.expand_dims(dY, axis=axis)
+                grads[inp] = grads.get(inp, 0.0) + (np.broadcast_to(expanded_dY, inp.shape) / n_elem)
+            elif node.op == "transpose":
+                inp = node.inputs[0]
+                perm = node.attrs.get("perm", None)
+                if perm is None:
+                    inv_perm = list(reversed(range(len(inp.shape))))
+                else:
+                    inv_perm = [0] * len(perm)
+                    for i, p in enumerate(perm):
+                        inv_perm[p] = i
+                grads[inp] = grads.get(inp, 0.0) + np.transpose(dY, axes=inv_perm)
+            elif node.op == "reshape":
+                inp = node.inputs[0]
+                grads[inp] = grads.get(inp, 0.0) + np.reshape(dY, inp.shape)
+            elif node.op == "embedding":
+                table = node.inputs[0]
+                idx = values[node.inputs[1]].astype(np.int64)
+                dTable = np.zeros(table.shape, dtype=self.dtype)
+                np.add.at(dTable, idx, dY)
+                grads[table] = grads.get(table, 0.0) + dTable
 
         return grads

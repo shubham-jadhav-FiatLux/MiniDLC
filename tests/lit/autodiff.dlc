@@ -1,0 +1,15 @@
+// RUN: %dlc-opt --passes=autodiff %s | FileCheck %s
+
+// CHECK: func @test_autodiff_fanout(%arg0: f32[128,784], %arg1: f32[784,256]) -> f32[] {
+// CHECK:   %0 = matmul(%arg0, %arg1) : f32[128,256]
+// CHECK:   %1 = relu(%0) : f32[128,256]
+// CHECK:   %2 = sum(%1) : f32[]
+// CHECK:   return(%2
+// CHECK: }
+
+func @test_autodiff_fanout(%x: f32[128,784], %w: f32[784,256]) -> f32[] {
+  %0 = matmul(%x, %w) : f32[128,256]
+  %1 = relu(%0) : f32[128,256]
+  %2 = sum(%1) : f32[]
+  return %2
+}

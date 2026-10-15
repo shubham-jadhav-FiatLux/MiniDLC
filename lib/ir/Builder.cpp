@@ -39,29 +39,43 @@ ValuePtr IRBuilder::createMatmul(ValuePtr lhs, ValuePtr rhs, TypePtr resultType)
     return op->getResult(0);
 }
 
+static TypePtr inferBinaryBroadcastType(ValuePtr lhs, ValuePtr rhs) {
+    if (lhs && rhs && lhs->getType()->isTensor() && rhs->getType()->isTensor()) {
+        auto t1 = std::static_pointer_cast<TensorType>(lhs->getType());
+        auto t2 = std::static_pointer_cast<TensorType>(rhs->getType());
+        Shape outShape;
+        if (computeBroadcastShape(t1->getShape(), t2->getShape(), outShape)) {
+            return std::make_shared<TensorType>(t1->getElementType(), outShape);
+        }
+    }
+    if (lhs) return lhs->getType();
+    if (rhs) return rhs->getType();
+    return nullptr;
+}
+
 ValuePtr IRBuilder::createAdd(ValuePtr lhs, ValuePtr rhs, TypePtr resultType) {
-    if (!resultType && lhs) resultType = lhs->getType();
+    if (!resultType) resultType = inferBinaryBroadcastType(lhs, rhs);
     auto op = std::make_shared<AddOp>(lhs, rhs, resultType);
     if (insertBlock_) insertBlock_->addOperation(op);
     return op->getResult(0);
 }
 
 ValuePtr IRBuilder::createSub(ValuePtr lhs, ValuePtr rhs, TypePtr resultType) {
-    if (!resultType && lhs) resultType = lhs->getType();
+    if (!resultType) resultType = inferBinaryBroadcastType(lhs, rhs);
     auto op = std::make_shared<SubOp>(lhs, rhs, resultType);
     if (insertBlock_) insertBlock_->addOperation(op);
     return op->getResult(0);
 }
 
 ValuePtr IRBuilder::createMul(ValuePtr lhs, ValuePtr rhs, TypePtr resultType) {
-    if (!resultType && lhs) resultType = lhs->getType();
+    if (!resultType) resultType = inferBinaryBroadcastType(lhs, rhs);
     auto op = std::make_shared<MulOp>(lhs, rhs, resultType);
     if (insertBlock_) insertBlock_->addOperation(op);
     return op->getResult(0);
 }
 
 ValuePtr IRBuilder::createDiv(ValuePtr lhs, ValuePtr rhs, TypePtr resultType) {
-    if (!resultType && lhs) resultType = lhs->getType();
+    if (!resultType) resultType = inferBinaryBroadcastType(lhs, rhs);
     auto op = std::make_shared<DivOp>(lhs, rhs, resultType);
     if (insertBlock_) insertBlock_->addOperation(op);
     return op->getResult(0);

@@ -1,0 +1,11 @@
+// RUN: %dlc-opt --passes=shape-infer %s | FileCheck %s
+
+// CHECK: func @test_shape_broadcast(%arg0: f32[128,1], %arg1: f32[256]) -> f32[128,256] {
+// CHECK:   %0 = add(%arg0, %arg1) : f32[128,256]
+// CHECK:   return(%0)
+// CHECK: }
+
+func @test_shape_broadcast(%a: f32[128,1], %b: f32[256]) -> f32[128,256] {
+  %0 = add(%a, %b) : f32[128,256]
+  return %0
+}

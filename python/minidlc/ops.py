@@ -78,16 +78,16 @@ def log(x: Tensor) -> Tensor:
     return Tensor(shape=x.shape, dtype=x.dtype, op="log", inputs=[x])
 
 def softmax(x: Tensor, axis: int = -1) -> Tensor:
-    return Tensor(shape=x.shape, dtype=x.dtype, op="softmax", inputs=[x])
+    return Tensor(shape=x.shape, dtype=x.dtype, op="softmax", inputs=[x], attrs={"axis": axis})
 
 def log_softmax(x: Tensor, axis: int = -1) -> Tensor:
-    return Tensor(shape=x.shape, dtype=x.dtype, op="log_softmax", inputs=[x])
+    return Tensor(shape=x.shape, dtype=x.dtype, op="log_softmax", inputs=[x], attrs={"axis": axis})
 
 def cross_entropy(logits: Tensor, targets: Tensor) -> Tensor:
     return Tensor(shape=(), dtype="f32", op="cross_entropy", inputs=[logits, targets])
 
 def layernorm(x: Tensor, gamma: Tensor, beta: Tensor, eps: float = 1e-5) -> Tensor:
-    return Tensor(shape=x.shape, dtype=x.dtype, op="layernorm", inputs=[x, gamma, beta])
+    return Tensor(shape=x.shape, dtype=x.dtype, op="layernorm", inputs=[x, gamma, beta], attrs={"eps": eps})
 
 def sum(x: Tensor, axis: Optional[int] = None, keepdims: bool = False) -> Tensor:
     if axis is None:
@@ -101,7 +101,7 @@ def sum(x: Tensor, axis: Optional[int] = None, keepdims: bool = False) -> Tensor
         else:
             s.pop(ax)
             out_shape = tuple(s)
-    return Tensor(shape=out_shape, dtype=x.dtype, op="sum", inputs=[x])
+    return Tensor(shape=out_shape, dtype=x.dtype, op="sum", inputs=[x], attrs={"axis": axis, "keepdims": keepdims})
 
 def mean(x: Tensor, axis: Optional[int] = None, keepdims: bool = False) -> Tensor:
     if axis is None:
@@ -115,16 +115,16 @@ def mean(x: Tensor, axis: Optional[int] = None, keepdims: bool = False) -> Tenso
         else:
             s.pop(ax)
             out_shape = tuple(s)
-    return Tensor(shape=out_shape, dtype=x.dtype, op="mean", inputs=[x])
+    return Tensor(shape=out_shape, dtype=x.dtype, op="mean", inputs=[x], attrs={"axis": axis, "keepdims": keepdims})
 
 def transpose(x: Tensor, perm: Optional[List[int]] = None) -> Tensor:
     if perm is None:
         perm = list(reversed(range(len(x.shape))))
     out_shape = tuple(x.shape[p] for p in perm)
-    return Tensor(shape=out_shape, dtype=x.dtype, op="transpose", inputs=[x])
+    return Tensor(shape=out_shape, dtype=x.dtype, op="transpose", inputs=[x], attrs={"perm": perm})
 
 def reshape(x: Tensor, new_shape: Tuple[int, ...]) -> Tensor:
-    return Tensor(shape=tuple(new_shape), dtype=x.dtype, op="reshape", inputs=[x])
+    return Tensor(shape=tuple(new_shape), dtype=x.dtype, op="reshape", inputs=[x], attrs={"shape": new_shape})
 
 def embedding(table: Tensor, indices: Tensor) -> Tensor:
     out_shape = tuple(indices.shape) + (table.shape[1],)

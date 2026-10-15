@@ -16,6 +16,7 @@ public:
 
     uint32_t getId() const { return id_; }
     TypePtr getType() const { return type_; }
+    void setType(TypePtr type) { type_ = std::move(type); }
     Operation* getDefiningOp() const { return definingOp_; }
     void setDefiningOp(Operation* op) { definingOp_ = op; }
     const std::string& getName() const { return name_; }

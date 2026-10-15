@@ -17,6 +17,8 @@ std::string dataTypeToString(DataType type);
 
 using Shape = std::vector<int64_t>;
 
+bool computeBroadcastShape(const Shape& s1, const Shape& s2, Shape& outShape);
+
 class Type {
 public:
     virtual ~Type() = default;

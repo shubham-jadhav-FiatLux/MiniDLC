@@ -12,6 +12,20 @@ std::string getOpKey(const Operation& op) {
         auto operand = op.getOperand(i);
         oss << (operand ? std::to_string(operand->getId()) : "null") << ",";
     }
+    for (const auto& [k, v] : op.getAttributes()) {
+        oss << "[" << k << "=";
+        std::visit([&oss](auto&& arg) {
+            using T = std::decay_t<decltype(arg)>;
+            if constexpr (std::is_same_v<T, std::string>) {
+                oss << arg;
+            } else if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, double>) {
+                oss << arg;
+            } else if constexpr (std::is_same_v<T, std::vector<int64_t>> || std::is_same_v<T, std::vector<double>>) {
+                for (auto elem : arg) oss << elem << ",";
+            }
+        }, v);
+        oss << "]";
+    }
     return oss.str();
 }
 } // anonymous namespace
