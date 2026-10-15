@@ -28,3 +28,8 @@ def test_operator_overloading():
     assert res.shape == (10, 30)
     assert res.op == "add"
     assert res.inputs[0].op == "matmul"
+
+if __name__ == "__main__":
+    test_mlp_tracing()
+    test_operator_overloading()
+    print("[PASS] All Frontend Tracing Tests Passed Successfully!")
