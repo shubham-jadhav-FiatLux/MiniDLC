@@ -1,5 +1,6 @@
 #include "dlc/ir/Operation.h"
 #include <sstream>
+#include <algorithm>
 
 namespace dlc {
 
@@ -56,6 +57,44 @@ std::string Operation::toString() const {
             if (i > 0) oss << ", ";
             oss << results_[i]->getType()->toString();
         }
+    }
+    if (!attributes_.empty()) {
+        oss << " {";
+        bool first = true;
+        // Use std::vector or sorted map for deterministic output
+        std::vector<std::string> keys;
+        for (const auto& [k, _] : attributes_) keys.push_back(k);
+        std::sort(keys.begin(), keys.end());
+        for (const auto& k : keys) {
+            if (!first) oss << ", ";
+            first = false;
+            oss << k << " = ";
+            std::visit([&oss](auto&& arg) {
+                using T = std::decay_t<decltype(arg)>;
+                if constexpr (std::is_same_v<T, std::string>) {
+                    oss << "\"" << arg << "\"";
+                } else if constexpr (std::is_same_v<T, int64_t>) {
+                    oss << arg;
+                } else if constexpr (std::is_same_v<T, double>) {
+                    oss << arg;
+                } else if constexpr (std::is_same_v<T, std::vector<int64_t>>) {
+                    oss << "[";
+                    for (size_t i = 0; i < arg.size(); ++i) {
+                        if (i > 0) oss << ", ";
+                        oss << arg[i];
+                    }
+                    oss << "]";
+                } else if constexpr (std::is_same_v<T, std::vector<double>>) {
+                    oss << "[";
+                    for (size_t i = 0; i < arg.size(); ++i) {
+                        if (i > 0) oss << ", ";
+                        oss << arg[i];
+                    }
+                    oss << "]";
+                }
+            }, attributes_.at(k));
+        }
+        oss << "}";
     }
     return oss.str();
 }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import Callable, Dict, Any, Optional, List, Tuple
+import time
 import numpy as np
 from .tensor import Tensor
 from .optim import Optimizer, Adam, SGD
@@ -23,6 +24,7 @@ def compile(
     loss: Tensor,
     optimizer: Optional[Optimizer] = None,
     target: str = "reference",
+    profile: bool = False,
 ) -> Callable[..., float]:
     """Compiles forward, autodiff backward, and optimizer update into a callable step function."""
     if target == "reference":
@@ -169,9 +171,22 @@ def compile(
             beta2 = optimizer.beta2
             eps = optimizer.eps
 
+        profile_stats: Dict[str, float] = {
+            "fwd_layer1_fused": 0.0,
+            "fwd_layer2_bias": 0.0,
+            "softmax_loss": 0.0,
+            "bwd_dlogits": 0.0,
+            "bwd_layer2": 0.0,
+            "bwd_layer1": 0.0,
+            "opt_adam": 0.0,
+        }
+        profile_count: int = 0
+
         def step_fn(**kwargs: np.ndarray) -> float:
-            nonlocal step_count
+            nonlocal step_count, profile_count
             step_count += 1
+            if profile:
+                profile_count += 1
 
             X = kwargs.get("x")
             Y = kwargs.get("y")
@@ -194,18 +209,25 @@ def compile(
 
             # 1. Forward Pass
             # Layer 1: H = relu(X @ W1 + b1) [Fused Matmul + Bias + ReLU]
+            t0 = time.perf_counter() if profile else 0.0
             engine.matmul_bias_relu(
                 X.ctypes.data, w1.data.ctypes.data, b1.data.ctypes.data,
                 H.ctypes.data, batch_sz, in_dim, hidden_dim
             )
+            if profile:
+                profile_stats["fwd_layer1_fused"] += (time.perf_counter() - t0)
 
             # Layer 2: logits = H @ W2 + b2 [Fused Matmul + Bias]
+            t0 = time.perf_counter() if profile else 0.0
             engine.matmul_bias(
                 H.ctypes.data, w2.data.ctypes.data, b2.data.ctypes.data,
                 logits.ctypes.data, batch_sz, hidden_dim, out_dim
             )
+            if profile:
+                profile_stats["fwd_layer2_bias"] += (time.perf_counter() - t0)
 
             # 2. Stable Softmax & Cross Entropy Loss
+            t0 = time.perf_counter() if profile else 0.0
             logits_max = np.max(logits, axis=-1, keepdims=True)
             exp_logits = np.exp(logits - logits_max)
             sum_exp = np.sum(exp_logits, axis=-1, keepdims=True)
@@ -214,16 +236,22 @@ def compile(
             # Loss computation
             log_sum_exp = logits_max.squeeze(-1) + np.log(sum_exp.squeeze(-1))
             loss_val = float(np.mean(log_sum_exp - logits[np.arange(batch_sz), Y]))
+            if profile:
+                profile_stats["softmax_loss"] += (time.perf_counter() - t0)
 
             if optimizer is not None:
                 # 3. Backward Pass
                 # dLogits = (probs - one_hot(Y)) / batch_sz
+                t0 = time.perf_counter() if profile else 0.0
                 np.copyto(dlogits, probs)
                 dlogits[np.arange(batch_sz), Y] -= 1.0
                 np.multiply(dlogits, 1.0 / float(batch_sz), out=dlogits)
+                if profile:
+                    profile_stats["bwd_dlogits"] += (time.perf_counter() - t0)
 
                 # Layer 2 Backward:
                 # dW2 = H.T @ dlogits
+                t0 = time.perf_counter() if profile else 0.0
                 engine.matmul_transA(
                     H.ctypes.data, dlogits.ctypes.data, dW2.ctypes.data,
                     hidden_dim, batch_sz, out_dim
@@ -238,9 +266,12 @@ def compile(
                     dlogits.ctypes.data, w2.data.ctypes.data, dH.ctypes.data,
                     batch_sz, out_dim, hidden_dim
                 )
+                if profile:
+                    profile_stats["bwd_layer2"] += (time.perf_counter() - t0)
 
                 # Layer 1 Backward:
                 # dH_pre = (H > 0) ? dH : 0
+                t0 = time.perf_counter() if profile else 0.0
                 engine.relu_backward(
                     dH.ctypes.data, H.ctypes.data, dH_pre.ctypes.data,
                     batch_sz * hidden_dim
@@ -255,9 +286,11 @@ def compile(
                     dH_pre.ctypes.data, db1.ctypes.data,
                     batch_sz, hidden_dim
                 )
-
+                if profile:
+                    profile_stats["bwd_layer1"] += (time.perf_counter() - t0)
 
                 # 4. Fused Adam Optimizer Updates (AVX2 Vectorized)
+                t0 = time.perf_counter() if profile else 0.0
                 bc1 = 1.0 - (beta1 ** step_count)
                 bc2 = 1.0 - (beta2 ** step_count)
 
@@ -285,8 +318,35 @@ def compile(
                     m_b2.ctypes.data, v_b2.ctypes.data,
                     lr, beta1, beta2, eps, bc1, bc2, b2.data.size
                 )
+                if profile:
+                    profile_stats["opt_adam"] += (time.perf_counter() - t0)
 
             return loss_val
+
+        def get_profile() -> Dict[str, Any]:
+            total_sec = sum(profile_stats.values())
+            res = {}
+            for k, sec in profile_stats.items():
+                res[k] = {
+                    "total_ms": sec * 1e3,
+                    "mean_ms": (sec / max(profile_count, 1)) * 1e3,
+                    "pct": (100.0 * sec / total_sec) if total_sec > 0 else 0.0,
+                }
+            return res
+
+        def print_profile() -> None:
+            prof = get_profile()
+            total_ms = sum(v["total_ms"] for v in prof.values())
+            print("\n=== MiniDLC Per-Kernel Execution Profile ===")
+            print(f"{'Kernel / Operation':<25} | {'Total (ms)':>10} | {'Mean (ms)':>10} | {'% Step':>8}")
+            print("-" * 62)
+            for k, v in prof.items():
+                print(f"{k:<25} | {v['total_ms']:10.2f} | {v['mean_ms']:10.3f} | {v['pct']:7.1f}%")
+            print("-" * 62)
+            print(f"{'Total Measured Time':<25} | {total_ms:10.2f} ms (Calls: {profile_count})\n")
+
+        setattr(step_fn, "get_profile", get_profile)
+        setattr(step_fn, "print_profile", print_profile)
 
         return step_fn
 

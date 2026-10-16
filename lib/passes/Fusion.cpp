@@ -163,7 +163,16 @@ bool FusionPass::runOnFunction(Function& func) {
         group.operations.push_back(op);
         group.opSet.insert(op);
         visited.insert(op);
-        fusedGroups_.push_back(std::move(group));
+    }
+
+    // Annotate operations in IR with fusion grouping for inspection and IR dumps
+    for (const auto& group : fusedGroups_) {
+        for (Operation* grpOp : group.operations) {
+            if (grpOp) {
+                grpOp->setAttribute("fusion.group", group.groupId);
+                grpOp->setAttribute("fusion.kernel", group.name);
+            }
+        }
     }
 
     return !fusedGroups_.empty();
