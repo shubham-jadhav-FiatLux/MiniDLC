@@ -10,9 +10,10 @@
 #include <iostream>
 #include <atomic>
 
-// Declared in test_ir.cpp and test_passes.cpp
+// Declared in test_ir.cpp, test_passes.cpp, test_cuda.cpp
 int main_ir_tests();
 int main_passes_tests();
+int main_cuda_tests();
 
 void testArena() {
     dlc::runtime::ArenaAllocator arena(1024 * 1024); // 1 MB
@@ -93,6 +94,7 @@ int main() {
     testThreadPool();
     testLoopIRAndLowering();
     testLLVMCodeGen();
+    main_cuda_tests();
     std::cout << "All Unit Tests Passed Successfully!\n";
     return 0;
 }

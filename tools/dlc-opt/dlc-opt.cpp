@@ -12,6 +12,7 @@
 #include "dlc/loopir/Lowering.h"
 #include "dlc/loopir/LoopPasses.h"
 #include "dlc/backends/llvm/LLVMCodeGen.h"
+#include "dlc/backends/cuda/CUDACodeGen.h"
 
 #include <iostream>
 #include <fstream>
@@ -25,7 +26,8 @@ void printUsage(const char* prog) {
               << "  --passes=<p1,p2,...>   Comma-separated list of passes to run\n"
               << "                         Available: shape-infer, canonicalize, cse, dce, autodiff, fusion, mem-plan\n"
               << "  --emit-loopir          Lower optimized graph to Loop IR and print\n"
-              << "  --emit-llvm            Generate and print LLVM IR\n"
+              << "  --emit-llvm            Generate and print LLVM IR (CPU)\n"
+              << "  --emit-cuda            Generate and print CUDA C++ kernels (GPU)\n"
               << "  --print-mem-report     Print memory planning and arena reuse report\n"
               << "  --print-after-all      Print IR after each pass\n"
               << "  --dot                  Export Graphviz .dot representation\n"
@@ -56,6 +58,7 @@ int main(int argc, char* argv[]) {
     bool verifyIR = true;
     bool emitLoopIR = false;
     bool emitLLVM = false;
+    bool emitCUDA = false;
     bool printMemReport = false;
 
     for (int i = 1; i < argc; ++i) {
@@ -69,6 +72,8 @@ int main(int argc, char* argv[]) {
             emitLoopIR = true;
         } else if (arg == "--emit-llvm") {
             emitLLVM = true;
+        } else if (arg == "--emit-cuda") {
+            emitCUDA = true;
         } else if (arg == "--print-mem-report") {
             printMemReport = true;
         } else if (arg == "--print-after-all") {
@@ -172,7 +177,7 @@ int main(int argc, char* argv[]) {
         std::cout << standaloneMemPlan.getMemoryReport();
     }
 
-    if (emitLoopIR || emitLLVM) {
+    if (emitLoopIR || emitLLVM || emitCUDA) {
         std::vector<dlc::loopir::KernelNest> allKernels;
         for (const auto& func : module->getFunctions()) {
             auto kernels = dlc::loopir::Lowering::lowerFunction(*func, &standaloneFusion, &standaloneMemPlan);
@@ -185,7 +190,9 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        if (emitLLVM) {
+        if (emitCUDA) {
+            std::cout << dlc::backends::cuda::CUDACodeGen::generateModuleCode(allKernels);
+        } else if (emitLLVM) {
             std::cout << dlc::backends::llvm::LLVMCodeGen::generateModuleIR(allKernels);
         } else {
             for (const auto& k : allKernels) {

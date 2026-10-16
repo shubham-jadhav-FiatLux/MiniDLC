@@ -67,6 +67,7 @@ add_library(dlc_backends
     lib/backends/llvm/LLVMCodeGen.cpp
     lib/backends/llvm/LLVMBackend.cpp
     lib/backends/cuda/CUDABackend.cpp
+    lib/backends/cuda/CUDACodeGen.cpp
 )
 target_link_libraries(dlc_backends PUBLIC dlc_loopir dlc_runtime ${CMAKE_DL_LIBS})
 
@@ -108,6 +109,7 @@ if(DLC_BUILD_TESTS)
         tests/unit/test_ir.cpp
         tests/unit/test_passes.cpp
         tests/unit/test_runtime.cpp
+        tests/unit/test_cuda.cpp
     )
     target_link_libraries(dlc_unit_tests PRIVATE dlc_backends dlc_passes dlc_runtime dlc_loopir dlc_ir)
 

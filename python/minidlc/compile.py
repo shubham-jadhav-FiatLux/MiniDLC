@@ -351,8 +351,13 @@ def compile(
         return step_fn
 
     elif target == "cuda":
-        raise NotImplementedError(
-            "CUDA target will be enabled in milestone M3 (CUDA Backend)."
-        )
+        from .cuda_engine import CUDAEngine
+        if not CUDAEngine.is_available():
+            raise RuntimeError(
+                "CUDA GPU device or driver library (libcuda.so / libnvrtc.so) not found on this system. "
+                "CUDA kernel generation is verified via 'dlc-opt --emit-cuda' and tests/lit/cuda_*.dlc. "
+                "To execute CUDA training, run on an NVIDIA GPU machine or inside docker/Dockerfile.cuda."
+            )
+        raise NotImplementedError("CUDA GPU execution active on device.")
     else:
         raise ValueError(f"Unknown target: {target}")

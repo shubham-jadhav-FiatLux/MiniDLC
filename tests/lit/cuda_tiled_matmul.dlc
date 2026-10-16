@@ -1,0 +1,20 @@
+// RUN: %dlc-opt --passes=shape-infer,fusion,mem-plan --emit-cuda %s | FileCheck %s
+
+// CHECK: __global__ void fused_matmul_bias_relu(char* __restrict__ arena, int M, int K, int N) {
+// CHECK:     const int TILE_DIM = 16;
+// CHECK:     __shared__ float sA[TILE_DIM][TILE_DIM];
+// CHECK:     __shared__ float sB[TILE_DIM][TILE_DIM];
+// CHECK:         __syncthreads();
+// CHECK:         #pragma unroll
+// CHECK:         for (int k = 0; k < TILE_DIM; ++k) {
+// CHECK:             acc += sA[threadIdx.y][k] * sB[k][threadIdx.x];
+// CHECK:         }
+// CHECK:         __syncthreads();
+// CHECK:         out[row * N + col] = cuda_relu(acc);
+
+func @mlp_layer(%x: f32[128,784], %w: f32[784,256], %b: f32[256]) -> f32[128,256] {
+  %0 = matmul(%x, %w) : f32[128,256]
+  %1 = add(%0, %b) : f32[128,256]
+  %2 = relu(%1) : f32[128,256]
+  return %2
+}

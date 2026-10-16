@@ -1,0 +1,16 @@
+// RUN: %dlc-opt --passes=shape-infer,mem-plan --emit-cuda %s | FileCheck %s
+
+// CHECK: __device__ inline float warpReduceSum(float val) {
+// CHECK:     for (int offset = 16; offset > 0; offset /= 2) {
+// CHECK:         val += __shfl_down_sync(0xffffffff, val, offset);
+// CHECK:     }
+// CHECK: __device__ inline float warpReduceMax(float val) {
+// CHECK:         val = fmaxf(val, __shfl_down_sync(0xffffffff, val, offset));
+// CHECK: __global__ void softmax_kernel(char* __restrict__ arena, int rows, int cols) {
+// CHECK:     local_max = warpReduceMax(local_max);
+// CHECK:     local_sum = warpReduceSum(local_sum);
+
+func @test_softmax(%x: f32[128,256]) -> f32[128,256] {
+  %0 = softmax(%x) : f32[128,256]
+  return %0
+}
