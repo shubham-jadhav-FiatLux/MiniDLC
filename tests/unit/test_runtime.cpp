@@ -86,6 +86,34 @@ void testLLVMCodeGen() {
     std::cout << "[PASS] testLLVMCodeGen\n";
 }
 
+void testLoopVersioningAndBCE() {
+    // Non-tile-multiple shape (130 elements with vector width 8: 130 = 16*8 + 2)
+    dlc::loopir::KernelNest kernel("test_versioned_kernel");
+    dlc::loopir::Buffer bOut{"out", dlc::DataType::Float32, {130}, {}, 0, 130 * 4, false, true, false};
+    dlc::loopir::Buffer bIn{"in", dlc::DataType::Float32, {130}, {}, 130 * 4, 130 * 4, true, false, false};
+    kernel.addBuffer(bIn);
+    kernel.addBuffer(bOut);
+
+    auto loop = std::make_shared<dlc::loopir::ForLoop>("idx", 0, 130);
+    loop->setVectorWidth(8);
+    auto load = std::make_shared<dlc::loopir::LoadExpr>("in", std::make_shared<dlc::loopir::VarExpr>("idx"));
+    auto store = std::make_shared<dlc::loopir::StoreStmt>("out", std::make_shared<dlc::loopir::VarExpr>("idx"), load);
+    loop->addBodyStmt(store);
+    kernel.addRootStmt(loop);
+
+    bool bce = dlc::loopir::BoundsCheckEliminationPass::run(kernel);
+    assert(bce);
+    (void)bce;
+    assert(kernel.hasBoundsCheckEliminated());
+
+    std::string irStr = kernel.toString();
+    assert(irStr.find("0..128 vectorize(8)") != std::string::npos);
+    assert(irStr.find("128..130") != std::string::npos);
+    assert(irStr.find("attributes {bounds_check_eliminated = true}") != std::string::npos);
+
+    std::cout << "[PASS] testLoopVersioningAndBCE\n";
+}
+
 int main() {
     std::cout << "Running MiniDLC Unit Tests...\n";
     main_ir_tests();
@@ -94,6 +122,7 @@ int main() {
     testThreadPool();
     testLoopIRAndLowering();
     testLLVMCodeGen();
+    testLoopVersioningAndBCE();
     main_cuda_tests();
     std::cout << "All Unit Tests Passed Successfully!\n";
     return 0;

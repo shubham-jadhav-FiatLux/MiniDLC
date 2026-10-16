@@ -1,0 +1,16 @@
+// RUN: %dlc-opt --passes=shape-infer,fusion --emit-loopir %s | FileCheck %s
+
+// CHECK: kernel @fused_elementwise_relu {
+// CHECK:   attributes {bounds_check_eliminated = true}
+// CHECK:   parallel for idx in 0..128 vectorize(8) {
+// CHECK:     0[idx] = relu(arg0[idx]);
+// CHECK:   }
+// CHECK:   for idx in 128..130 {
+// CHECK:     0[idx] = relu(arg0[idx]);
+// CHECK:   }
+// CHECK: }
+
+func @test_versioning(%x: f32[130]) -> f32[130] {
+  %0 = relu(%x) : f32[130]
+  return %0
+}

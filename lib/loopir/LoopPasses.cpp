@@ -1,6 +1,7 @@
 #include "dlc/loopir/LoopPasses.h"
 #include <unordered_map>
 #include <algorithm>
+#include <functional>
 
 namespace dlc::loopir {
 
@@ -216,12 +217,64 @@ static bool checkStmt(const LoopStmtPtr& stmt,
 
 } // anonymous namespace
 
+void BoundsCheckEliminationPass::applyLoopVersioning(KernelNest& kernel) {
+    // Loop versioning / peeling for non-tile-multiple vectorized loops (CS6843 A4)
+    std::function<std::vector<LoopStmtPtr>(const std::vector<LoopStmtPtr>&)> processStmts;
+    processStmts = [&](const std::vector<LoopStmtPtr>& stmts) -> std::vector<LoopStmtPtr> {
+        std::vector<LoopStmtPtr> newStmts;
+        for (const auto& s : stmts) {
+            auto loop = std::dynamic_pointer_cast<ForLoop>(s);
+            if (!loop) {
+                newStmts.push_back(s);
+                continue;
+            }
+            loop->getBody() = processStmts(loop->getBody());
+            int64_t vw = loop->getVectorWidth();
+            int64_t range = loop->getEnd() - loop->getStart();
+            if (vw > 1 && range > 0 && (range % vw != 0)) {
+                int64_t rem = range % vw;
+                int64_t split = loop->getEnd() - rem;
+                if (split > loop->getStart()) {
+                    auto mainLoop = std::make_shared<ForLoop>(loop->getVarName(), loop->getStart(), split, loop->getStep());
+                    mainLoop->setVectorWidth(vw);
+                    mainLoop->setParallel(loop->isParallel());
+                    mainLoop->setUnrollFactor(loop->getUnrollFactor());
+                    for (const auto& bs : loop->getBody()) {
+                        mainLoop->addBodyStmt(bs);
+                    }
+                    newStmts.push_back(mainLoop);
+
+                    auto tailLoop = std::make_shared<ForLoop>(loop->getVarName(), split, loop->getEnd(), loop->getStep());
+                    tailLoop->setVectorWidth(1); // Scalar cleanup tail loop
+                    tailLoop->setParallel(false);
+                    tailLoop->setUnrollFactor(1);
+                    for (const auto& bs : loop->getBody()) {
+                        tailLoop->addBodyStmt(bs);
+                    }
+                    newStmts.push_back(tailLoop);
+                } else {
+                    // Loop is smaller than a single vector width: execute scalar
+                    loop->setVectorWidth(1);
+                    newStmts.push_back(loop);
+                }
+            } else {
+                newStmts.push_back(loop);
+            }
+        }
+        return newStmts;
+    };
+
+    kernel.getRootStmts() = processStmts(kernel.getRootStmts());
+}
+
 bool BoundsCheckEliminationPass::run(KernelNest& kernel) {
-    // Static range-analysis interval propagation (CS6843 A2/A4)
+    // Static range-analysis interval propagation with loop versioning (CS6843 A2/A4)
     if (kernel.getRootStmts().empty()) {
         kernel.setBoundsCheckEliminated(false);
         return false;
     }
+
+    applyLoopVersioning(kernel);
 
     std::unordered_map<std::string, Interval> env;
     bool allSafe = true;
