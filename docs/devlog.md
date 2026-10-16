@@ -81,6 +81,40 @@
   - **Driver API & NVRTC Abstraction**: Python module `minidlc/cuda_engine.py` dynamically loading `libcuda.so` / `libnvrtc.so` with graceful fallback and informative diagnostics when run on CPU-only hosts.
   - **Compiler Tooling**: `dlc-opt --emit-cuda` outputs complete, compilable CUDA C++ modules.
   - **Testing**:
-    - 8 Lit Golden IR Tests passing (including `cuda_tiled_matmul.dlc` and `cuda_reductions.dlc`).
-    - 16 C++ unit tests passing in `./build/dlc_unit_tests` (including `testCUDATiledMatmul`, `testCUDALaunchConfig`, `testCUDAModuleGeneration`).
+    - 9 Lit Golden IR Tests passing (including `cuda_tiled_matmul.dlc` and `cuda_reductions.dlc`).
+    - 17 C++ unit tests passing in `./build/dlc_unit_tests` (including `testCUDATiledMatmul`, `testCUDALaunchConfig`, `testCUDAModuleGeneration`, `testCUDABackwardKernels`).
+
+---
+
+## Milestone M4 — Transformer Ops, Bounds-Check Elimination & Char-GPT (Completed 2026-10-17)
+
+- **Goals**:
+  - Transformer operator set: 3D/4D batched matmuls, sequence linear projections, causal triangular masking (`triu_mask`), LayerNorm forward + autograd VJP, GELU activation, learned token and position embeddings, 3D cross-entropy loss;
+  - Neural network modules: `MultiHeadAttention` with causal masking, `TransformerBlock` (Pre-LN residual connections and GELU feed-forward MLP), and `CharGPT` (autoregressive character generator);
+  - TinyShakespeare dataset loader and tokenizer in `python/minidlc/data.py` with 65-character vocabulary and deterministic offline fallback;
+  - Static range-analysis bounds-check elimination in `lib/loopir/LoopPasses.cpp` (`CS6843 A2/A4`) with golden lit test;
+  - Comprehensive unit test suite in `tests/python/test_transformer.py` and end-to-end training and generation in `examples/char_gpt.py`.
+- **Completed & Verified**:
+  - **Transformer Operators & Autograd**:
+    - Batched matmuls: 3D/4D batched tensor contractions ($[B, T, D] \times [B, D, T] \to [B, T, T]$) and sequence linear projections ($[B, T, D] \times [D, H] \to [B, T, H]$) with adjoint backward VJPs.
+    - Causal attention mask: `ops.triu_mask(seq_len)` producing additive triangular masks ($-1\times 10^4$ on upper triangle), guaranteeing strict causal independence across sequence positions.
+    - LayerNorm: Forward normalization and exact analytic autograd VJP for input $X$, scale $\gamma$, and shift $\beta$, verified against central finite differences to within $10^{-3}$.
+    - GELU: Approximate activation $\frac{1}{2} x (1 + \tanh(\sqrt{2/\pi}(x + 0.044715 x^3)))$ and backward derivative.
+    - 3D Cross-Entropy: Flattened sequence negative log-likelihood with stable softmax and analytic gradient.
+  - **Neural Network Architecture**:
+    - `nn.MultiHeadAttention`: Multi-head causal scaled dot-product attention with projection layers.
+    - `nn.TransformerBlock`: Pre-LayerNorm residual attention and two-layer MLP with GELU non-linearity.
+    - `nn.CharGPT`: Autoregressive character sequence model with learned token and position embeddings, final LayerNorm, LM head, and nucleus/temperature sampling `generate()`.
+  - **Static Range Analysis & Bounds-Check Elimination (CS6843 A2/A4)**:
+    - Formal interval arithmetic over loop induction variables: $\text{Env}: v \mapsto [\text{low}, \text{high}]$.
+    - Verified memory expressions $A[\text{idx}]$ satisfy $0 \le \text{idx} < \text{extent}(A)$ and tile/vector-width divisibility.
+    - Stamped `attributes {bounds_check_eliminated = true}` on optimized loop nests.
+  - **Dataset**:
+    - TinyShakespeare loader in `python/minidlc/data.py` caching 1,115,394 characters across a 65-character vocabulary, with sequence batch generator `tinyshakespeare_batches(batch_size, block_size)`.
+  - **Testing & Verification**:
+    - 17/17 C++ unit tests passing in `./build/dlc_unit_tests`.
+    - 10/10 Lit golden IR tests passing in `tests/lit/run_lit_tests.py` (including `bounds_check_elim.dlc`).
+    - 7/7 Transformer unit tests passing in `tests/python/test_transformer.py`.
+    - End-to-end training in `examples/char_gpt.py`: 30,656 parameters trained with Adam optimizer ($lr = 0.008$), empirical cross-entropy loss dropping from **4.2664** to **3.2997** in 40 iterations (0.67s), producing autoregressive text continuations.
+
 

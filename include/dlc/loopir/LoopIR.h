@@ -243,6 +243,9 @@ public:
     int64_t getEstimatedBytesMoved() const { return estimatedBytesMoved_; }
     void setEstimatedBytesMoved(int64_t bytes) { estimatedBytesMoved_ = bytes; }
 
+    bool hasBoundsCheckEliminated() const { return boundsCheckEliminated_; }
+    void setBoundsCheckEliminated(bool val) { boundsCheckEliminated_ = val; }
+
     std::string toString() const;
 
 private:
@@ -251,6 +254,7 @@ private:
     std::vector<LoopStmtPtr> rootStmts_;
     int64_t estimatedFlops_{0};
     int64_t estimatedBytesMoved_{0};
+    bool boundsCheckEliminated_{false};
 };
 
 } // namespace dlc::loopir

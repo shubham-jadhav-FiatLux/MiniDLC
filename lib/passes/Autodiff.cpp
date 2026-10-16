@@ -156,6 +156,13 @@ bool AutodiffPass::runOnFunction(Function& func) {
                 ValuePtr dW = builder.createMatmul(xT, dOut);
                 accumulateAdjoint(xVal, dX);
                 accumulateAdjoint(wVal, dW);
+            } else if (sX.size() == 4 && sW.size() == 4) {
+                ValuePtr wT = builder.createTranspose(wVal, {0, 1, 3, 2});
+                ValuePtr xT = builder.createTranspose(xVal, {0, 1, 3, 2});
+                ValuePtr dX = builder.createMatmul(dOut, wT);
+                ValuePtr dW = builder.createMatmul(xT, dOut);
+                accumulateAdjoint(xVal, dX);
+                accumulateAdjoint(wVal, dW);
             }
         } else if (opName == "softmax") {
             // dX = S * (dY - sum(dY * S))
@@ -203,6 +210,15 @@ bool AutodiffPass::runOnFunction(Function& func) {
             ValuePtr inVal = op->getOperand(0);
             ValuePtr dIn = builder.createReshape(dOut, getShape(inVal));
             accumulateAdjoint(inVal, dIn);
+        } else if (opName == "layernorm") {
+            ValuePtr x = op->getOperand(0);
+            ValuePtr gamma = op->getOperand(1);
+            ValuePtr beta = op->getOperand(2);
+            accumulateAdjoint(beta, reduceBroadcast(dOut, getShape(beta)));
+            ValuePtr dGamma = builder.createMul(dOut, x);
+            accumulateAdjoint(gamma, reduceBroadcast(dGamma, getShape(gamma)));
+            ValuePtr scaledDOut = builder.createMul(dOut, gamma);
+            accumulateAdjoint(x, scaledDOut);
         }
     }
 
