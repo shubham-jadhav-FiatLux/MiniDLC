@@ -6,9 +6,11 @@ Demonstrates:
   2. Multi-head causal self-attention with causal triangular masking.
   3. Pre-LN Transformer blocks with residual connections and GELU feed-forward MLPs.
   4. Automatic differentiation with cross-entropy loss and Adam optimization.
-  5. Autoregressive character generation given a prompt.
+  5. Unified compilation pipeline via dl.compile(loss, optimizer, target='reference').
+  6. Autoregressive character generation given prompts.
 """
 
+import sys
 import time
 import numpy as np
 import minidlc as dl
@@ -30,7 +32,7 @@ def main():
     print(f"  Vocabulary size  : {vocab_size} unique characters")
     print(f"  Vocabulary sample: {repr(''.join(tokenizer.chars[:20]))} ...")
 
-    # 2. Model Architecture Hyperparameters
+    # 2. Model Architecture Hyperparameters (configurable via CLI)
     batch_size = 4
     block_size = 32
     d_model = 32
@@ -38,6 +40,20 @@ def main():
     num_layers = 2
     lr = 0.008
     num_steps = 40
+
+    for arg in sys.argv[1:]:
+        if arg.startswith("--block-size="):
+            block_size = int(arg.split("=")[1])
+        elif arg.startswith("--d-model="):
+            d_model = int(arg.split("=")[1])
+        elif arg.startswith("--num-heads="):
+            num_heads = int(arg.split("=")[1])
+        elif arg.startswith("--num-layers="):
+            num_layers = int(arg.split("=")[1])
+        elif arg.startswith("--steps="):
+            num_steps = int(arg.split("=")[1])
+        elif arg.startswith("--lr="):
+            lr = float(arg.split("=")[1])
 
     print(f"\n[2/4] Initializing Transformer model...")
     print(f"  Block size (context) : {block_size}")
@@ -55,7 +71,7 @@ def main():
     total_params = sum(p.data.size for p in model.parameters() if p.data is not None)
     print(f"  Total parameters     : {total_params:,}")
 
-    # 3. Setup Computation Graph & Optimizer
+    # 3. Setup Computation Graph & Compile Training Step
     x_node = dl.placeholder((batch_size, block_size), dtype="i32", name="x")
     y_node = dl.placeholder((batch_size, block_size), dtype="i32", name="y")
 
@@ -63,9 +79,11 @@ def main():
     loss_node = ops.cross_entropy(logits_node, y_node)
 
     optimizer = optim.Adam(model.parameters(), lr=lr)
-    interp = ReferenceInterpreter()
 
-    print(f"\n[3/4] Training for {num_steps} iterations (Adam lr={lr})...")
+    print(f"\n[3/4] Compiling end-to-end training step (dl.compile target='reference')...")
+    train_step = dl.compile(loss_node, optimizer=optimizer, target="reference")
+
+    print(f"  Training for {num_steps} iterations (Adam lr={lr})...")
     np.random.seed(1337)
     batches = tinyshakespeare_batches(data, batch_size=batch_size, block_size=block_size, steps=num_steps)
 
@@ -73,18 +91,8 @@ def main():
     losses = []
     for step in range(num_steps):
         bx, by = next(batches)
-        feed = {x_node: bx, y_node: by}
-
-        # Forward pass
-        vals = interp.forward(loss_node, feed)
-        step_loss = float(vals[loss_node])
+        step_loss = train_step(x=bx, y=by)
         losses.append(step_loss)
-
-        # Backward pass
-        grads = interp.backward(loss_node, vals)
-
-        # Optimizer step
-        optimizer.step(grads)
 
         if (step + 1) % 5 == 0 or step == 0:
             elapsed = time.time() - t0
@@ -94,6 +102,7 @@ def main():
 
     # 4. Text Generation Demonstration
     print(f"\n[4/4] Autoregressive Text Generation Demonstration:")
+    interp = ReferenceInterpreter()
     prompts = ["ROMEO:\n", "First Citizen:\n"]
     for prompt in prompts:
         prompt_tokens = tokenizer.encode(prompt)

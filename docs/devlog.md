@@ -108,13 +108,14 @@
   - **Static Range Analysis & Bounds-Check Elimination (CS6843 A2/A4)**:
     - Formal interval arithmetic over loop induction variables: $\text{Env}: v \mapsto [\text{low}, \text{high}]$.
     - Verified memory expressions $A[\text{idx}]$ satisfy $0 \le \text{idx} < \text{extent}(A)$ and tile/vector-width divisibility.
+    - Loop versioning / peeling in `applyLoopVersioning` splitting non-multiple vectorized loops into a vectorized main loop ($0 .. (N/W)\cdot W$) and a scalar cleanup tail loop ($(N/W)\cdot W .. N$).
     - Stamped `attributes {bounds_check_eliminated = true}` on optimized loop nests.
   - **Dataset**:
     - TinyShakespeare loader in `python/minidlc/data.py` caching 1,115,394 characters across a 65-character vocabulary, with sequence batch generator `tinyshakespeare_batches(batch_size, block_size)`.
   - **Testing & Verification**:
-    - 17/17 C++ unit tests passing in `./build/dlc_unit_tests`.
-    - 10/10 Lit golden IR tests passing in `tests/lit/run_lit_tests.py` (including `bounds_check_elim.dlc`).
+    - 18/18 C++ unit tests passing in `./build/dlc_unit_tests` (including `testLoopVersioningAndBCE`).
+    - 11/11 Lit golden IR tests passing in `tests/lit/run_lit_tests.py` (including `bounds_check_elim.dlc` and `loop_versioning.dlc`).
     - 7/7 Transformer unit tests passing in `tests/python/test_transformer.py`.
-    - End-to-end training in `examples/char_gpt.py`: 30,656 parameters trained with Adam optimizer ($lr = 0.008$), empirical cross-entropy loss dropping from **4.2664** to **3.2997** in 40 iterations (0.67s), producing autoregressive text continuations.
+    - End-to-end training in `examples/char_gpt.py`: 30,656 parameters compiled via `dl.compile(loss, optimizer, target="reference")` with Adam ($lr = 0.008$), empirical cross-entropy loss dropping from **4.3277** to **3.1475** in 40 iterations (0.78s), producing autoregressive text continuations.
 
 

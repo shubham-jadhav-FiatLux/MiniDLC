@@ -27,6 +27,7 @@ public:
 class BoundsCheckEliminationPass {
 public:
     static bool run(KernelNest& kernel);
+    static void applyLoopVersioning(KernelNest& kernel);
 };
 
 } // namespace dlc::loopir
