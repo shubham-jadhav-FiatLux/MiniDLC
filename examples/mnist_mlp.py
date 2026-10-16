@@ -42,10 +42,18 @@ def main():
     logits = model(x)
     loss = dl.cross_entropy(logits, y)
 
+    target = "cpu"
+    for arg in sys.argv[1:]:
+        if arg.startswith("--target="):
+            target = arg.split("=")[1]
+        elif arg in ("reference", "cpu", "cuda"):
+            target = arg
+
     # Compile training step
-    print("Compiling training graph to target='reference'...")
+    print(f"Compiling training graph to target='{target}'...")
     optimizer = optim.Adam(model.parameters(), lr=1.5e-3)
-    train_step = dl.compile(loss, optimizer=optimizer, target="reference")
+    train_step = dl.compile(loss, optimizer=optimizer, target=target)
+
 
     print(f"Beginning training iterations ({epochs} epoch(s), batch_size={batch_size})...")
     n_batches = len(tr_x) // batch_size

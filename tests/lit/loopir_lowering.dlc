@@ -1,0 +1,13 @@
+// RUN: %dlc-opt --passes=shape-infer,fusion --emit-loopir %s | FileCheck %s
+
+// CHECK: kernel @fused_elementwise_add {
+// CHECK:   parallel for idx in 0..32768 vectorize(8) {
+// CHECK:     1[idx] = max((arg0[idx] + arg1[idx]), 0.0);
+// CHECK:   }
+// CHECK: }
+
+func @test_elementwise_chain(%a: f32[128,256], %b: f32[128,256]) -> f32[128,256] {
+  %0 = add(%a, %b) : f32[128,256]
+  %1 = relu(%0) : f32[128,256]
+  return %1
+}

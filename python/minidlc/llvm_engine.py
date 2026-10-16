@@ -1,0 +1,444 @@
+"""
+LLVM Engine for MiniDLC: emits vector LLVM IR with AVX2 and intrinsics,
+JIT-compiles with clang -O3, and provides native execution handles.
+"""
+
+from __future__ import annotations
+import os
+import subprocess
+import tempfile
+import ctypes
+from typing import Dict, Any, Tuple, Optional
+import numpy as np
+
+def generate_cpu_kernels_llvm_ir() -> str:
+    """Emits comprehensive LLVM IR containing all neural network execution kernels."""
+    return """
+target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
+target triple = "x86_64-pc-linux-gnu"
+
+declare <8 x float> @llvm.fmuladd.v8f32(<8 x float>, <8 x float>, <8 x float>)
+declare <8 x float> @llvm.maximum.v8f32(<8 x float>, <8 x float>)
+declare float @llvm.fmuladd.f32(float, float, float)
+declare float @llvm.maximum.f32(float, float)
+declare float @llvm.sqrt.f32(float)
+declare float @llvm.exp.f32(float)
+declare float @llvm.log.f32(float)
+
+; 1. Fused Matmul + Bias + ReLU: C[M, N] = relu(A[M, K] @ B[K, N] + bias[N])
+define void @kernel_matmul_bias_relu(ptr %a, ptr %b, ptr %bias, ptr %c, i64 %M, i64 %K, i64 %N) #0 {
+entry:
+  %has_m = icmp sgt i64 %M, 0
+  br i1 %has_m, label %loop_i, label %exit
+
+loop_i:
+  %i = phi i64 [ 0, %entry ], [ %i_next, %loop_i_end ]
+  br label %loop_j
+
+loop_j:
+  %j = phi i64 [ 0, %loop_i ], [ %j_next, %loop_k_done ]
+  br label %loop_k
+
+loop_k:
+  %k = phi i64 [ 0, %loop_j ], [ %k_next, %loop_k ]
+  %acc = phi <8 x float> [ zeroinitializer, %loop_j ], [ %acc_fma, %loop_k ]
+
+  %ik = mul i64 %i, %K
+  %idx_a = add i64 %ik, %k
+  %ptr_a = getelementptr inbounds float, ptr %a, i64 %idx_a
+  %val_a = load float, ptr %ptr_a, align 4
+  %vec_a_0 = insertelement <8 x float> poison, float %val_a, i32 0
+  %splat_a = shufflevector <8 x float> %vec_a_0, <8 x float> poison, <8 x i32> zeroinitializer
+
+  %kn = mul i64 %k, %N
+  %idx_b = add i64 %kn, %j
+  %ptr_b = getelementptr inbounds float, ptr %b, i64 %idx_b
+  %vec_b = load <8 x float>, ptr %ptr_b, align 4
+
+  %acc_fma = call <8 x float> @llvm.fmuladd.v8f32(<8 x float> %splat_a, <8 x float> %vec_b, <8 x float> %acc)
+
+  %k_next = add i64 %k, 1
+  %cond_k = icmp slt i64 %k_next, %K
+  br i1 %cond_k, label %loop_k, label %loop_k_done
+
+loop_k_done:
+  %ptr_bias = getelementptr inbounds float, ptr %bias, i64 %j
+  %vec_bias = load <8 x float>, ptr %ptr_bias, align 4
+  %acc_bias = fadd <8 x float> %acc_fma, %vec_bias
+  %acc_relu = call <8 x float> @llvm.maximum.v8f32(<8 x float> %acc_bias, <8 x float> zeroinitializer)
+
+  %in = mul i64 %i, %N
+  %idx_c = add i64 %in, %j
+  %ptr_c = getelementptr inbounds float, ptr %c, i64 %idx_c
+  store <8 x float> %acc_relu, ptr %ptr_c, align 4
+
+  %j_next = add i64 %j, 8
+  %cond_j = icmp slt i64 %j_next, %N
+  br i1 %cond_j, label %loop_j, label %loop_i_end
+
+loop_i_end:
+  %i_next = add i64 %i, 1
+  %cond_i = icmp slt i64 %i_next, %M
+  br i1 %cond_i, label %loop_i, label %exit
+
+exit:
+  ret void
+}
+
+; 2. Fused Matmul + Bias: C[M, N] = A[M, K] @ B[K, N] + bias[N]
+define void @kernel_matmul_bias(ptr %a, ptr %b, ptr %bias, ptr %c, i64 %M, i64 %K, i64 %N) #0 {
+entry:
+  %has_m = icmp sgt i64 %M, 0
+  br i1 %has_m, label %loop_i, label %exit
+
+loop_i:
+  %i = phi i64 [ 0, %entry ], [ %i_next, %loop_i_end ]
+  br label %loop_j
+
+loop_j:
+  %j = phi i64 [ 0, %loop_i ], [ %j_next, %loop_j_done ]
+
+  ; Compute inner dot product for element (i, j)
+  br label %loop_k
+
+loop_k:
+  %k = phi i64 [ 0, %loop_j ], [ %k_next, %loop_k ]
+  %acc = phi float [ 0.0, %loop_j ], [ %acc_next, %loop_k ]
+
+  %ik = mul i64 %i, %K
+  %idx_a = add i64 %ik, %k
+  %ptr_a = getelementptr inbounds float, ptr %a, i64 %idx_a
+  %val_a = load float, ptr %ptr_a, align 4
+
+  %kn = mul i64 %k, %N
+  %idx_b = add i64 %kn, %j
+  %ptr_b = getelementptr inbounds float, ptr %b, i64 %idx_b
+  %val_b = load float, ptr %ptr_b, align 4
+
+  %acc_next = call float @llvm.fmuladd.f32(float %val_a, float %val_b, float %acc)
+
+  %k_next = add i64 %k, 1
+  %cond_k = icmp slt i64 %k_next, %K
+  br i1 %cond_k, label %loop_k, label %loop_k_done
+
+loop_k_done:
+  %ptr_bias = getelementptr inbounds float, ptr %bias, i64 %j
+  %val_bias = load float, ptr %ptr_bias, align 4
+  %val_final = fadd float %acc_next, %val_bias
+
+  %in = mul i64 %i, %N
+  %idx_c = add i64 %in, %j
+  %ptr_c = getelementptr inbounds float, ptr %c, i64 %idx_c
+  store float %val_final, ptr %ptr_c, align 4
+  br label %loop_j_done
+
+loop_j_done:
+  %j_next = add i64 %j, 1
+  %cond_j = icmp slt i64 %j_next, %N
+  br i1 %cond_j, label %loop_j, label %loop_i_end
+
+loop_i_end:
+  %i_next = add i64 %i, 1
+  %cond_i = icmp slt i64 %i_next, %M
+  br i1 %cond_i, label %loop_i, label %exit
+
+exit:
+  ret void
+}
+
+; 3. Backward Matmul Transpose A: dW[M, N] = A.T[M, K] @ B[K, N] (where A is [K, M], B is [K, N])
+define void @kernel_matmul_transA(ptr %a, ptr %b, ptr %c, i64 %M, i64 %K, i64 %N) #0 {
+entry:
+  %has_m = icmp sgt i64 %M, 0
+  br i1 %has_m, label %loop_i, label %exit
+
+loop_i:
+  %i = phi i64 [ 0, %entry ], [ %i_next, %loop_i_end ]
+  br label %loop_j
+
+loop_j:
+  %j = phi i64 [ 0, %loop_i ], [ %j_next, %loop_k_done ]
+  br label %loop_k
+
+loop_k:
+  %k = phi i64 [ 0, %loop_j ], [ %k_next, %loop_k ]
+  %acc = phi float [ 0.0, %loop_j ], [ %acc_next, %loop_k ]
+
+  ; A[k, i] -> offset k * M + i
+  %km = mul i64 %k, %M
+  %idx_a = add i64 %km, %i
+  %ptr_a = getelementptr inbounds float, ptr %a, i64 %idx_a
+  %val_a = load float, ptr %ptr_a, align 4
+
+  ; B[k, j] -> offset k * N + j
+  %kn = mul i64 %k, %N
+  %idx_b = add i64 %kn, %j
+  %ptr_b = getelementptr inbounds float, ptr %b, i64 %idx_b
+  %val_b = load float, ptr %ptr_b, align 4
+
+  %acc_next = call float @llvm.fmuladd.f32(float %val_a, float %val_b, float %acc)
+
+  %k_next = add i64 %k, 1
+  %cond_k = icmp slt i64 %k_next, %K
+  br i1 %cond_k, label %loop_k, label %loop_k_done
+
+loop_k_done:
+  %in = mul i64 %i, %N
+  %idx_c = add i64 %in, %j
+  %ptr_c = getelementptr inbounds float, ptr %c, i64 %idx_c
+  store float %acc_next, ptr %ptr_c, align 4
+
+  %j_next = add i64 %j, 1
+  %cond_j = icmp slt i64 %j_next, %N
+  br i1 %cond_j, label %loop_j, label %loop_i_end
+
+loop_i_end:
+  %i_next = add i64 %i, 1
+  %cond_i = icmp slt i64 %i_next, %M
+  br i1 %cond_i, label %loop_i, label %exit
+
+exit:
+  ret void
+}
+
+; 4. Backward Matmul Transpose B: dA[M, K] = B[M, N] @ C.T[N, K] (where C is [K, N])
+define void @kernel_matmul_transB(ptr %b, ptr %c, ptr %a, i64 %M, i64 %N, i64 %K) #0 {
+entry:
+  %has_m = icmp sgt i64 %M, 0
+  br i1 %has_m, label %loop_i, label %exit
+
+loop_i:
+  %i = phi i64 [ 0, %entry ], [ %i_next, %loop_i_end ]
+  br label %loop_k_outer
+
+loop_k_outer:
+  %k = phi i64 [ 0, %loop_i ], [ %k_next, %loop_n_done ]
+  br label %loop_n
+
+loop_n:
+  %n = phi i64 [ 0, %loop_k_outer ], [ %n_next, %loop_n ]
+  %acc = phi float [ 0.0, %loop_k_outer ], [ %acc_next, %loop_n ]
+
+  ; B[i, n]
+  %in = mul i64 %i, %N
+  %idx_b = add i64 %in, %n
+  %ptr_b = getelementptr inbounds float, ptr %b, i64 %idx_b
+  %val_b = load float, ptr %ptr_b, align 4
+
+  ; C[k, n]
+  %kn = mul i64 %k, %N
+  %idx_c = add i64 %kn, %n
+  %ptr_c = getelementptr inbounds float, ptr %c, i64 %idx_c
+  %val_c = load float, ptr %ptr_c, align 4
+
+  %acc_next = call float @llvm.fmuladd.f32(float %val_b, float %val_c, float %acc)
+
+  %n_next = add i64 %n, 1
+  %cond_n = icmp slt i64 %n_next, %N
+  br i1 %cond_n, label %loop_n, label %loop_n_done
+
+loop_n_done:
+  %ik = mul i64 %i, %K
+  %idx_a = add i64 %ik, %k
+  %ptr_a = getelementptr inbounds float, ptr %a, i64 %idx_a
+  store float %acc_next, ptr %ptr_a, align 4
+
+  %k_next = add i64 %k, 1
+  %cond_k = icmp slt i64 %k_next, %K
+  br i1 %cond_k, label %loop_k_outer, label %loop_i_end
+
+loop_i_end:
+  %i_next = add i64 %i, 1
+  %cond_i = icmp slt i64 %i_next, %M
+  br i1 %cond_i, label %loop_i, label %exit
+
+exit:
+  ret void
+}
+
+; 5. Fused ReLU Backward: dIn = (Out > 0) ? dOut : 0
+define void @kernel_relu_backward(ptr %dout, ptr %out, ptr %din, i64 %total_elements) #0 {
+entry:
+  br label %loop_vec
+
+loop_vec:
+  %idx = phi i64 [ 0, %entry ], [ %idx_next, %loop_vec ]
+
+  %ptr_dout = getelementptr inbounds float, ptr %dout, i64 %idx
+  %vec_dout = load <8 x float>, ptr %ptr_dout, align 4
+
+  %ptr_out = getelementptr inbounds float, ptr %out, i64 %idx
+  %vec_out = load <8 x float>, ptr %ptr_out, align 4
+
+  %mask = fcmp ogt <8 x float> %vec_out, zeroinitializer
+  %res = select <8 x i1> %mask, <8 x float> %vec_dout, <8 x float> zeroinitializer
+
+  %ptr_din = getelementptr inbounds float, ptr %din, i64 %idx
+  store <8 x float> %res, ptr %ptr_din, align 4
+
+  %idx_next = add i64 %idx, 8
+  %cond = icmp slt i64 %idx_next, %total_elements
+  br i1 %cond, label %loop_vec, label %exit
+
+exit:
+  ret void
+}
+
+; 6. Fused Bias Backward: dBias[N] = sum_{i=0}^{M-1} dOut[i, N]
+define void @kernel_bias_backward(ptr %dout, ptr %dbias, i64 %M, i64 %N) #0 {
+entry:
+  br label %loop_j
+
+loop_j:
+  %j = phi i64 [ 0, %entry ], [ %j_next, %loop_i_done ]
+  br label %loop_i
+
+loop_i:
+  %i = phi i64 [ 0, %loop_j ], [ %i_next, %loop_i ]
+  %acc = phi float [ 0.0, %loop_j ], [ %acc_next, %loop_i ]
+
+  %in = mul i64 %i, %N
+  %idx = add i64 %in, %j
+  %ptr = getelementptr inbounds float, ptr %dout, i64 %idx
+  %val = load float, ptr %ptr, align 4
+  %acc_next = fadd float %acc, %val
+
+  %i_next = add i64 %i, 1
+  %cond_i = icmp slt i64 %i_next, %M
+  br i1 %cond_i, label %loop_i, label %loop_i_done
+
+loop_i_done:
+  %ptr_db = getelementptr inbounds float, ptr %dbias, i64 %j
+  store float %acc_next, ptr %ptr_db, align 4
+
+  %j_next = add i64 %j, 1
+  %cond_j = icmp slt i64 %j_next, %N
+  br i1 %cond_j, label %loop_j, label %exit
+
+exit:
+  ret void
+}
+
+; 7. Fused Vector Adam Update:
+; m = b1*m + (1-b1)*g
+; v = b2*v + (1-b2)*g^2
+; p -= lr * (m / (1-b1^t)) / (sqrt(v / (1-b2^t)) + eps)
+define void @kernel_adam_update(ptr %p, ptr %g, ptr %m, ptr %v, float %lr, float %beta1, float %beta2, float %eps, float %bc1, float %bc2, i64 %n_elements) #0 {
+entry:
+  %one_minus_b1 = fsub float 1.0, %beta1
+  %one_minus_b2 = fsub float 1.0, %beta2
+  br label %loop
+
+loop:
+  %i = phi i64 [ 0, %entry ], [ %i_next, %loop ]
+
+  %ptr_p = getelementptr inbounds float, ptr %p, i64 %i
+  %ptr_g = getelementptr inbounds float, ptr %g, i64 %i
+  %ptr_m = getelementptr inbounds float, ptr %m, i64 %i
+  %ptr_v = getelementptr inbounds float, ptr %v, i64 %i
+
+  %val_p = load float, ptr %ptr_p, align 4
+  %val_g = load float, ptr %ptr_g, align 4
+  %val_m = load float, ptr %ptr_m, align 4
+  %val_v = load float, ptr %ptr_v, align 4
+
+  ; m = b1 * m + (1-b1) * g
+  %m_term1 = fmul float %beta1, %val_m
+  %m_term2 = fmul float %one_minus_b1, %val_g
+  %m_new = fadd float %m_term1, %m_term2
+  store float %m_new, ptr %ptr_m, align 4
+
+  ; v = b2 * v + (1-b2) * g * g
+  %g2 = fmul float %val_g, %val_g
+  %v_term1 = fmul float %beta2, %val_v
+  %v_term2 = fmul float %one_minus_b2, %g2
+  %v_new = fadd float %v_term1, %v_term2
+  store float %v_new, ptr %ptr_v, align 4
+
+  ; m_hat = m_new / bc1
+  %m_hat = fdiv float %m_new, %bc1
+
+  ; v_hat = v_new / bc2
+  %v_hat = fdiv float %v_new, %bc2
+  %sqrt_v_hat = call float @llvm.sqrt.f32(float %v_hat)
+  %denom = fadd float %sqrt_v_hat, %eps
+
+  ; step = lr * m_hat / denom
+  %ratio = fdiv float %m_hat, %denom
+  %update = fmul float %lr, %ratio
+  %p_new = fsub float %val_p, %update
+  store float %p_new, ptr %ptr_p, align 4
+
+  %i_next = add i64 %i, 1
+  %cond = icmp slt i64 %i_next, %n_elements
+  br i1 %cond, label %loop, label %exit
+
+exit:
+  ret void
+}
+"""
+
+class LLVMCPUEngine:
+    """Manages compilation and invocation of LLVM-generated CPU kernels."""
+    _instance: Optional[LLVMCPUEngine] = None
+
+    def __init__(self):
+        self.ir = generate_cpu_kernels_llvm_ir()
+        with tempfile.NamedTemporaryFile(suffix=".ll", mode="w", delete=False) as f:
+            f.write(self.ir)
+            self.ll_path = f.name
+        self.so_path = self.ll_path[:-3] + ".so"
+
+        cmd = f"clang -O3 -shared -mavx2 -mfma -fPIC {self.ll_path} -o {self.so_path}"
+        res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        if res.returncode != 0:
+            raise RuntimeError(f"Failed to compile LLVM IR with clang:\n{res.stderr}")
+
+        self.lib = ctypes.CDLL(self.so_path)
+        self._bind_functions()
+
+    def _bind_functions(self):
+        vp = ctypes.c_void_p
+        i64 = ctypes.c_int64
+        f32 = ctypes.c_float
+
+        # 1. matmul_bias_relu
+        self.matmul_bias_relu = getattr(self.lib, "kernel_matmul_bias_relu")
+        self.matmul_bias_relu.argtypes = [vp, vp, vp, vp, i64, i64, i64]
+        self.matmul_bias_relu.restype = None
+
+        # 2. matmul_bias
+        self.matmul_bias = getattr(self.lib, "kernel_matmul_bias")
+        self.matmul_bias.argtypes = [vp, vp, vp, vp, i64, i64, i64]
+        self.matmul_bias.restype = None
+
+        # 3. matmul_transA
+        self.matmul_transA = getattr(self.lib, "kernel_matmul_transA")
+        self.matmul_transA.argtypes = [vp, vp, vp, i64, i64, i64]
+        self.matmul_transA.restype = None
+
+        # 4. matmul_transB
+        self.matmul_transB = getattr(self.lib, "kernel_matmul_transB")
+        self.matmul_transB.argtypes = [vp, vp, vp, i64, i64, i64]
+        self.matmul_transB.restype = None
+
+        # 5. relu_backward
+        self.relu_backward = getattr(self.lib, "kernel_relu_backward")
+        self.relu_backward.argtypes = [vp, vp, vp, i64]
+        self.relu_backward.restype = None
+
+        # 6. bias_backward
+        self.bias_backward = getattr(self.lib, "kernel_bias_backward")
+        self.bias_backward.argtypes = [vp, vp, i64, i64]
+        self.bias_backward.restype = None
+
+        # 7. adam_update
+        self.adam_update = getattr(self.lib, "kernel_adam_update")
+        self.adam_update.argtypes = [vp, vp, vp, vp, f32, f32, f32, f32, f32, f32, i64]
+        self.adam_update.restype = None
+
+    @classmethod
+    def get(cls) -> LLVMCPUEngine:
+        if cls._instance is None:
+            cls._instance = LLVMCPUEngine()
+        return cls._instance
