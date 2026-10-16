@@ -1,0 +1,12 @@
+// RUN: %dlc-opt --passes=shape-infer,mem-plan --print-mem-report %s | FileCheck %s
+
+// CHECK: === Memory Planning Report ===
+// CHECK: Total Peak Arena Size:
+// CHECK: Allocated Tensors:
+
+func @test_disjoint_branches(%x: f32[128,256], %y: f32[128,256]) -> f32[128,256] {
+  %0 = add(%x, %y) : f32[128,256]
+  %1 = relu(%0) : f32[128,256]
+  %2 = mul(%1, %x) : f32[128,256]
+  return %2
+}

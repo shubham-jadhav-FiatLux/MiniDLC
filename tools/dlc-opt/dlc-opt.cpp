@@ -9,6 +9,9 @@
 #include "dlc/passes/Autodiff.h"
 #include "dlc/passes/Fusion.h"
 #include "dlc/passes/MemoryPlanning.h"
+#include "dlc/loopir/Lowering.h"
+#include "dlc/loopir/LoopPasses.h"
+#include "dlc/backends/llvm/LLVMCodeGen.h"
 
 #include <iostream>
 #include <fstream>
@@ -21,6 +24,9 @@ void printUsage(const char* prog) {
               << "Options:\n"
               << "  --passes=<p1,p2,...>   Comma-separated list of passes to run\n"
               << "                         Available: shape-infer, canonicalize, cse, dce, autodiff, fusion, mem-plan\n"
+              << "  --emit-loopir          Lower optimized graph to Loop IR and print\n"
+              << "  --emit-llvm            Generate and print LLVM IR\n"
+              << "  --print-mem-report     Print memory planning and arena reuse report\n"
               << "  --print-after-all      Print IR after each pass\n"
               << "  --dot                  Export Graphviz .dot representation\n"
               << "  --verify               Run verifier before and after passes (default on)\n"
@@ -48,6 +54,9 @@ int main(int argc, char* argv[]) {
     bool printAfterAll = false;
     bool exportDot = false;
     bool verifyIR = true;
+    bool emitLoopIR = false;
+    bool emitLLVM = false;
+    bool printMemReport = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -56,6 +65,12 @@ int main(int argc, char* argv[]) {
             return 0;
         } else if (arg.starts_with("--passes=")) {
             passesArg = arg.substr(9);
+        } else if (arg == "--emit-loopir") {
+            emitLoopIR = true;
+        } else if (arg == "--emit-llvm") {
+            emitLLVM = true;
+        } else if (arg == "--print-mem-report") {
+            printMemReport = true;
         } else if (arg == "--print-after-all") {
             printAfterAll = true;
         } else if (arg == "--dot") {
@@ -102,6 +117,9 @@ int main(int argc, char* argv[]) {
     dlc::PassManager pm;
     pm.setPrintAfterAll(printAfterAll);
 
+    std::unique_ptr<dlc::FusionPass> fusionPassPtr;
+    std::unique_ptr<dlc::MemoryPlanningPass> memPlanPassPtr;
+
     if (!passesArg.empty()) {
         auto passList = split(passesArg, ',');
         for (const auto& p : passList) {
@@ -116,9 +134,13 @@ int main(int argc, char* argv[]) {
             } else if (p == "autodiff") {
                 pm.addPass(std::make_unique<dlc::AutodiffPass>());
             } else if (p == "fusion") {
-                pm.addPass(std::make_unique<dlc::FusionPass>());
+                auto pass = std::make_unique<dlc::FusionPass>();
+                fusionPassPtr = std::make_unique<dlc::FusionPass>();
+                pm.addPass(std::move(pass));
             } else if (p == "mem-plan") {
-                pm.addPass(std::make_unique<dlc::MemoryPlanningPass>());
+                auto pass = std::make_unique<dlc::MemoryPlanningPass>();
+                memPlanPassPtr = std::make_unique<dlc::MemoryPlanningPass>();
+                pm.addPass(std::move(pass));
             } else {
                 std::cerr << "Warning: Unknown pass '" << p << "' ignored.\n";
             }
@@ -136,6 +158,41 @@ int main(int argc, char* argv[]) {
             }
             return 1;
         }
+    }
+
+    // Run standalone fusion / mem-plan for lowering if requested
+    dlc::FusionPass standaloneFusion;
+    dlc::MemoryPlanningPass standaloneMemPlan;
+    for (const auto& func : module->getFunctions()) {
+        standaloneFusion.runOnFunction(*func);
+        standaloneMemPlan.runOnFunction(*func);
+    }
+
+    if (printMemReport) {
+        std::cout << standaloneMemPlan.getMemoryReport();
+    }
+
+    if (emitLoopIR || emitLLVM) {
+        std::vector<dlc::loopir::KernelNest> allKernels;
+        for (const auto& func : module->getFunctions()) {
+            auto kernels = dlc::loopir::Lowering::lowerFunction(*func, &standaloneFusion, &standaloneMemPlan);
+            for (auto& k : kernels) {
+                dlc::loopir::LoopTilingPass::run(k);
+                dlc::loopir::LoopVectorizationPass::run(k, 8);
+                dlc::loopir::LoopParallelizationPass::run(k);
+                dlc::loopir::BoundsCheckEliminationPass::run(k);
+                allKernels.push_back(std::move(k));
+            }
+        }
+
+        if (emitLLVM) {
+            std::cout << dlc::backends::llvm::LLVMCodeGen::generateModuleIR(allKernels);
+        } else {
+            for (const auto& k : allKernels) {
+                std::cout << k.toString();
+            }
+        }
+        return 0;
     }
 
     if (exportDot) {

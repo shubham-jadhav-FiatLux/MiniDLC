@@ -4,8 +4,11 @@
 #include "dlc/passes/CSE.h"
 #include "dlc/passes/DCE.h"
 #include "dlc/passes/Autodiff.h"
+#include "dlc/passes/Fusion.h"
+#include "dlc/passes/MemoryPlanning.h"
 #include <cassert>
 #include <iostream>
+
 
 void testShapeBroadcasting() {
     dlc::Shape a = {128, 1};
@@ -90,10 +93,60 @@ void testAutodiff() {
     std::cout << "[PASS] testAutodiff\n";
 }
 
+void testFusion() {
+    dlc::IRBuilder builder;
+    auto f32_2d = std::make_shared<dlc::TensorType>(dlc::DataType::Float32, dlc::Shape{128, 784});
+    auto f32_w = std::make_shared<dlc::TensorType>(dlc::DataType::Float32, dlc::Shape{784, 256});
+    auto f32_b = std::make_shared<dlc::TensorType>(dlc::DataType::Float32, dlc::Shape{256});
+    auto func = builder.createFunction("test_fuse", {f32_2d, f32_w, f32_b}, {f32_2d});
+    auto x = func->getArguments()[0];
+    auto w = func->getArguments()[1];
+    auto b = func->getArguments()[2];
+
+    auto mm = builder.createMatmul(x, w);
+    auto add = builder.createAdd(mm, b);
+    auto relu = builder.createRelu(add);
+    builder.createReturn({relu});
+
+    dlc::FusionPass fusion;
+    bool ok = fusion.runOnFunction(*func);
+    assert(ok);
+    (void)ok;
+    assert(!fusion.getFusedGroups().empty());
+    assert(fusion.getFusedGroups()[0].kind == dlc::FusedGroupKind::MatmulEpilogue);
+    assert(fusion.getFusedGroups()[0].name == "fused_matmul_bias_relu");
+    std::cout << "[PASS] testFusion\n";
+}
+
+void testMemoryPlanning() {
+    dlc::IRBuilder builder;
+    auto f32_vec = std::make_shared<dlc::TensorType>(dlc::DataType::Float32, dlc::Shape{128, 256});
+    auto func = builder.createFunction("test_mem", {f32_vec, f32_vec}, {f32_vec});
+    auto x = func->getArguments()[0];
+    auto y = func->getArguments()[1];
+
+    auto t1 = builder.createAdd(x, y);
+    auto r1 = builder.createRelu(t1);
+    auto t2 = builder.createMul(r1, x);
+    auto r2 = builder.createRelu(t2);
+    builder.createReturn({r2});
+
+    dlc::MemoryPlanningPass memPlan;
+    bool ok = memPlan.runOnFunction(*func);
+    assert(ok);
+    (void)ok;
+    assert(memPlan.getTotalArenaSize() > 0);
+    assert(memPlan.getUnoptimizedSize() >= memPlan.getTotalArenaSize());
+    std::cout << "[PASS] testMemoryPlanning\n";
+}
+
 int main_passes_tests() {
     testShapeBroadcasting();
     testCSEAndDCE();
     testCanonicalize();
     testAutodiff();
+    testFusion();
+    testMemoryPlanning();
     return 0;
 }
+

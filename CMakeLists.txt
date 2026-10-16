@@ -64,17 +64,19 @@ target_include_directories(dlc_runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/includ
 
 # 5. Backends Library
 add_library(dlc_backends
+    lib/backends/llvm/LLVMCodeGen.cpp
     lib/backends/llvm/LLVMBackend.cpp
     lib/backends/cuda/CUDABackend.cpp
 )
-target_link_libraries(dlc_backends PUBLIC dlc_loopir dlc_runtime)
+target_link_libraries(dlc_backends PUBLIC dlc_loopir dlc_runtime ${CMAKE_DL_LIBS})
+
 
 # 6. Tools: dlc-opt
 if(DLC_BUILD_TOOLS)
     add_executable(dlc-opt
         tools/dlc-opt/dlc-opt.cpp
     )
-    target_link_libraries(dlc-opt PRIVATE dlc_passes dlc_ir)
+    target_link_libraries(dlc-opt PRIVATE dlc_backends dlc_loopir dlc_passes dlc_runtime dlc_ir)
 endif()
 
 # 7. Unit Tests
@@ -100,6 +102,7 @@ if(DLC_BUILD_TESTS)
         tests/unit/test_passes.cpp
         tests/unit/test_runtime.cpp
     )
-    target_link_libraries(dlc_unit_tests PRIVATE dlc_passes dlc_runtime dlc_loopir dlc_ir)
+    target_link_libraries(dlc_unit_tests PRIVATE dlc_backends dlc_passes dlc_runtime dlc_loopir dlc_ir)
+
     add_test(NAME dlc_unit_tests COMMAND dlc_unit_tests)
 endif()

@@ -1,0 +1,20 @@
+// RUN: %dlc-opt --passes=shape-infer,fusion --emit-loopir %s | FileCheck %s
+
+// CHECK: kernel @fused_matmul_bias_relu {
+// CHECK:   parallel for i in 0..128 {
+// CHECK:     for j in 0..256 {
+// CHECK:       acc = 0.0;
+// CHECK:       for k in 0..784 vectorize(8) {
+// CHECK:         acc = fma(arg0[((i * 784) + k)], arg1[((k * 256) + j)], acc);
+// CHECK:       }
+// CHECK:       2[((i * 256) + j)] = max((acc + arg2[j]), 0.0);
+// CHECK:     }
+// CHECK:   }
+// CHECK: }
+
+func @mlp_layer(%x: f32[128,784], %w: f32[784,256], %b: f32[256]) -> f32[128,256] {
+  %0 = matmul(%x, %w) : f32[128,256]
+  %1 = add(%0, %b) : f32[128,256]
+  %2 = relu(%1) : f32[128,256]
+  return %2
+}
