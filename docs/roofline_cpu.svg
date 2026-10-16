@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" width="800" height="500">
+<rect width="100%" height="100%" fill="#1a1b26"/>
+<text x="400" y="30" fill="#c0caf5" font-family="sans-serif" font-size="18" font-weight="bold" text-anchor="middle">Empirical CPU Roofline Model (MiniDLC)</text>
+<text x="400" y="48" fill="#7aa2f7" font-family="sans-serif" font-size="12" text-anchor="middle">Empirical Peak: 85.1 GFLOP/s | STREAM Copy BW: 14.0 GB/s | Ridge Point: 6.09 FLOP/B</text>
+<line x1="80.0" y1="60" x2="80.0" y2="440" stroke="#292e42" stroke-width="1"/>
+<text x="80.0" y="460" fill="#565f89" font-family="sans-serif" font-size="11" text-anchor="middle">0.01</text>
+<line x1="247.5" y1="60" x2="247.5" y2="440" stroke="#292e42" stroke-width="1"/>
+<text x="247.5" y="460" fill="#565f89" font-family="sans-serif" font-size="11" text-anchor="middle">0.10</text>
+<line x1="415.0" y1="60" x2="415.0" y2="440" stroke="#292e42" stroke-width="1"/>
+<text x="415.0" y="460" fill="#565f89" font-family="sans-serif" font-size="11" text-anchor="middle">1</text>
+<line x1="582.5" y1="60" x2="582.5" y2="440" stroke="#292e42" stroke-width="1"/>
+<text x="582.5" y="460" fill="#565f89" font-family="sans-serif" font-size="11" text-anchor="middle">10</text>
+<line x1="750.0" y1="60" x2="750.0" y2="440" stroke="#292e42" stroke-width="1"/>
+<text x="750.0" y="460" fill="#565f89" font-family="sans-serif" font-size="11" text-anchor="middle">100</text>
+<line x1="80" y1="440.0" x2="750" y2="440.0" stroke="#292e42" stroke-width="1"/>
+<text x="68" y="444.0" fill="#565f89" font-family="sans-serif" font-size="11" text-anchor="end">0.1</text>
+<line x1="80" y1="345.0" x2="750" y2="345.0" stroke="#292e42" stroke-width="1"/>
+<text x="68" y="349.0" fill="#565f89" font-family="sans-serif" font-size="11" text-anchor="end">1</text>
+<line x1="80" y1="250.0" x2="750" y2="250.0" stroke="#292e42" stroke-width="1"/>
+<text x="68" y="254.0" fill="#565f89" font-family="sans-serif" font-size="11" text-anchor="end">10</text>
+<line x1="80" y1="155.0" x2="750" y2="155.0" stroke="#292e42" stroke-width="1"/>
+<text x="68" y="159.0" fill="#565f89" font-family="sans-serif" font-size="11" text-anchor="end">100</text>
+<line x1="80" y1="60.0" x2="750" y2="60.0" stroke="#292e42" stroke-width="1"/>
+<text x="68" y="64.0" fill="#565f89" font-family="sans-serif" font-size="11" text-anchor="end">1000</text>
+<text x="415" y="485" fill="#a9b1d6" font-family="sans-serif" font-size="13" text-anchor="middle">Arithmetic Intensity (FLOP/byte)</text>
+<text x="25" y="250" fill="#a9b1d6" font-family="sans-serif" font-size="13" text-anchor="middle" transform="rotate(-90 25 250)">Performance (GFLOP/s)</text>
+<polyline points="80.0,426.2 83.4,424.3 86.7,422.3 90.1,420.4 93.5,418.5 96.8,416.6 100.2,414.7 103.6,412.8 106.9,410.9 110.3,409.0 113.7,407.1 117.0,405.2 120.4,403.2 123.8,401.3 127.1,399.4 130.5,397.5 133.9,395.6 137.2,393.7 140.6,391.8 144.0,389.9 147.3,388.0 150.7,386.1 154.1,384.2 157.4,382.2 160.8,380.3 164.2,378.4 167.5,376.5 170.9,374.6 174.3,372.7 177.6,370.8 181.0,368.9 184.4,367.0 187.7,365.1 191.1,363.1 194.5,361.2 197.8,359.3 201.2,357.4 204.6,355.5 207.9,353.6 211.3,351.7 214.7,349.8 218.0,347.9 221.4,346.0 224.8,344.1 228.1,342.1 231.5,340.2 234.9,338.3 238.2,336.4 241.6,334.5 245.0,332.6 248.3,330.7 251.7,328.8 255.1,326.9 258.4,325.0 261.8,323.0 265.2,321.1 268.5,319.2 271.9,317.3 275.3,315.4 278.6,313.5 282.0,311.6 285.4,309.7 288.7,307.8 292.1,305.9 295.5,304.0 298.8,302.0 302.2,300.1 305.6,298.2 308.9,296.3 312.3,294.4 315.7,292.5 319.0,290.6 322.4,288.7 325.8,286.8 329.1,284.9 332.5,282.9 335.9,281.0 339.2,279.1 342.6,277.2 346.0,275.3 349.3,273.4 352.7,271.5 356.1,269.6 359.4,267.7 362.8,265.8 366.2,263.9 369.5,261.9 372.9,260.0 376.3,258.1 379.6,256.2 383.0,254.3 386.4,252.4 389.7,250.5 393.1,248.6 396.5,246.7 399.8,244.8 403.2,242.8 406.6,240.9 409.9,239.0 413.3,237.1 416.7,235.2 420.1,233.3 423.4,231.4 426.8,229.5 430.2,227.6 433.5,225.7 436.9,223.8 440.3,221.8 443.6,219.9 447.0,218.0 450.4,216.1 453.7,214.2 457.1,212.3 460.5,210.4 463.8,208.5 467.2,206.6 470.6,204.7 473.9,202.7 477.3,200.8 480.7,198.9 484.0,197.0 487.4,195.1 490.8,193.2 494.1,191.3 497.5,189.4 500.9,187.5 504.2,185.6 507.6,183.6 511.0,181.7 514.3,179.8 517.7,177.9 521.1,176.0 524.4,174.1 527.8,172.2 531.2,170.3 534.5,168.4 537.9,166.5 541.3,164.6 544.6,162.6 548.0,161.7 551.4,161.7 554.7,161.7 558.1,161.7 561.5,161.7 564.8,161.7 568.2,161.7 571.6,161.7 574.9,161.7 578.3,161.7 581.7,161.7 585.0,161.7 588.4,161.7 591.8,161.7 595.1,161.7 598.5,161.7 601.9,161.7 605.2,161.7 608.6,161.7 612.0,161.7 615.3,161.7 618.7,161.7 622.1,161.7 625.4,161.7 628.8,161.7 632.2,161.7 635.5,161.7 638.9,161.7 642.3,161.7 645.6,161.7 649.0,161.7 652.4,161.7 655.7,161.7 659.1,161.7 662.5,161.7 665.8,161.7 669.2,161.7 672.6,161.7 675.9,161.7 679.3,161.7 682.7,161.7 686.0,161.7 689.4,161.7 692.8,161.7 696.1,161.7 699.5,161.7 702.9,161.7 706.2,161.7 709.6,161.7 713.0,161.7 716.3,161.7 719.7,161.7 723.1,161.7 726.4,161.7 729.8,161.7 733.2,161.7 736.5,161.7 739.9,161.7 743.3,161.7 746.6,161.7 750.0,161.7" fill="none" stroke="#f7768e" stroke-width="3" stroke-linecap="round"/>
+<line x1="546.367407956785" y1="161.6554312855202" x2="546.367407956785" y2="440" stroke="#bb9af7" stroke-width="1.5" stroke-dasharray="4,4"/>
+<circle cx="546.367407956785" cy="161.6554312855202" r="5" fill="#bb9af7"/>
+<text x="554.367407956785" y="153.6554312855202" fill="#bb9af7" font-family="sans-serif" font-size="11">Ridge: 6.09 FLOP/B</text>
+<circle cx="680.5610524416857" cy="253.44536187814376" r="6" fill="#7aa2f7" stroke="#ffffff" stroke-width="1.5"/>
+<text x="688.5610524416857" y="257.4453618781438" fill="#7aa2f7" font-family="sans-serif" font-size="11" font-weight="bold">Fused Matmul+Bias+ReLU (9.2 GFLOP/s)</text>
+<circle cx="656.4838628230351" cy="294.54970658658465" r="6" fill="#9ece6a" stroke="#ffffff" stroke-width="1.5"/>
+<text x="664.4838628230351" y="298.54970658658465" fill="#9ece6a" font-family="sans-serif" font-size="11" font-weight="bold">NumPy Unfused Matmul (3.4 GFLOP/s)</text>
+<circle cx="359.18654126157344" cy="225.38104535779706" r="6" fill="#e0af68" stroke="#ffffff" stroke-width="1.5"/>
+<text x="367.18654126157344" y="229.38104535779706" fill="#e0af68" font-family="sans-serif" font-size="11" font-weight="bold">Adam Update (Memory) (18.2 GFLOP/s)</text>
+<circle cx="314.15495145256625" cy="283.1691782285899" r="6" fill="#bb9af7" stroke="#ffffff" stroke-width="1.5"/>
+<text x="322.15495145256625" y="287.1691782285899" fill="#bb9af7" font-family="sans-serif" font-size="11" font-weight="bold">ReLU Activation (Memory) (4.5 GFLOP/s)</text>
+</svg>

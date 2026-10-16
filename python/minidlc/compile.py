@@ -82,93 +82,82 @@ def compile(
 
         topo_sort(loss)
 
-        # Determine shapes and sizes
-        batch_size = 128
-        in_dim = 784
-        hidden_dim = 256
-        out_dim = 10
-
-        # Parameter references
+        # Dynamically determine model architecture and layer dimensions from optimizer parameters
         params = optimizer.parameters if optimizer else []
-        w1, b1, w2, b2 = None, None, None, None
-        for p in params:
-            if p.shape == (in_dim, hidden_dim):
-                w1 = p
-            elif p.shape == (hidden_dim,) and w1 is not None and b1 is None:
-                b1 = p
-            elif p.shape == (hidden_dim, out_dim):
-                w2 = p
-            elif p.shape == (out_dim,) and w2 is not None:
-                b2 = p
+        weights = [p for p in params if len(p.shape) == 2]
+        biases = [p for p in params if len(p.shape) == 1]
 
-        # Fallback to topology inspection if shapes differ
-        if not (w1 and b1 and w2 and b2):
-            for p in params:
-                if len(p.shape) == 2 and w1 is None:
-                    w1 = p
-                    in_dim, hidden_dim = p.shape
-                elif len(p.shape) == 1 and b1 is None and w1 is not None:
-                    b1 = p
-                elif len(p.shape) == 2 and w2 is None:
-                    w2 = p
-                    _, out_dim = p.shape
-                elif len(p.shape) == 1 and b2 is None:
-                    b2 = p
+        if len(weights) < 2:
+            raise ValueError(f"Expected at least 2 weight matrices for execution, found {len(weights)}")
 
-        # Set up contiguous arena with memory reuse
-        # Peak memory planning:
-        # Offsets aligned to 64 bytes
+        w1, w2 = weights[0], weights[1]
+        b1 = biases[0] if len(biases) > 0 else None
+        b2 = biases[1] if len(biases) > 1 else None
+
+        in_dim = w1.shape[0]
+        hidden_dim = w1.shape[1]
+        out_dim = w2.shape[1]
+
+        # Dynamic arena allocation helper
         def align64(n: int) -> int:
             return (n + 63) & ~63
 
-        sz_H = align64(batch_size * hidden_dim * 4)        # [128, 256] -> 131072 B
-        sz_logits = align64(batch_size * out_dim * 4)       # [128, 10]  -> 5120 B
-        sz_probs = align64(batch_size * out_dim * 4)        # [128, 10]  -> 5120 B
-        sz_dlogits = align64(batch_size * out_dim * 4)      # [128, 10]  -> 5120 B
-        sz_dW2 = align64(hidden_dim * out_dim * 4)          # [256, 10]  -> 10240 B
-        sz_db2 = align64(out_dim * 4)                       # [10]       -> 64 B
-        sz_dH = align64(batch_size * hidden_dim * 4)        # [128, 256] -> 131072 B
-        sz_dH_pre = align64(batch_size * hidden_dim * 4)    # Reuses dH!
-        sz_dW1 = align64(in_dim * hidden_dim * 4)           # [784, 256] -> 802816 B
-        sz_db1 = align64(hidden_dim * 4)                    # [256]      -> 1024 B
+        current_arena: Optional[AlignedArena] = None
+        current_arena_batch_size: int = 0
+        arena_tensors: Dict[str, np.ndarray] = {}
 
-        # Total arena allocation with liveness reuse:
-        # dH and dH_pre share offset!
-        offset_H = 0
-        offset_logits = offset_H + sz_H
-        offset_probs = offset_logits + sz_logits
-        offset_dlogits = offset_probs + sz_probs
-        offset_dW2 = offset_dlogits + sz_dlogits
-        offset_db2 = offset_dW2 + sz_dW2
-        offset_dH = offset_db2 + sz_db2
-        offset_dH_pre = offset_dH  # Memory reuse!
-        offset_dW1 = offset_dH + sz_dH
-        offset_db1 = offset_dW1 + sz_dW1
+        def setup_arena(batch_sz: int) -> None:
+            nonlocal current_arena, current_arena_batch_size, arena_tensors
+            if current_arena is not None and current_arena_batch_size == batch_sz:
+                return
 
-        total_arena_bytes = offset_db1 + sz_db1
-        arena = AlignedArena(total_arena_bytes)
+            sz_H = align64(batch_sz * hidden_dim * 4)
+            sz_logits = align64(batch_sz * out_dim * 4)
+            sz_probs = align64(batch_sz * out_dim * 4)
+            sz_dlogits = align64(batch_sz * out_dim * 4)
+            sz_dW2 = align64(hidden_dim * out_dim * 4)
+            sz_db2 = align64(out_dim * 4)
+            sz_dH = align64(batch_sz * hidden_dim * 4)
+            sz_dW1 = align64(in_dim * hidden_dim * 4)
+            sz_db1 = align64(hidden_dim * 4)
 
-        # Map arena tensors
-        H = arena.alloc_tensor(offset_H, (batch_size, hidden_dim))
-        logits = arena.alloc_tensor(offset_logits, (batch_size, out_dim))
-        probs = arena.alloc_tensor(offset_probs, (batch_size, out_dim))
-        dlogits = arena.alloc_tensor(offset_dlogits, (batch_size, out_dim))
-        dW2 = arena.alloc_tensor(offset_dW2, (hidden_dim, out_dim))
-        db2 = arena.alloc_tensor(offset_db2, (out_dim,))
-        dH = arena.alloc_tensor(offset_dH, (batch_size, hidden_dim))
-        dH_pre = arena.alloc_tensor(offset_dH_pre, (batch_size, hidden_dim))
-        dW1 = arena.alloc_tensor(offset_dW1, (in_dim, hidden_dim))
-        db1 = arena.alloc_tensor(offset_db1, (hidden_dim,))
+            offset_H = 0
+            offset_logits = offset_H + sz_H
+            offset_probs = offset_logits + sz_logits
+            offset_dlogits = offset_probs + sz_probs
+            offset_dW2 = offset_dlogits + sz_dlogits
+            offset_db2 = offset_dW2 + sz_dW2
+            offset_dH = offset_db2 + sz_db2
+            offset_dH_pre = offset_dH  # Liveness reuse: dH_pre reuses dH offset
+            offset_dW1 = offset_dH + sz_dH
+            offset_db1 = offset_dW1 + sz_dW1
+
+            total_bytes = offset_db1 + sz_db1
+            current_arena = AlignedArena(total_bytes)
+            current_arena_batch_size = batch_sz
+
+            arena_tensors = {
+                "H": current_arena.alloc_tensor(offset_H, (batch_sz, hidden_dim)),
+                "logits": current_arena.alloc_tensor(offset_logits, (batch_sz, out_dim)),
+                "probs": current_arena.alloc_tensor(offset_probs, (batch_sz, out_dim)),
+                "dlogits": current_arena.alloc_tensor(offset_dlogits, (batch_sz, out_dim)),
+                "dW2": current_arena.alloc_tensor(offset_dW2, (hidden_dim, out_dim)),
+                "db2": current_arena.alloc_tensor(offset_db2, (out_dim,)),
+                "dH": current_arena.alloc_tensor(offset_dH, (batch_sz, hidden_dim)),
+                "dH_pre": current_arena.alloc_tensor(offset_dH_pre, (batch_sz, hidden_dim)),
+                "dW1": current_arena.alloc_tensor(offset_dW1, (in_dim, hidden_dim)),
+                "db1": current_arena.alloc_tensor(offset_db1, (hidden_dim,)),
+            }
 
         # Initialize Adam optimizer buffers resident in CPU memory
         m_w1 = np.zeros_like(w1.data)
         v_w1 = np.zeros_like(w1.data)
-        m_b1 = np.zeros_like(b1.data)
-        v_b1 = np.zeros_like(b1.data)
+        m_b1 = np.zeros_like(b1.data) if b1 else None
+        v_b1 = np.zeros_like(b1.data) if b1 else None
         m_w2 = np.zeros_like(w2.data)
         v_w2 = np.zeros_like(w2.data)
-        m_b2 = np.zeros_like(b2.data)
-        v_b2 = np.zeros_like(b2.data)
+        m_b2 = np.zeros_like(b2.data) if b2 else None
+        v_b2 = np.zeros_like(b2.data) if b2 else None
 
         step_count = 0
         lr = optimizer.lr if optimizer else 1e-3
@@ -180,7 +169,6 @@ def compile(
             beta2 = optimizer.beta2
             eps = optimizer.eps
 
-
         def step_fn(**kwargs: np.ndarray) -> float:
             nonlocal step_count
             step_count += 1
@@ -190,17 +178,31 @@ def compile(
             if not isinstance(X, np.ndarray) or not isinstance(Y, np.ndarray):
                 raise ValueError("Expected ndarray inputs for 'x' and 'y'")
 
+            batch_sz = X.shape[0]
+            setup_arena(batch_sz)
+
+            H = arena_tensors["H"]
+            logits = arena_tensors["logits"]
+            probs = arena_tensors["probs"]
+            dlogits = arena_tensors["dlogits"]
+            dW2 = arena_tensors["dW2"]
+            db2 = arena_tensors["db2"]
+            dH = arena_tensors["dH"]
+            dH_pre = arena_tensors["dH_pre"]
+            dW1 = arena_tensors["dW1"]
+            db1 = arena_tensors["db1"]
+
             # 1. Forward Pass
             # Layer 1: H = relu(X @ W1 + b1) [Fused Matmul + Bias + ReLU]
             engine.matmul_bias_relu(
                 X.ctypes.data, w1.data.ctypes.data, b1.data.ctypes.data,
-                H.ctypes.data, batch_size, in_dim, hidden_dim
+                H.ctypes.data, batch_sz, in_dim, hidden_dim
             )
 
             # Layer 2: logits = H @ W2 + b2 [Fused Matmul + Bias]
             engine.matmul_bias(
                 H.ctypes.data, w2.data.ctypes.data, b2.data.ctypes.data,
-                logits.ctypes.data, batch_size, hidden_dim, out_dim
+                logits.ctypes.data, batch_sz, hidden_dim, out_dim
             )
 
             # 2. Stable Softmax & Cross Entropy Loss
@@ -211,49 +213,49 @@ def compile(
 
             # Loss computation
             log_sum_exp = logits_max.squeeze(-1) + np.log(sum_exp.squeeze(-1))
-            loss_val = float(np.mean(log_sum_exp - logits[np.arange(batch_size), Y]))
+            loss_val = float(np.mean(log_sum_exp - logits[np.arange(batch_sz), Y]))
 
             if optimizer is not None:
                 # 3. Backward Pass
-                # dLogits = (probs - one_hot(Y)) / batch_size
+                # dLogits = (probs - one_hot(Y)) / batch_sz
                 np.copyto(dlogits, probs)
-                dlogits[np.arange(batch_size), Y] -= 1.0
-                np.multiply(dlogits, 1.0 / float(batch_size), out=dlogits)
-
+                dlogits[np.arange(batch_sz), Y] -= 1.0
+                np.multiply(dlogits, 1.0 / float(batch_sz), out=dlogits)
 
                 # Layer 2 Backward:
                 # dW2 = H.T @ dlogits
                 engine.matmul_transA(
                     H.ctypes.data, dlogits.ctypes.data, dW2.ctypes.data,
-                    hidden_dim, batch_size, out_dim
+                    hidden_dim, batch_sz, out_dim
                 )
                 # db2 = sum(dlogits, axis=0)
                 engine.bias_backward(
                     dlogits.ctypes.data, db2.ctypes.data,
-                    batch_size, out_dim
+                    batch_sz, out_dim
                 )
                 # dH = dlogits @ W2.T
                 engine.matmul_transB(
                     dlogits.ctypes.data, w2.data.ctypes.data, dH.ctypes.data,
-                    batch_size, out_dim, hidden_dim
+                    batch_sz, out_dim, hidden_dim
                 )
 
                 # Layer 1 Backward:
                 # dH_pre = (H > 0) ? dH : 0
                 engine.relu_backward(
                     dH.ctypes.data, H.ctypes.data, dH_pre.ctypes.data,
-                    batch_size * hidden_dim
+                    batch_sz * hidden_dim
                 )
                 # dW1 = X.T @ dH_pre
                 engine.matmul_transA(
                     X.ctypes.data, dH_pre.ctypes.data, dW1.ctypes.data,
-                    in_dim, batch_size, hidden_dim
+                    in_dim, batch_sz, hidden_dim
                 )
                 # db1 = sum(dH_pre, axis=0)
                 engine.bias_backward(
                     dH_pre.ctypes.data, db1.ctypes.data,
-                    batch_size, hidden_dim
+                    batch_sz, hidden_dim
                 )
+
 
                 # 4. Fused Adam Optimizer Updates (AVX2 Vectorized)
                 bc1 = 1.0 - (beta1 ** step_count)
