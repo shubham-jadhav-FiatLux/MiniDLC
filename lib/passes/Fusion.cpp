@@ -76,7 +76,16 @@ bool FusionPass::runOnFunction(Function& func) {
                 visited.insert(act);
             }
 
-            if (act) {
+            Operation* opA = op->getOperand(0)->getDefiningOp();
+            Operation* opB = op->getOperand(1)->getDefiningOp();
+            bool transA = (opA && opA->getOpName() == "transpose");
+            bool transB = (opB && opB->getOpName() == "transpose");
+
+            if (transA) {
+                group.name = "matmul_transA";
+            } else if (transB) {
+                group.name = "matmul_transB";
+            } else if (act) {
                 group.name = "fused_matmul_bias_relu";
             } else if (biasAdd) {
                 group.name = "fused_matmul_bias";

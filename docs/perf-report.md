@@ -78,3 +78,58 @@ Model: MLP ($784 \to 256 \to 10$), ReLU activations, Cross-Entropy loss, Adam op
 | **MiniDLC CPU Backend** (LLVM JIT + AVX2) | **34.0 s** | **3.4 s** | **96.88%** |
 
 The native LLVM CPU backend achieves a **2.27x wall-clock speedup** over the reference interpreter while matching final test accuracy within 0.05%.
+
+---
+
+## 6. GPU Hardware Baseline & Roofline Model (Milestone M3)
+
+### Target GPU Architecture Specifications
+
+The MiniDLC CUDA GPU backend targets NVIDIA GPU computing architectures (CS6023). Hardware bounds are established on standard deep learning accelerators:
+
+| Metric | NVIDIA T4 (Turing) | NVIDIA A100 (Ampere) |
+|---|:---:|:---:|
+| **CUDA Architecture** | `sm_75` | `sm_80` |
+| **CUDA Cores** | 2,560 | 6,912 |
+| **FP32 Peak Compute** | $\mathbf{8.1\text{ TFLOP/s}}$ ($8,100\text{ GFLOP/s}$) | $\mathbf{19.5\text{ TFLOP/s}}$ ($19,500\text{ GFLOP/s}$) |
+| **Memory Bandwidth** | $\mathbf{320.0\text{ GB/s}}$ (GDDR6) | $\mathbf{1,555.0\text{ GB/s}}$ (HBM2e) |
+| **Hardware Ridge Point ($I^*$)** | $\mathbf{25.31\text{ FLOP/byte}}$ | $\mathbf{12.54\text{ FLOP/byte}}$ |
+
+Attainable performance ceiling on GPU:
+$$\text{Attainable Throughput (GFLOP/s)} = \min\left(\text{Peak Compute}, \text{Peak Memory Bandwidth} \times I\right)$$
+
+![GPU Roofline Diagram](roofline_gpu.svg)
+
+### Workload Kernel Roofline Characterization
+
+Operational intensity and hardware bounds computed for the forward and backward training graphs (batch size $128$, input dimension $784$, hidden dimension $256$, output classes $10$):
+
+| Kernel | Pass | Arithmetic Intensity (FLOP/B) | Total FLOPs | DRAM Bytes Moved | Regime (T4) | T4 Attainment Ceiling |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| **Fused Matmul+Bias+ReLU** | Forward | **38.50** | 51,445,760 | 1,336,320 | **Compute-bound** | **8,100.0 GFLOP/s** (100% Peak) |
+| **Unfused Matmul+Bias+ReLU** | Forward | 27.65 | 51,445,760 | 1,860,608 | Compute-bound | 8,100.0 GFLOP/s (100% Peak) |
+| **Matmul TransA ($dW_1$)** | Backward | **38.48** | 51,380,224 | 1,335,296 | **Compute-bound** | **8,100.0 GFLOP/s** (100% Peak) |
+| **Matmul TransB ($dH$)** | Backward | 4.48 | 655,360 | 146,432 | Memory-bound | 1,432.2 GFLOP/s (17.7% Peak) |
+| **Bias Backward (Reduction)** | Backward | 0.25 | 32,768 | 132,096 | Memory-bound | 79.4 GFLOP/s (1.0% Peak) |
+| **Fused GPU Adam Update** | Optimizer | 0.46 | 2,207,744 | 4,816,896 | Memory-bound | 146.7 GFLOP/s (1.8% Peak) |
+| **ReLU Backward** | Backward | 0.08 | 32,768 | 393,216 | Memory-bound | 26.7 GFLOP/s (0.3% Peak) |
+| **Row-wise Softmax Loss** | Loss | 0.62 | 6,400 | 10,240 | Memory-bound | 200.0 GFLOP/s (2.5% Peak) |
+
+### GPU Microarchitectural Insights (CS6023 Principles)
+
+1. **Shared-Memory 2D Tiling (`TILE_DIM = 16`)**:
+   - Both forward `matmul` and backward `matmul_transA`/`matmul_transB` load $16 \times 16$ tiles into `__shared__ float sA[16][16]` and `sB[16][16]`.
+   - Each global element loaded is reused $16\times$ across threads in the block, reducing DRAM memory traffic by **$16\times$**.
+   - Global memory loads are structured with stride 1 across threads in a warp, ensuring **100% coalesced 32-byte / 64-byte DRAM transactions**. Transposition is performed in on-chip shared memory at zero DRAM cost.
+
+2. **Fused Multi-Tensor Register Adam Kernel**:
+   - Rather than launching 4 separate memory-bound kernels to update parameters, gradients, and 1st/2nd moments, MiniDLC fuses the entire update into a single kernel.
+   - Values are loaded into registers once, moments and bias corrections are updated entirely in on-chip registers, and updated parameters are written back in a single pass. This eliminates **3 round-trips to DRAM**, saving up to **66% of memory traffic** during the optimizer step.
+
+3. **Warp-Shuffle Parallel Reduction Trees (`__shfl_down_sync`)**:
+   - Reductions in row-wise softmax and cross-entropy loss use register shuffle intrinsics (`__shfl_down_sync`) rather than shared memory arrays.
+   - Threads communicate directly across warp registers in $\log_2(32) = 5$ instructions with zero bank conflicts, zero shared memory allocations, and zero intra-warp `__syncthreads()` barrier stalls.
+
+4. **Hardware Atomic Scatter (`atomicAdd`)**:
+   - Backward embedding updates map multiple token indices to sparse table locations using native hardware `atomicAdd` instructions, eliminating race conditions while enabling fine-grained parallel updates across distinct embedding dimensions.
+
