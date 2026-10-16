@@ -75,12 +75,20 @@ class ReferenceInterpreter:
             elif node.op == "cross_entropy":
                 logits = values[node.inputs[0]]
                 targets = values[node.inputs[1]].astype(np.int64)
-                # Stable cross entropy via log-sum-exp
-                shift_z = logits - np.max(logits, axis=-1, keepdims=True)
-                lse = np.log(np.sum(np.exp(shift_z), axis=-1, keepdims=True)) + np.max(logits, axis=-1, keepdims=True)
-                N = logits.shape[0]
-                correct_logits = logits[np.arange(N), targets]
-                values[node] = np.mean(lse.squeeze(-1) - correct_logits)
+                if len(logits.shape) == 3:
+                    B_sz, T_sz, V_sz = logits.shape
+                    logits_flat = logits.reshape(B_sz * T_sz, V_sz)
+                    targets_flat = targets.reshape(B_sz * T_sz)
+                    shift_z = logits_flat - np.max(logits_flat, axis=-1, keepdims=True)
+                    lse = np.log(np.sum(np.exp(shift_z), axis=-1, keepdims=True)) + np.max(logits_flat, axis=-1, keepdims=True)
+                    correct_logits = logits_flat[np.arange(B_sz * T_sz), targets_flat]
+                    values[node] = np.mean(lse.squeeze(-1) - correct_logits)
+                else:
+                    shift_z = logits - np.max(logits, axis=-1, keepdims=True)
+                    lse = np.log(np.sum(np.exp(shift_z), axis=-1, keepdims=True)) + np.max(logits, axis=-1, keepdims=True)
+                    N = logits.shape[0]
+                    correct_logits = logits[np.arange(N), targets]
+                    values[node] = np.mean(lse.squeeze(-1) - correct_logits)
             elif node.op == "layernorm":
                 x = values[node.inputs[0]]
                 gamma = values[node.inputs[1]]
@@ -114,7 +122,12 @@ class ReferenceInterpreter:
         return values
 
     def backward(self, root: Tensor, values: Dict[Tensor, np.ndarray]) -> Dict[Tensor, np.ndarray]:
-        grads: Dict[Tensor, np.ndarray] = {root: np.array(1.0, dtype=self.dtype)}
+        if root not in values:
+            values = self.forward(root, values)
+        root_val = values.get(root, np.array(1.0, dtype=self.dtype))
+        grads: Dict[Tensor, np.ndarray] = {
+            root: np.ones(root_val.shape, dtype=self.dtype) if root_val.shape else np.array(1.0, dtype=self.dtype)
+        }
 
         topo: List[Tensor] = []
         visited = set()
@@ -136,10 +149,20 @@ class ReferenceInterpreter:
             if node.op == "matmul":
                 A, B = node.inputs[0], node.inputs[1]
                 valA, valB = values[A], values[B]
-                dA = dY @ np.swapaxes(valB, -1, -2)
-                dB = np.swapaxes(valA, -1, -2) @ dY
-                grads[A] = grads.get(A, 0.0) + _unbroadcast(dA, A.shape)
-                grads[B] = grads.get(B, 0.0) + _unbroadcast(dB, B.shape)
+                if len(A.shape) == 3 and len(B.shape) == 2:
+                    dA = dY @ valB.T
+                    B_sz, T_sz, D_sz = A.shape
+                    H_sz = B.shape[1]
+                    A_flat = valA.reshape(B_sz * T_sz, D_sz)
+                    dY_flat = dY.reshape(B_sz * T_sz, H_sz)
+                    dB = A_flat.T @ dY_flat
+                    grads[A] = grads.get(A, 0.0) + _unbroadcast(dA, A.shape)
+                    grads[B] = grads.get(B, 0.0) + _unbroadcast(dB, B.shape)
+                else:
+                    dA = dY @ np.swapaxes(valB, -1, -2)
+                    dB = np.swapaxes(valA, -1, -2) @ dY
+                    grads[A] = grads.get(A, 0.0) + _unbroadcast(dA, A.shape)
+                    grads[B] = grads.get(B, 0.0) + _unbroadcast(dB, B.shape)
             elif node.op == "add":
                 A, B = node.inputs[0], node.inputs[1]
                 grads[A] = grads.get(A, 0.0) + _unbroadcast(dY, A.shape)
@@ -196,14 +219,27 @@ class ReferenceInterpreter:
                 targets = node.inputs[1]
                 valLogits = values[logits]
                 valTargets = values[targets].astype(np.int64)
-                shift_z = valLogits - np.max(valLogits, axis=-1, keepdims=True)
-                exps = np.exp(shift_z)
-                softmax_vals = exps / np.sum(exps, axis=-1, keepdims=True)
-                N = valLogits.shape[0]
-                one_hot = np.zeros_like(valLogits)
-                one_hot[np.arange(N), valTargets] = 1.0
-                dLogits = (softmax_vals - one_hot) / N
-                grads[logits] = grads.get(logits, 0.0) + dY * dLogits
+                if len(valLogits.shape) == 3:
+                    B_sz, T_sz, V_sz = valLogits.shape
+                    logits_flat = valLogits.reshape(B_sz * T_sz, V_sz)
+                    targets_flat = valTargets.reshape(B_sz * T_sz)
+                    shift_z = logits_flat - np.max(logits_flat, axis=-1, keepdims=True)
+                    exps = np.exp(shift_z)
+                    softmax_vals = exps / np.sum(exps, axis=-1, keepdims=True)
+                    N = B_sz * T_sz
+                    one_hot = np.zeros_like(logits_flat)
+                    one_hot[np.arange(N), targets_flat] = 1.0
+                    dLogits = ((softmax_vals - one_hot) / float(N)).reshape(B_sz, T_sz, V_sz)
+                    grads[logits] = grads.get(logits, 0.0) + dY * dLogits
+                else:
+                    shift_z = valLogits - np.max(valLogits, axis=-1, keepdims=True)
+                    exps = np.exp(shift_z)
+                    softmax_vals = exps / np.sum(exps, axis=-1, keepdims=True)
+                    N = valLogits.shape[0]
+                    one_hot = np.zeros_like(valLogits)
+                    one_hot[np.arange(N), valTargets] = 1.0
+                    dLogits = (softmax_vals - one_hot) / float(N)
+                    grads[logits] = grads.get(logits, 0.0) + dY * dLogits
             elif node.op == "layernorm":
                 x, gamma, beta = node.inputs[0], node.inputs[1], node.inputs[2]
                 val_x = values[x]

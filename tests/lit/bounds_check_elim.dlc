@@ -1,0 +1,26 @@
+// RUN: %dlc-opt --passes=shape-infer,fusion --emit-loopir %s | FileCheck %s
+
+// CHECK: kernel @matmul {
+// CHECK:   attributes {bounds_check_eliminated = true}
+// CHECK:   parallel for i in 0..64 {
+// CHECK:     for j in 0..128 {
+// CHECK:       acc = 0.0;
+// CHECK:       for k in 0..256 vectorize(8) {
+// CHECK:         acc = fma(arg0[((i * 256) + k)], arg1[((k * 128) + j)], acc);
+// CHECK:       }
+// CHECK:       0[((i * 128) + j)] = acc;
+// CHECK:     }
+// CHECK:   }
+// CHECK: }
+// CHECK: kernel @fused_elementwise_relu {
+// CHECK:   attributes {bounds_check_eliminated = true}
+// CHECK:   parallel for idx in 0..8192 vectorize(8) {
+// CHECK:     1[idx] = relu(0[idx]);
+// CHECK:   }
+// CHECK: }
+
+func @test_bounds_check_elim(%a: f32[64,256], %b: f32[256,128]) -> f32[64,128] {
+  %0 = matmul(%a, %b) : f32[64,128]
+  %1 = relu(%0) : f32[64,128]
+  return %1
+}

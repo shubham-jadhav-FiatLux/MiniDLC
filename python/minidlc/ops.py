@@ -29,9 +29,26 @@ def matmul(a: Tensor, b: Tensor) -> Tensor:
         if a.shape[0] != b.shape[0] or a.shape[2] != b.shape[1]:
             raise ValueError(f"Shape mismatch in batched matmul: {a.shape} and {b.shape}")
         out_shape = (a.shape[0], a.shape[1], b.shape[2])
+    elif len(a.shape) == 4 and len(b.shape) == 4:
+        if a.shape[0] != b.shape[0] or a.shape[1] != b.shape[1] or a.shape[3] != b.shape[2]:
+            raise ValueError(f"Shape mismatch in 4D batched matmul: {a.shape} and {b.shape}")
+        out_shape = (a.shape[0], a.shape[1], a.shape[2], b.shape[3])
+    elif len(a.shape) == 3 and len(b.shape) == 2:
+        # Sequence linear projection: [B, T, D] @ [D, H] -> [B, T, H]
+        if a.shape[2] != b.shape[0]:
+            raise ValueError(f"Shape mismatch in sequence projection: {a.shape} and {b.shape}")
+        out_shape = (a.shape[0], a.shape[1], b.shape[1])
     else:
         raise ValueError(f"Unsupported shapes for matmul: {a.shape} and {b.shape}")
     return Tensor(shape=out_shape, dtype=a.dtype, op="matmul", inputs=[a, b])
+
+def triu_mask(seq_len: int, dtype: str = "f32") -> Tensor:
+    """Creates a causal attention upper-triangular mask (0.0 on/below diagonal, -1e4 above)."""
+    mask_data = np.full((seq_len, seq_len), -1e4, dtype=np.float32)
+    for i in range(seq_len):
+        for j in range(i + 1):
+            mask_data[i, j] = 0.0
+    return Tensor(shape=(seq_len, seq_len), dtype=dtype, op="constant", data=mask_data)
 
 def add(a: Union[Tensor, float, int], b: Union[Tensor, float, int]) -> Tensor:
     if not isinstance(a, Tensor):

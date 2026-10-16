@@ -68,6 +68,9 @@ std::string KernelNest::toString() const {
         }
         oss << "]\n";
     }
+    if (boundsCheckEliminated_) {
+        oss << "  attributes {bounds_check_eliminated = true}\n";
+    }
     for (const auto& s : rootStmts_) {
         oss << s->toString(1) << "\n";
     }

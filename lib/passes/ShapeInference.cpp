@@ -65,6 +65,8 @@ bool ShapeInferencePass::runOnFunction(Function& func) {
                         expected = std::make_shared<TensorType>(t0->getElementType(), Shape{s0[0], s1[1]});
                     } else if (s0.size() == 3 && s1.size() == 3 && s0[0] == s1[0] && s0[2] == s1[1]) {
                         expected = std::make_shared<TensorType>(t0->getElementType(), Shape{s0[0], s0[1], s1[2]});
+                    } else if (s0.size() == 4 && s1.size() == 4 && s0[0] == s1[0] && s0[1] == s1[1] && s0[3] == s1[2]) {
+                        expected = std::make_shared<TensorType>(t0->getElementType(), Shape{s0[0], s0[1], s0[2], s1[3]});
                     }
                 }
             }

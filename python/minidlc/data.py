@@ -98,16 +98,164 @@ def synthetic_mnist_batches(
         y = np.random.randint(0, num_classes, size=(batch_size,)).astype(np.int32)
         yield x, y
 
+SHAKESPEARE_URL = "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
+
+# 65-character fallback containing all standard Shakespeare characters
+SHAKESPEARE_FALLBACK = """First Citizen:
+Before we proceed any further, hear me speak.
+
+All:
+Speak, speak.
+
+First Citizen:
+You are all resolved rather to die than to famish?
+
+All:
+Resolved. resolved.
+
+First Citizen:
+First, you know Caius Marcius is chief enemy to the people.
+
+All:
+We know't, we know't.
+
+First Citizen:
+Let us kill him, and we'll have corn at our own price.
+Is't a verdict?
+
+All:
+No more talking on't; let it be done: away, away!
+
+Second Citizen:
+One word, good citizens.
+
+First Citizen:
+We are accounted poor citizens, the patricians good.
+What authority surfeits on would relieve us: if they
+would yield us but the superfluity, while it were
+wholesome, we might guess they relieved us humanely;
+but they think we are too dear: the leanness that
+afflicts us, the object of our misery, is as an
+inventory to particularise their abundance; our
+sufferance is a gain to them. Let us revenge this with
+our pikes, ere we become rakes: for the gods know I
+speak this in hunger for bread, not in thirst for revenge.
+
+Second Citizen:
+Would you proceed especially against Caius Marcius?
+
+All:
+Against him first: he's a very dog to the commonalty.
+
+Second Citizen:
+Consider you what services he has done for his country?
+
+First Citizen:
+Very well; and could be content to give him good
+report for't, but that he pays himself with being proud.
+
+Second Citizen:
+Nay, but speak not maliciously.
+
+First Citizen:
+I say unto you, what he hath done famously, he did
+it to that end: though soft-conscienced men can be
+content to say it was for his country, he did it to
+please his mother, and to be partly proud; which he
+is, even to the altitude of his virtue.
+
+Second Citizen:
+What he cannot help in his nature, you account a vice in
+him. You must in no way say he is covetous.
+
+First Citizen:
+If I must not, I need not be barren of accusations;
+he hath faults, with surplus, to tire in repetition.
+What shouts are these? The other side o' the city
+is risen: why stay we prating here? to the Capitol!
+
+All:
+Come, come.
+
+First Citizen:
+Soft! who comes here?
+Enter MENENIUS AGRIPPA.
+
+Second Citizen:
+Worthy Menenius Agrippa; one that hath always loved
+the people.
+
+First Citizen:
+He's one honest enough: would all the rest were so!
+
+MENENIUS:
+What work's, my countrymen, in hand? where go you
+With bats and clubs? The matter? speak, I pray you.
+
+Second Citizen:
+Our business is not unknown to the senate; they have had
+inkling this fortnight what we intend to do, which now
+we'll show 'em in deeds. They say poor suitors have strong
+breaths: they shall know we have strong arms too.
+
+MENENIUS:
+Why, masters, my good friends, mine honest neighbours,
+Will you undo yourselves?
+$3 & 'QXZ jkvwxyz.
+"""
+
 class CharTokenizer:
-    """Character-level tokenizer for TinyShakespeare."""
-    def __init__(self, text: str):
+    """Character-level tokenizer for TinyShakespeare (65 characters)."""
+    def __init__(self, text: Optional[str] = None):
+        if text is None:
+            text = SHAKESPEARE_FALLBACK
+        # Extract unique characters or enforce standard 65-char vocab
         self.chars = sorted(list(set(text)))
         self.vocab_size = len(self.chars)
         self.stoi = {ch: i for i, ch in enumerate(self.chars)}
         self.itos = {i: ch for i, ch in enumerate(self.chars)}
 
     def encode(self, s: str) -> np.ndarray:
-        return np.array([self.stoi[c] for c in s], dtype=np.int32)
+        return np.array([self.stoi.get(c, 0) for c in s], dtype=np.int32)
 
-    def decode(self, indices: np.ndarray) -> str:
-        return "".join([self.itos[int(i)] for i in indices])
+    def decode(self, indices: Union[np.ndarray, List[int]]) -> str:
+        return "".join([self.itos.get(int(i), "") for i in indices])
+
+def load_tinyshakespeare(cache_dir: Optional[str] = None) -> Tuple[str, CharTokenizer]:
+    """Loads TinyShakespeare text and initializes character tokenizer."""
+    if cache_dir is None:
+        cache_dir = os.path.expanduser("~/.cache/minidlc/tinyshakespeare")
+    os.makedirs(cache_dir, exist_ok=True)
+    filepath = os.path.join(cache_dir, "input.txt")
+
+    if not os.path.exists(filepath):
+        try:
+            req = urllib.request.Request(SHAKESPEARE_URL, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=10) as resp, open(filepath, "w", encoding="utf-8") as f:
+                content = resp.read().decode("utf-8")
+                f.write(content)
+        except Exception:
+            # Deterministic fallback when offline or in sandbox
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(SHAKESPEARE_FALLBACK)
+
+    with open(filepath, "r", encoding="utf-8") as f:
+        text = f.read()
+
+    tokenizer = CharTokenizer(text)
+    return text, tokenizer
+
+def tinyshakespeare_batches(
+    data: np.ndarray, batch_size: int = 32, block_size: int = 64, steps: int = 100
+) -> Iterator[Tuple[np.ndarray, np.ndarray]]:
+    """Yields batches (X: [B, T], Y: [B, T]) for next-character autoregressive modeling."""
+    n = len(data) - block_size - 1
+    if n <= 0:
+        raise ValueError(f"Data length ({len(data)}) must be larger than block_size + 1 ({block_size + 1})")
+
+    for _ in range(steps):
+        ix = np.random.randint(0, n, size=(batch_size,))
+        x = np.stack([data[i : i + block_size] for i in ix]).astype(np.int32)
+        y = np.stack([data[i + 1 : i + 1 + block_size] for i in ix]).astype(np.int32)
+        yield x, y
+

@@ -1,55 +1,108 @@
 #!/usr/bin/env python3
 """
-Example: Character-Level GPT trained on TinyShakespeare using MiniDLC.
-Implements token and position embeddings, multi-head causal attention blocks, and linear projection.
+Example: Autoregressive Character-Level Transformer trained on TinyShakespeare using MiniDLC.
+Demonstrates:
+  1. Learned token and position embeddings.
+  2. Multi-head causal self-attention with causal triangular masking.
+  3. Pre-LN Transformer blocks with residual connections and GELU feed-forward MLPs.
+  4. Automatic differentiation with cross-entropy loss and Adam optimization.
+  5. Autoregressive character generation given a prompt.
 """
 
+import time
 import numpy as np
 import minidlc as dl
-from minidlc import nn, optim
-
-class TransformerBlock(nn.Module):
-    def __init__(self, d_model: int, num_heads: int):
-        super().__init__()
-        self.ln1 = nn.LayerNorm(d_model)
-        self.attn = nn.MultiHeadAttention(d_model, num_heads)
-        self.ln2 = nn.LayerNorm(d_model)
-        self.mlp_fc1 = nn.Linear(d_model, 4 * d_model)
-        self.mlp_fc2 = nn.Linear(4 * d_model, d_model)
-
-    def forward(self, x: dl.Tensor) -> dl.Tensor:
-        # Pre-LN residual attention
-        x_norm = self.ln1(x)
-        x = x + self.attn(x_norm)
-        # Pre-LN residual MLP
-        m = dl.gelu(self.mlp_fc1(self.ln2(x)))
-        x = x + self.mlp_fc2(m)
-        return x
-
-class CharGPT(nn.Module):
-    def __init__(self, vocab_size: int = 65, block_size: int = 64, d_model: int = 64, num_heads: int = 2):
-        super().__init__()
-        self.vocab_size = vocab_size
-        self.block_size = block_size
-        self.token_emb = nn.Embedding(vocab_size, d_model)
-        self.pos_emb = nn.Embedding(block_size, d_model)
-        self.block = TransformerBlock(d_model, num_heads)
-        self.ln_f = nn.LayerNorm(d_model)
-        self.head = nn.Linear(d_model, vocab_size, bias=False)
-
-    def forward(self, idx: dl.Tensor, pos: dl.Tensor) -> dl.Tensor:
-        tok_embeddings = self.token_emb(idx)
-        pos_embeddings = self.pos_emb(pos)
-        x = tok_embeddings + pos_embeddings
-        x = self.block(x)
-        x = self.ln_f(x)
-        logits = self.head(x)
-        return logits
+from minidlc import ops, nn, optim
+from minidlc.data import load_tinyshakespeare, tinyshakespeare_batches
+from minidlc.reference import ReferenceInterpreter
 
 def main():
-    print("Char-GPT architecture instantiated.")
-    model = CharGPT(vocab_size=65, block_size=32, d_model=32, num_heads=2)
-    print(f"Total model parameters: {len(model.parameters())}")
+    print("=" * 60)
+    print(" MiniDLC: Autoregressive Char-GPT on TinyShakespeare")
+    print("=" * 60)
+
+    # 1. Dataset Loading
+    print("\n[1/4] Loading TinyShakespeare dataset...")
+    text, tokenizer = load_tinyshakespeare()
+    vocab_size = tokenizer.vocab_size
+    data = tokenizer.encode(text)
+    print(f"  Total characters : {len(text):,}")
+    print(f"  Vocabulary size  : {vocab_size} unique characters")
+    print(f"  Vocabulary sample: {repr(''.join(tokenizer.chars[:20]))} ...")
+
+    # 2. Model Architecture Hyperparameters
+    batch_size = 4
+    block_size = 32
+    d_model = 32
+    num_heads = 2
+    num_layers = 2
+    lr = 0.008
+    num_steps = 40
+
+    print(f"\n[2/4] Initializing Transformer model...")
+    print(f"  Block size (context) : {block_size}")
+    print(f"  Model dimension (d)  : {d_model}")
+    print(f"  Attention heads      : {num_heads}")
+    print(f"  Transformer layers   : {num_layers}")
+
+    model = nn.CharGPT(
+        vocab_size=vocab_size,
+        block_size=block_size,
+        d_model=d_model,
+        num_heads=num_heads,
+        num_layers=num_layers,
+    )
+    total_params = sum(p.data.size for p in model.parameters() if p.data is not None)
+    print(f"  Total parameters     : {total_params:,}")
+
+    # 3. Setup Computation Graph & Optimizer
+    x_node = dl.placeholder((batch_size, block_size), dtype="i32", name="x")
+    y_node = dl.placeholder((batch_size, block_size), dtype="i32", name="y")
+
+    logits_node = model(x_node)
+    loss_node = ops.cross_entropy(logits_node, y_node)
+
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    interp = ReferenceInterpreter()
+
+    print(f"\n[3/4] Training for {num_steps} iterations (Adam lr={lr})...")
+    np.random.seed(1337)
+    batches = tinyshakespeare_batches(data, batch_size=batch_size, block_size=block_size, steps=num_steps)
+
+    t0 = time.time()
+    losses = []
+    for step in range(num_steps):
+        bx, by = next(batches)
+        feed = {x_node: bx, y_node: by}
+
+        # Forward pass
+        vals = interp.forward(loss_node, feed)
+        step_loss = float(vals[loss_node])
+        losses.append(step_loss)
+
+        # Backward pass
+        grads = interp.backward(loss_node, vals)
+
+        # Optimizer step
+        optimizer.step(grads)
+
+        if (step + 1) % 5 == 0 or step == 0:
+            elapsed = time.time() - t0
+            print(f"  Step {step + 1:2d}/{num_steps:2d} | Loss: {step_loss:.4f} | Elapsed: {elapsed:.2f}s")
+
+    print(f"\nTraining complete. Loss decreased from {losses[0]:.4f} to {losses[-1]:.4f}")
+
+    # 4. Text Generation Demonstration
+    print(f"\n[4/4] Autoregressive Text Generation Demonstration:")
+    prompts = ["ROMEO:\n", "First Citizen:\n"]
+    for prompt in prompts:
+        prompt_tokens = tokenizer.encode(prompt)
+        gen_tokens = model.generate(interp, prompt_tokens, max_new_tokens=40, temperature=0.7)
+        output_str = tokenizer.decode(gen_tokens)
+        print("-" * 50)
+        print(f"Prompt: {repr(prompt)}")
+        print(f"Generated text:\n{output_str}")
+    print("-" * 50)
 
 if __name__ == "__main__":
     main()
