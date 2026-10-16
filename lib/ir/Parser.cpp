@@ -186,6 +186,17 @@ ModulePtr IRParser::parse() {
                     resType = parseType();
                 }
 
+                // Skip attribute dictionary if present: { ... }
+                skipWhitespaceAndComments();
+                if (match("{")) {
+                    int braceDepth = 1;
+                    while (pos_ < source_.size() && braceDepth > 0) {
+                        if (source_[pos_] == '{') braceDepth++;
+                        else if (source_[pos_] == '}') braceDepth--;
+                        pos_++;
+                    }
+                }
+
                 ValuePtr resultVal = nullptr;
                 if (opName == "matmul" && operands.size() >= 2) {
                     resultVal = builder.createMatmul(operands[0], operands[1], resType);

@@ -142,6 +142,12 @@ bool MemoryPlanningPass::runOnFunction(Function& func) {
         valueOffsets_[item.val] = MemoryOffset{chosenOffset, item.sizeBytes};
         assigned.push_back(AssignedTensor{item, chosenOffset, alignedSize});
         totalArenaSize_ = std::max(totalArenaSize_, chosenOffset + alignedSize);
+
+        // Annotate defining operation with memory planning attributes
+        if (Operation* defOp = item.val->getDefiningOp()) {
+            defOp->setAttribute("mem.offset", chosenOffset);
+            defOp->setAttribute("mem.size", item.sizeBytes);
+        }
     }
 
     return true;

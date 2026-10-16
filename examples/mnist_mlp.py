@@ -43,6 +43,7 @@ def main():
     loss = dl.cross_entropy(logits, y)
 
     target = "cpu"
+    profile = "--profile" in sys.argv
     for arg in sys.argv[1:]:
         if arg.startswith("--target="):
             target = arg.split("=")[1]
@@ -50,9 +51,9 @@ def main():
             target = arg
 
     # Compile training step
-    print(f"Compiling training graph to target='{target}'...")
+    print(f"Compiling training graph to target='{target}' (profile={profile})...")
     optimizer = optim.Adam(model.parameters(), lr=1.5e-3)
-    train_step = dl.compile(loss, optimizer=optimizer, target=target)
+    train_step = dl.compile(loss, optimizer=optimizer, target=target, profile=profile)
 
 
     print(f"Beginning training iterations ({epochs} epoch(s), batch_size={batch_size})...")
@@ -81,6 +82,9 @@ def main():
     test_acc = 100.0 * correct / total
     print(f"Final Test Accuracy: {test_acc:.2f}% ({correct}/{total})")
     print("MNIST MLP training completed successfully.")
+
+    if profile and hasattr(train_step, "print_profile"):
+        train_step.print_profile()
 
 if __name__ == "__main__":
     main()
