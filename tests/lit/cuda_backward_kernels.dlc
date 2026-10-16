@@ -1,0 +1,33 @@
+// RUN: %dlc-opt --passes=autodiff,fusion,mem-plan --emit-cuda %s | FileCheck %s
+
+// CHECK: // Shared-memory tiled matrix multiplication kernel (Transposed B: C = A @ B^T)
+// CHECK: __global__ void matmul_transB(char* __restrict__ arena, int M, int K, int N) {
+// CHECK:     const int TILE_DIM = 16;
+// CHECK:     __shared__ float sA[TILE_DIM][TILE_DIM];
+// CHECK:     __shared__ float sB[TILE_DIM][TILE_DIM];
+// CHECK:         __syncthreads();
+// CHECK:         #pragma unroll
+// CHECK:         for (int k = 0; k < TILE_DIM; ++k) {
+// CHECK:             acc += sA[threadIdx.y][k] * sB[k][threadIdx.x];
+// CHECK:         }
+// CHECK:         __syncthreads();
+
+// CHECK: // Shared-memory tiled matrix multiplication kernel (Transposed A: C = A^T @ B)
+// CHECK: __global__ void matmul_transA(char* __restrict__ arena, int M, int K, int N) {
+// CHECK:     const int TILE_DIM = 16;
+// CHECK:     __shared__ float sA[TILE_DIM][TILE_DIM];
+// CHECK:     __shared__ float sB[TILE_DIM][TILE_DIM];
+// CHECK:         sA[threadIdx.x][threadIdx.y] = (k_idx_A < K && m_idx_A < M) ? A[k_idx_A * M + m_idx_A] : 0.0f;
+// CHECK:         __syncthreads();
+// CHECK:         #pragma unroll
+// CHECK:         for (int k = 0; k < TILE_DIM; ++k) {
+// CHECK:             acc += sA[threadIdx.y][k] * sB[k][threadIdx.x];
+// CHECK:         }
+// CHECK:         __syncthreads();
+
+func @test_cuda_backward(%x: f32[128,784], %w: f32[784,256]) -> f32[] {
+  %0 = matmul(%x, %w) : f32[128,256]
+  %1 = relu(%0) : f32[128,256]
+  %2 = sum(%1) : f32[]
+  return %2
+}

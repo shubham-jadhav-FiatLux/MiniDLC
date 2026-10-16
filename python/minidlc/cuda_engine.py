@@ -137,3 +137,57 @@ class CUDAEngine:
         ptx_buf = ctypes.create_string_buffer(ptx_size.value)
         self._nvrtc_lib.nvrtcGetPTX(prog, ptx_buf)
         return ptx_buf.raw
+
+    def load_module(self, ptx_bytes: bytes) -> int:
+        """Loads PTX bytecode into a CUDA module (cuModuleLoadData)."""
+        if not self.is_available():
+            raise RuntimeError("CUDA is not available.")
+        mod = ctypes.c_void_p()
+        res = self._cuda_lib.cuModuleLoadData(ctypes.byref(mod), ptx_bytes)
+        if res != 0:
+            raise RuntimeError(f"cuModuleLoadData failed with error code: {res}")
+        return mod.value
+
+    def get_function(self, module_handle: int, func_name: str) -> int:
+        """Retrieves a kernel function handle from a loaded module (cuModuleGetFunction)."""
+        if not self.is_available():
+            raise RuntimeError("CUDA is not available.")
+        func = ctypes.c_void_p()
+        res = self._cuda_lib.cuModuleGetFunction(
+            ctypes.byref(func),
+            ctypes.c_void_p(module_handle),
+            func_name.encode("utf-8")
+        )
+        if res != 0:
+            raise RuntimeError(f"cuModuleGetFunction for '{func_name}' failed with code: {res}")
+        return func.value
+
+    def launch_kernel(
+        self,
+        func_handle: int,
+        grid: Tuple[int, int, int],
+        block: Tuple[int, int, int],
+        args: list,
+        shared_mem_bytes: int = 0,
+        stream: int = 0
+    ) -> None:
+        """Dispatches a CUDA kernel via Driver API (cuLaunchKernel)."""
+        if not self.is_available():
+            raise RuntimeError("CUDA is not available.")
+        gx, gy, gz = grid
+        bx, by, bz = block
+
+        # Pack argument addresses into array of void pointers
+        param_ptrs = (ctypes.c_void_p * len(args))(*[ctypes.addressof(a) for a in args])
+        res = self._cuda_lib.cuLaunchKernel(
+            ctypes.c_void_p(func_handle),
+            ctypes.c_uint(gx), ctypes.c_uint(gy), ctypes.c_uint(gz),
+            ctypes.c_uint(bx), ctypes.c_uint(by), ctypes.c_uint(bz),
+            ctypes.c_uint(shared_mem_bytes),
+            ctypes.c_void_p(stream),
+            param_ptrs,
+            None
+        )
+        if res != 0:
+            raise RuntimeError(f"cuLaunchKernel failed with code: {res}")
+
