@@ -63,3 +63,24 @@
   - **MNIST Training**:
     - Full MNIST training on CPU (`target="cpu"`) executed through LLVM-compiled code.
     - 2 epochs completed in **34.0 seconds** ($2.27\times$ faster than reference interpreter) achieving **96.88% test accuracy** on the 10,000-image MNIST test set.
+
+---
+
+## Milestone M3 — CUDA GPU Backend (Completed 2026-10-16)
+
+- **Goals**:
+  - CUDA codegen: shared-memory tiled matmul with fused epilogues, elementwise kernels, warp-shuffle reductions, row-wise softmax/layernorm/cross-entropy, embedding gather and atomic scatter;
+  - Dynamic NVRTC compilation and CUDA driver-API loading;
+  - Device unified arena memory planning and host↔device transfers;
+  - Command-line tooling (`dlc-opt --emit-cuda`) and golden lit tests.
+- **Completed & Verified**:
+  - **Shared-Memory Tiled Matmul**: Implemented in `include/dlc/backends/cuda/CUDACodeGen.h` and `lib/backends/cuda/CUDACodeGen.cpp` with 2D tile size `16x16`, shared memory tiles `sA` and `sB`, `__syncthreads()`, inner unrolling `#pragma unroll`, and register-fused epilogues (`acc += bias; out = cuda_relu(acc)`).
+  - **Warp-Shuffle Reductions (CS6023)**: Implemented in-warp tree reductions via `__shfl_down_sync(0xffffffff, val, offset)` across 5 steps ($16 \to 8 \to 4 \to 2 \to 1$) for sum and max.
+  - **Row-wise Softmax**: Implemented cooperative row processing with thread blocks using warp-shuffle max reduction, stable exponent subtraction, and warp-shuffle sum reduction.
+  - **NaN-Propagating ReLU**: Device function `(x != x) ? x : (x > 0.0f ? x : 0.0f)` preserving PyTorch NaN semantics.
+  - **Driver API & NVRTC Abstraction**: Python module `minidlc/cuda_engine.py` dynamically loading `libcuda.so` / `libnvrtc.so` with graceful fallback and informative diagnostics when run on CPU-only hosts.
+  - **Compiler Tooling**: `dlc-opt --emit-cuda` outputs complete, compilable CUDA C++ modules.
+  - **Testing**:
+    - 8 Lit Golden IR Tests passing (including `cuda_tiled_matmul.dlc` and `cuda_reductions.dlc`).
+    - 16 C++ unit tests passing in `./build/dlc_unit_tests` (including `testCUDATiledMatmul`, `testCUDALaunchConfig`, `testCUDAModuleGeneration`).
+
