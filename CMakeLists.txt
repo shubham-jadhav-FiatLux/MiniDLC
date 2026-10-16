@@ -71,12 +71,19 @@ add_library(dlc_backends
 target_link_libraries(dlc_backends PUBLIC dlc_loopir dlc_runtime ${CMAKE_DL_LIBS})
 
 
-# 6. Tools: dlc-opt
+# 6. Tools: dlc-opt and Microbenchmarks
+find_package(Threads REQUIRED)
 if(DLC_BUILD_TOOLS)
     add_executable(dlc-opt
         tools/dlc-opt/dlc-opt.cpp
     )
     target_link_libraries(dlc-opt PRIVATE dlc_backends dlc_loopir dlc_passes dlc_runtime dlc_ir)
+
+    add_executable(dlc_fma_peak
+        benchmarks/fma_peak.cpp
+    )
+    target_compile_options(dlc_fma_peak PRIVATE -mavx2 -mfma)
+    target_link_libraries(dlc_fma_peak PRIVATE Threads::Threads)
 endif()
 
 # 7. Unit Tests

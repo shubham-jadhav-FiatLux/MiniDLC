@@ -40,5 +40,13 @@ def run_stream_benchmark(num_elements: int = 10_000_000, trials: int = 10):
     triad_bw_gb_s = (3 * size_bytes) / (min_triad_time * 1e9)
     print(f"Triad Bandwidth: {triad_bw_gb_s:.2f} GB/s (min time: {min_triad_time * 1e3:.2f} ms)")
 
+    return {
+        "copy_bw_gb_s": copy_bw_gb_s,
+        "triad_bw_gb_s": triad_bw_gb_s,
+        "min_copy_time_ms": min_copy_time * 1e3,
+        "min_triad_time_ms": min_triad_time * 1e3,
+    }
+
 if __name__ == "__main__":
     run_stream_benchmark()
+

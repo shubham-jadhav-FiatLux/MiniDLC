@@ -46,6 +46,8 @@ Output/
 *.png
 *.dot
 *.svg
+!docs/*.svg
+benchmarks/fma_peak
 
 # Files
 CS*_Learning.md
