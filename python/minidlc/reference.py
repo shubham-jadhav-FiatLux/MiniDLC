@@ -3,8 +3,10 @@ from typing import Dict, List, Tuple, Any, Optional
 import numpy as np
 from .tensor import Tensor
 
-def _unbroadcast(grad: np.ndarray, target_shape: Tuple[int, ...]) -> np.ndarray:
+def _unbroadcast(grad: Any, target_shape: Tuple[int, ...]) -> np.ndarray:
     """Sum out broadcast dimensions to match target shape."""
+    if not isinstance(grad, np.ndarray):
+        grad = np.asarray(grad)
     grad_shape = grad.shape
     extra_dims = len(grad_shape) - len(target_shape)
     for _ in range(extra_dims):
@@ -12,7 +14,7 @@ def _unbroadcast(grad: np.ndarray, target_shape: Tuple[int, ...]) -> np.ndarray:
     for i, dim in enumerate(target_shape):
         if dim == 1:
             grad = grad.sum(axis=i, keepdims=True)
-    return grad
+    return grad.reshape(target_shape)
 
 class ReferenceInterpreter:
     """NumPy-based reference execution engine and VJP backward evaluator."""
@@ -64,13 +66,15 @@ class ReferenceInterpreter:
                 values[node] = np.log(values[node.inputs[0]])
             elif node.op == "softmax":
                 x = values[node.inputs[0]]
-                shift_x = x - np.max(x, axis=-1, keepdims=True)
+                axis = node.attrs.get("axis", -1)
+                shift_x = x - np.max(x, axis=axis, keepdims=True)
                 exps = np.exp(shift_x)
-                values[node] = exps / np.sum(exps, axis=-1, keepdims=True)
+                values[node] = exps / np.sum(exps, axis=axis, keepdims=True)
             elif node.op == "log_softmax":
                 x = values[node.inputs[0]]
-                shift_x = x - np.max(x, axis=-1, keepdims=True)
-                lse = np.log(np.sum(np.exp(shift_x), axis=-1, keepdims=True))
+                axis = node.attrs.get("axis", -1)
+                shift_x = x - np.max(x, axis=axis, keepdims=True)
+                lse = np.log(np.sum(np.exp(shift_x), axis=axis, keepdims=True))
                 values[node] = shift_x - lse
             elif node.op == "cross_entropy":
                 logits = values[node.inputs[0]]

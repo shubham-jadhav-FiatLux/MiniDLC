@@ -108,7 +108,7 @@ def layernorm(x: Tensor, gamma: Tensor, beta: Tensor, eps: float = 1e-5) -> Tens
 
 def sum(x: Tensor, axis: Optional[int] = None, keepdims: bool = False) -> Tensor:
     if axis is None:
-        out_shape = (1,) if keepdims else ()
+        out_shape = tuple([1] * len(x.shape)) if keepdims else ()
     else:
         ax = axis if axis >= 0 else len(x.shape) + axis
         s = list(x.shape)
@@ -122,7 +122,7 @@ def sum(x: Tensor, axis: Optional[int] = None, keepdims: bool = False) -> Tensor
 
 def mean(x: Tensor, axis: Optional[int] = None, keepdims: bool = False) -> Tensor:
     if axis is None:
-        out_shape = (1,) if keepdims else ()
+        out_shape = tuple([1] * len(x.shape)) if keepdims else ()
     else:
         ax = axis if axis >= 0 else len(x.shape) + axis
         s = list(x.shape)
