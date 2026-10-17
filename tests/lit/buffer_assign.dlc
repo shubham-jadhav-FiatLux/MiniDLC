@@ -1,0 +1,27 @@
+// Buffer assignment: params live in the persistent region; the input, the kernel outputs and the results share the
+// transient arena according to their live ranges over the kernel schedule, 256-byte aligned. The checker runs on
+// every assignment, so a report means no two live buffers overlap.
+// RUN: %dlc-opt --print-mem-report %s | FileCheck %s
+// RUN: %dlc-opt --passes=buffer-assign %s | FileCheck %s --check-prefix=ANNOTATE
+
+// CHECK:      Buffer assignment for @f (4 kernels, 256-byte alignment)
+// CHECK-NEXT:   persistent region: 66560 bytes (params, optimizer state, consts)
+// CHECK-NEXT:   transient arena:   {{[0-9]+}} bytes, vs {{[0-9]+}} without reuse ({{[0-9.]+}}% less)
+// CHECK:        %w persistent offset 0 size 65536 live -1..4
+// CHECK:        %b persistent offset 65536 size 1024 live -1..4
+
+// The matmul kernel writes only the ReLU output; the softmax's buffer is reused by nothing because it is returned.
+// ANNOTATE:      %0 = matmul(%x, %w) : f32[64,256]
+// ANNOTATE-NEXT: %1 = add(%0, %b) : f32[64,256]
+// ANNOTATE-NEXT: %2 = relu(%1) : f32[64,256] {mem.offset = 0, mem.region = "transient", mem.size = 65536}
+// ANNOTATE-NEXT: %3 = softmax(%2) : f32[64,256] {axis = -1, mem.offset = 65536, mem.region = "transient", mem.size = 65536}
+
+func @f(%x: f32[64,64], %w: f32[64,256] {param}, %b: f32[256] {param}) -> (f32[64,256], f32[64]) {
+  %0 = matmul(%x, %w) : f32[64,256]
+  %1 = add(%0, %b) : f32[64,256]
+  %2 = relu(%1) : f32[64,256]
+  %3 = softmax(%2) : f32[64,256]
+  %4 = transpose(%3) : f32[256,64]
+  %5 = sum(%4) : f32[64] {axes = [0]}
+  return %3, %5
+}

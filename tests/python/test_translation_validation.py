@@ -24,8 +24,8 @@ from test_fuzzer import generate_random_dag
 if not dlcopt.available():
     pytest.skip(f"dlc-opt not found at {dlcopt.DLC_OPT}: build it or set DLC_OPT", allow_module_level=True)
 
-PIPELINE = "shape-infer,canonicalize,cse,dce,fusion,mem-plan"
-PASSES = ["shape-infer", "canonicalize", "cse", "dce", "fusion", "mem-plan", PIPELINE]
+PIPELINE = "shape-infer,canonicalize,cse,dce,fusion,buffer-assign"
+PASSES = ["shape-infer", "canonicalize", "cse", "dce", "fusion", "buffer-assign", PIPELINE]
 FUZZ_SEEDS = range(42000, 42010)
 
 # Miscompiles that translation validation catches; each entry names the phase that fixes it. Strict: a fix makes the

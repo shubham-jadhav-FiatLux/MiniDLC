@@ -9,7 +9,7 @@
 #include "dlc/passes/Canonicalize.h"
 #include "dlc/passes/DCE.h"
 #include "dlc/passes/Fusion.h"
-#include "dlc/passes/MemoryPlanning.h"
+#include "dlc/passes/BufferAssignment.h"
 #include "dlc/passes/ShapeInference.h"
 #include <gtest/gtest.h>
 #include <cctype>
@@ -427,11 +427,17 @@ TEST(Fuzz, MutatedModulesOnlyRaiseIRError) {
         pm.addPass(std::make_unique<DCEPass>());
         if (iter % 2) pm.addPass(std::make_unique<AutodiffPass>());
         pm.addPass(std::make_unique<FusionPass>());
-        pm.addPass(std::make_unique<MemoryPlanningPass>());
         try {
             pm.run(*mod);
             ++optimized;
         } catch (const IRError&) {
+            continue;
+        }
+        // Whatever the graph, buffer assignment must never place two live buffers on top of each other.
+        for (const auto& func : mod->getFunctions()) {
+            FusionPass fusion(/*annotate=*/false);
+            fusion.runOnFunction(*func);
+            ASSERT_NO_THROW(BufferAssignment(*func, fusion.getKernels()).verify()) << func->toString();
         }
     }
     // Guards against a fuzzer that only ever reaches the lexer.

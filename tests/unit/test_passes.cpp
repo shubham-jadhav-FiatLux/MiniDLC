@@ -2,7 +2,6 @@
 #include "dlc/ir/Error.h"
 #include "dlc/ir/Parser.h"
 #include "dlc/ir/Verifier.h"
-#include "dlc/loopir/Lowering.h"
 #include "dlc/passes/Activity.h"
 #include "dlc/passes/Autodiff.h"
 #include "dlc/passes/Optimizer.h"
@@ -10,12 +9,14 @@
 #include "dlc/passes/Canonicalize.h"
 #include "dlc/passes/DCE.h"
 #include "dlc/passes/Fusion.h"
-#include "dlc/passes/MemoryPlanning.h"
+#include "dlc/passes/BufferAssignment.h"
+#include "dlc/passes/CostModel.h"
 #include "dlc/passes/ShapeInference.h"
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace {
 
@@ -486,66 +487,283 @@ TEST(Autodiff, OutputOfATrainingGraphVerifies) {
     EXPECT_EQ(func.getResultTypes()[0]->toString(), "f32[]");
 }
 
-TEST(Fusion, GroupsMatmulBiasReluIntoOneEpilogueKernel) {
-    IRBuilder builder;
-    auto func = builder.createFunction("test_fuse", {f32({128, 784}), f32({784, 256}), f32({256})},
-                                       {f32({128, 256})});
-    const auto& args = func->getArguments();
+// --- Fusion -----------------------------------------------------------------------------------------------------
 
-    auto mm = builder.createMatmul(args[0], args[1]);
-    auto add = builder.createAdd(mm, args[2]);
-    auto relu = builder.createRelu(add);
-    builder.createReturn({relu});
+constexpr const char* kLayer = R"(
+func @layer(%x: f32[128,784], %w: f32[784,256], %b: f32[256]) -> f32[128,256] {
+  %0 = matmul(%x, %w) : f32[128,256]
+  %1 = add(%0, %b) : f32[128,256]
+  %2 = relu(%1) : f32[128,256]
+  return %2
+}
+)";
 
-    FusionPass fusion;
-    EXPECT_TRUE(fusion.runOnFunction(*func));
-    ASSERT_FALSE(fusion.getFusedGroups().empty());
-    const auto& group = fusion.getFusedGroups()[0];
-    EXPECT_EQ(group.kind, FusedGroupKind::MatmulEpilogue);
-    EXPECT_EQ(group.name, "fused_matmul_bias_relu");
-    EXPECT_EQ(group.operations.size(), 3u);
+std::vector<Kernel> kernelsOf(Function& func) {
+    FusionPass fusion(/*annotate=*/false);
+    fusion.runOnFunction(func);
+    return fusion.getKernels();
 }
 
-// Op-by-op schedule: values whose live ranges overlap must get disjoint arena ranges.
-TEST(MemoryPlanning, LiveValuesNeverShareMemory) {
-    IRBuilder builder;
-    auto func = builder.createFunction("test_mem", {f32({128, 256}), f32({128, 256})}, {f32({128, 256})});
-    const auto& args = func->getArguments();
-
-    auto t1 = builder.createAdd(args[0], args[1]);
-    auto r1 = builder.createRelu(t1);
-    auto t2 = builder.createMul(r1, args[0]);
-    auto r2 = builder.createRelu(t2);
-    builder.createReturn({r2});
-
-    MemoryPlanningPass memPlan;
-    ASSERT_TRUE(memPlan.runOnFunction(*func));
-    EXPECT_GT(memPlan.getTotalArenaSize(), 0);
-    EXPECT_LT(memPlan.getTotalArenaSize(), memPlan.getUnoptimizedSize());
-
-    // Live range = [defining step, last use]; arguments are defined at step 0, return keeps values live to the end.
-    const auto& ops = func->getEntryBlock()->getOperations();
-    std::unordered_map<Value*, std::pair<int64_t, int64_t>> live;
-    for (const auto& arg : args) live[arg.get()] = {0, 0};
-    for (int64_t step = 0; step < static_cast<int64_t>(ops.size()); ++step) {
-        for (const auto& operand : ops[step]->getOperands()) {
-            auto end = ops[step]->getOpName() == "return" ? static_cast<int64_t>(ops.size()) : step;
-            live[operand.get()].second = std::max(live[operand.get()].second, end);
+// Every kernel input is an argument or the output of an earlier kernel (looking through reshapes).
+void expectTopologicalOrder(const Function& func, const std::vector<Kernel>& kernels) {
+    std::unordered_set<const Value*> available;
+    for (const auto& arg : func.getArguments()) available.insert(arg.get());
+    for (const auto& k : kernels) {
+        for (const Value* in : k.inputs) {
+            const Value* v = in;
+            while (v->getDefiningOp() && v->getDefiningOp()->getOpName() == "reshape") {
+                v = v->getDefiningOp()->getOperand(0).get();
+            }
+            EXPECT_TRUE(available.count(v)) << k.name << " reads a value that no earlier kernel wrote";
         }
-        for (const auto& result : ops[step]->getResults()) live[result.get()] = {step, step};
+        for (const Value* out : k.outputs) available.insert(out);
     }
+}
 
-    const auto& offsets = memPlan.getOffsets();
-    for (const auto& [a, ra] : live) {
-        for (const auto& [b, rb] : live) {
-            if (a == b || std::max(ra.first, rb.first) > std::min(ra.second, rb.second)) continue;
-            const auto& oa = offsets.at(a);
-            const auto& ob = offsets.at(b);
-            EXPECT_GE(std::max(oa.offsetBytes, ob.offsetBytes),
-                      std::min(oa.offsetBytes + oa.sizeBytes, ob.offsetBytes + ob.sizeBytes))
-                << "live values share arena bytes";
+TEST(Fusion, GroupsMatmulBiasReluIntoOneEpilogueKernel) {
+    auto mod = IRParser::parseModule(kLayer);
+    auto kernels = kernelsOf(*mod->getFunctions()[0]);
+    ASSERT_EQ(kernels.size(), 1u);
+    EXPECT_EQ(kernels[0].kind, KernelKind::Matmul);
+    EXPECT_EQ(kernels[0].name, "k0_matmul_add_relu");
+    EXPECT_EQ(kernels[0].ops.size(), 3u);
+    EXPECT_EQ(kernels[0].inputs.size(), 3u);  // x, w, b
+    EXPECT_EQ(kernels[0].outputs.size(), 1u); // only the relu leaves the kernel
+}
+
+TEST(Fusion, ElementwiseKernelsWriteEveryValueNeededOutside) {
+    auto mod = IRParser::parseModule(R"(
+func @f(%x: f32[4,8], %y: f32[4,8]) -> (f32[4,8], f32[4]) {
+  %0 = mul(%x, %y) : f32[4,8]
+  %1 = exp(%0) : f32[4,8]
+  %2 = add(%1, %x) : f32[4,8]
+  %3 = sum(%1) : f32[4] {axes = [1]}
+  return %2, %3
+}
+)");
+    auto& func = *mod->getFunctions()[0];
+    auto kernels = kernelsOf(func);
+    ASSERT_EQ(kernels.size(), 2u);
+    EXPECT_EQ(kernels[0].kind, KernelKind::Elementwise);
+    EXPECT_EQ(kernels[0].ops.size(), 3u);
+    EXPECT_EQ(kernels[0].outputs.size(), 2u); // %1 for the reduction, %2 for the return
+    EXPECT_EQ(kernels[1].kind, KernelKind::Reduction);
+    expectTopologicalOrder(func, kernels);
+}
+
+// exp(x) → sum → mul(exp(x), sum): merging the mul into the exp's kernel would need the sum's result before the sum
+// can run, a cycle in the kernel graph.
+TEST(Fusion, RejectsMergesThatMakeTheKernelGraphCyclic) {
+    auto mod = IRParser::parseModule(R"(
+func @f(%x: f32[4]) -> f32[4] {
+  %0 = exp(%x) : f32[4]
+  %1 = sum(%0) : f32[] {axes = [0]}
+  %2 = mul(%0, %1) : f32[4]
+  return %2
+}
+)");
+    auto& func = *mod->getFunctions()[0];
+    auto kernels = kernelsOf(func);
+    ASSERT_EQ(kernels.size(), 3u);
+    EXPECT_EQ(kernels[0].ops[0]->getOpName(), "exp");
+    EXPECT_EQ(kernels[1].ops[0]->getOpName(), "sum");
+    EXPECT_EQ(kernels[2].ops[0]->getOpName(), "mul");
+    expectTopologicalOrder(func, kernels);
+}
+
+// A matmul kernel only absorbs ops after the matmul: exp(%x) feeds the matmul, so it stays a kernel of its own even
+// though the epilogue add reads it too.
+TEST(Fusion, MatmulEpiloguesNeverFeedTheMatmul) {
+    auto mod = IRParser::parseModule(R"(
+func @f(%x: f32[4,4], %w: f32[4,4]) -> f32[4,4] {
+  %0 = exp(%x) : f32[4,4]
+  %1 = matmul(%0, %w) : f32[4,4]
+  %2 = add(%1, %0) : f32[4,4]
+  return %2
+}
+)");
+    auto& func = *mod->getFunctions()[0];
+    auto kernels = kernelsOf(func);
+    ASSERT_EQ(kernels.size(), 2u);
+    EXPECT_EQ(kernels[0].kind, KernelKind::Elementwise);
+    EXPECT_EQ(kernels[1].kind, KernelKind::Matmul);
+    EXPECT_EQ(kernels[1].ops.size(), 2u);
+    expectTopologicalOrder(func, kernels);
+}
+
+TEST(Fusion, InlinesSplatsIntoElementwiseCodeAndFillsTheRest) {
+    auto mod = IRParser::parseModule(R"(
+func @f(%x: f32[4,4]) -> f32[4,4] {
+  %c = constant() : f32[4,4] {value = 0.5}
+  %0 = mul(%x, %c) : f32[4,4]
+  %1 = matmul(%0, %c) : f32[4,4]
+  return %1
+}
+)");
+    auto& func = *mod->getFunctions()[0];
+    auto kernels = kernelsOf(func);
+    ASSERT_EQ(kernels.size(), 3u);
+    EXPECT_EQ(kernels[0].kind, KernelKind::Fill); // the matmul reads %c from memory
+    for (const auto& k : kernels) {
+        if (k.kind == KernelKind::Elementwise) {
+            EXPECT_EQ(k.inputs.size(), 1u) << "the splat is inlined";
         }
     }
+    expectTopologicalOrder(func, kernels);
+}
+
+TEST(CostModel, CountsFlopsAndTheTrafficFusionSaves) {
+    auto mod = IRParser::parseModule(kLayer);
+    auto& func = *mod->getFunctions()[0];
+    auto kernels = kernelsOf(func);
+    Cost c = kernelCost(kernels[0]);
+    EXPECT_DOUBLE_EQ(c.flops, 2.0 * 128 * 256 * 784 + 2.0 * 128 * 256);
+    EXPECT_EQ(c.bytesRead, (128 * 784 + 784 * 256 + 256) * 4);
+    EXPECT_EQ(c.bytesWritten, 128 * 256 * 4); // the matmul and add results never reach memory
+    std::string report = costReport(func, kernels);
+    EXPECT_NE(report.find("k0_matmul_add_relu"), std::string::npos) << report;
+    EXPECT_NE(report.find("op by op"), std::string::npos) << report;
+}
+
+// --- Buffer assignment ------------------------------------------------------------------------------------------
+
+BufferAssignment assign(Function& func, std::vector<Kernel>& kernels) {
+    kernels = kernelsOf(func);
+    BufferAssignment a(func, kernels);
+    a.verify();
+    return a;
+}
+
+TEST(BufferAssignment, LiveBuffersNeverOverlap) {
+    auto mod = IRParser::parseModule(R"(
+func @f(%x: f32[64,64], %y: f32[64,64]) -> (f32[64,64], f32[64]) {
+  %0 = add(%x, %y) : f32[64,64]
+  %1 = sum(%0) : f32[64] {axes = [1]}
+  %2 = transpose(%0) : f32[64,64]
+  %3 = matmul(%2, %x) : f32[64,64]
+  %4 = sum(%3) : f32[64] {axes = [0]}
+  %5 = softmax(%3) : f32[64,64]
+  %6 = mul(%5, %y) : f32[64,64]
+  %7 = add(%4, %1) : f32[64]
+  return %6, %7
+}
+)");
+    auto& func = *mod->getFunctions()[0];
+    std::vector<Kernel> kernels;
+    BufferAssignment a = assign(func, kernels);
+    const auto& buffers = a.buffers();
+    for (size_t i = 0; i < buffers.size(); ++i) {
+        for (size_t j = i + 1; j < buffers.size(); ++j) {
+            const Buffer& p = buffers[i];
+            const Buffer& q = buffers[j];
+            bool live = p.begin <= q.end && q.begin <= p.end;
+            bool overlap = p.offset < q.offset + q.size && q.offset < p.offset + p.size;
+            EXPECT_FALSE(p.region == q.region && live && overlap);
+        }
+        EXPECT_EQ(buffers[i].offset % BufferAssignment::kAlignment, 0);
+    }
+    EXPECT_LT(a.transientSize(), a.transientUnshared()); // liveness lets some buffers share memory
+}
+
+// v1 planned memory on the unfused op schedule, so a fused kernel's output landed inside its own inputs.
+TEST(BufferAssignment, FusedKernelOutputDoesNotAliasItsInputs) {
+    auto mod = IRParser::parseModule(kLayer);
+    auto& func = *mod->getFunctions()[0];
+    std::vector<Kernel> kernels;
+    BufferAssignment a = assign(func, kernels);
+    const Buffer& out = a.bufferOf(kernels[0].outputs[0]);
+    for (const Value* in : kernels[0].inputs) {
+        const Buffer& b = a.bufferOf(in);
+        if (b.region != out.region) continue;
+        EXPECT_FALSE(out.offset < b.offset + b.size && b.offset < out.offset + out.size);
+    }
+}
+
+// Parameters persist across training steps, so nothing else may ever be placed on top of them (v1 reused them).
+TEST(BufferAssignment, ParametersLiveInThePersistentRegion) {
+    auto mod = IRParser::parseModule(R"(
+func @f(%x: f32[8,4], %w: f32[4,3] {param}, %b: f32[3] {param}, %mask: f32[8,3] {const}) -> f32[8,3] {
+  %0 = matmul(%x, %w) : f32[8,3]
+  %1 = add(%0, %b) : f32[8,3]
+  %2 = mul(%1, %mask) : f32[8,3]
+  return %2
+}
+)");
+    auto& func = *mod->getFunctions()[0];
+    std::vector<Kernel> kernels;
+    BufferAssignment a = assign(func, kernels);
+    for (size_t i = 1; i < 4; ++i) EXPECT_EQ(a.bufferOf(func.getArguments()[i].get()).region, Region::Persistent);
+    EXPECT_EQ(a.bufferOf(func.getArguments()[0].get()).region, Region::Transient);
+    EXPECT_GE(a.persistentSize(), (12 + 3 + 24) * 4);
+}
+
+TEST(BufferAssignment, UpdatesParametersAndStateInPlace) {
+    auto mod = IRParser::parseModule(R"(
+func @f(%x: f32[8,4], %w: f32[4,3] {param}) -> f32[] {
+  %0 = matmul(%x, %w) : f32[8,3]
+  %1 = mean(%0) : f32[]
+  return %1
+}
+)");
+    PassManager pm;
+    pm.setVerifyEach(true);
+    pm.addPass(std::make_unique<AutodiffPass>());
+    pm.addPass(std::make_unique<OptimizerPass>(OptimizerConfig{}));
+    pm.addPass(std::make_unique<CanonicalizePass>());
+    pm.addPass(std::make_unique<CSEPass>());
+    pm.addPass(std::make_unique<DCEPass>());
+    pm.run(*mod);
+    auto& func = *mod->getFunctions()[0];
+    std::vector<Kernel> kernels;
+    BufferAssignment a = assign(func, kernels);
+    const Operation* ret = func.getEntryBlock()->getOperations().back().get();
+    size_t donated = 0;
+    for (size_t i = 0; i < ret->getNumOperands(); ++i) {
+        if (func.getResultInfo()[i].kind != ResultKind::Donates) continue;
+        ++donated;
+        EXPECT_TRUE(a.updatesInPlace(ret->getOperand(i).get())) << "result " << i;
+        const Value* arg = func.getArguments()[func.getResultInfo()[i].arg].get();
+        EXPECT_EQ(&a.bufferOf(ret->getOperand(i).get()), &a.bufferOf(arg));
+    }
+    EXPECT_EQ(donated, 5u); // w, w.m, w.v and the two bias-correction powers
+    EXPECT_TRUE(a.finalCopies().empty());
+}
+
+// %w is read by the sum after the kernel computing its update has run, so the update cannot overwrite %w in place.
+TEST(BufferAssignment, CopiesAnUpdateThatCannotBeInPlace) {
+    auto mod = IRParser::parseModule(R"(
+func @f(%w: f32[4] {param}, %x: f32[4]) -> (f32[4] {donates = %w}, f32[]) {
+  %0 = add(%w, %x) : f32[4]
+  %1 = sum(%w) : f32[] {axes = [0]}
+  return %0, %1
+}
+)");
+    auto& func = *mod->getFunctions()[0];
+    std::vector<Kernel> kernels;
+    BufferAssignment a = assign(func, kernels);
+    const Value* update = func.getEntryBlock()->getOperations()[0]->getResult(0).get();
+    EXPECT_FALSE(a.updatesInPlace(update));
+    ASSERT_EQ(a.finalCopies().size(), 1u);
+    EXPECT_EQ(a.finalCopies()[0].from, update);
+}
+
+TEST(BufferAssignment, ReshapesAliasTheirOperand) {
+    auto mod = IRParser::parseModule(R"(
+func @f(%x: f32[4,6]) -> f32[6] {
+  %0 = exp(%x) : f32[4,6]
+  %1 = reshape(%0) : f32[24] {shape = [24]}
+  %2 = reshape(%1) : f32[6,4] {shape = [6, 4]}
+  %3 = sum(%2) : f32[6] {axes = [1]}
+  return %3
+}
+)");
+    auto& func = *mod->getFunctions()[0];
+    std::vector<Kernel> kernels;
+    BufferAssignment a = assign(func, kernels);
+    const auto& ops = func.getEntryBlock()->getOperations();
+    EXPECT_EQ(&a.bufferOf(ops[2]->getResult(0).get()), &a.bufferOf(ops[0]->getResult(0).get()));
+    // The alias keeps exp's buffer alive until the sum reads it.
+    EXPECT_EQ(a.bufferOf(ops[0]->getResult(0).get()).end, 1);
 }
 
 TEST(PassManager, VerifiesAfterEachPassAndNamesTheCulprit) {
@@ -589,7 +807,7 @@ TEST(PassManager, FullPipelineKeepsTheModuleValid) {
     pm.addPass(std::make_unique<CSEPass>());
     pm.addPass(std::make_unique<DCEPass>());
     pm.addPass(std::make_unique<FusionPass>());
-    pm.addPass(std::make_unique<MemoryPlanningPass>());
+    pm.addPass(std::make_unique<BufferAssignmentPass>());
     ASSERT_NO_THROW(pm.run(*mod));
 
     // The annotations the passes add print and parse back.
@@ -597,32 +815,6 @@ TEST(PassManager, FullPipelineKeepsTheModuleValid) {
     EXPECT_NE(text.find("fusion.group"), std::string::npos) << text;
     EXPECT_NE(text.find("mem.offset"), std::string::npos) << text;
     EXPECT_EQ(IRParser::parseModule(text)->toString(), text);
-}
-
-// Kernel buffers are named after the values they hold; unnamed builder values used to all print as '%'.
-TEST(Lowering, BufferNamesAreUniqueAndNonEmpty) {
-    IRBuilder builder;
-    auto func = builder.createFunction("names", {f32({16, 32}), f32({32, 8}), f32({8})}, {f32({16, 8})});
-    const auto& args = func->getArguments();
-    for (const auto& arg : args) arg->setName("");
-    auto mm = builder.createMatmul(args[0], args[1]);
-    auto biased = builder.createAdd(mm, args[2]);
-    auto act = builder.createExp(builder.createRelu(biased));
-    builder.createReturn({builder.createMul(act, act)});
-
-    FusionPass fusion(/*annotate=*/false);
-    fusion.runOnFunction(*func);
-    MemoryPlanningPass memPlan(/*annotate=*/false);
-    memPlan.runOnFunction(*func);
-    auto kernels = loopir::Lowering::lowerFunction(*func, &fusion, &memPlan);
-    ASSERT_FALSE(kernels.empty());
-    for (const auto& kernel : kernels) {
-        std::set<std::string> names;
-        for (const auto& buffer : kernel.getBuffers()) {
-            EXPECT_FALSE(buffer.name.empty()) << kernel.getName();
-            EXPECT_TRUE(names.insert(buffer.name).second) << kernel.getName() << " repeats buffer " << buffer.name;
-        }
-    }
 }
 
 } // namespace

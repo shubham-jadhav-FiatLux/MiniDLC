@@ -1,0 +1,12 @@
+// The v1 LLVM emitter picked a text template by kernel name and turned div into fadd (a known bug from the
+// 2026-10-17 audit). P4's emitter translates the loop IR, so the kernel must divide.
+// RUN: %dlc-opt --emit-llvm %s | FileCheck %s
+// XFAIL: *
+// P3 removed the v1 emitter; remove the XFAIL line when P4 brings --emit-llvm back.
+
+// CHECK: fdiv
+
+func @d(%a: f32[64], %b: f32[64]) -> f32[64] {
+  %0 = div(%a, %b) : f32[64]
+  return %0
+}

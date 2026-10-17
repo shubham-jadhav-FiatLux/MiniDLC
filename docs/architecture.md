@@ -300,8 +300,9 @@ The C++ compiler is exercised by `dlc-opt` (IR dumps after each pass, loop IR, L
 | **P0** | 2026-10-17 | Docs and resume claim only what exists. GoogleTest with assertions in every build; 13 known bugs recorded as disabled tests; lit with LLVM's FileCheck; CI builds Debug with ASan/UBSan and Release |
 | **P1** | 2026-10-18 | Op registry; parser and verifier rewritten; use-list hygiene; Python exporter, IR parser and executor; translation validation of the graph passes. Five known bugs fixed (parser round trip, undefined operands, DCE use lists, matmul shape checks, constant-folding use-after-free); 8 remain |
 | **P2** | 2026-10-18 | Backward primitives (`cmp_gt`, `select`, `broadcast_to`, `reduce_max`, `scatter_add`, `cast`, `tanh`, `sqrt`, `rsqrt`, matmul transpose flags); activity analysis; autodiff rewritten (every VJP checked against finite differences); Adam/SGD lowering with donated results and initialized state; canonicalize to a fixpoint (type-preserving, NaN-safe, transpose folding); exact CSE keys. Five more known bugs fixed; 3 remain (P3, P4) |
+| **P3** | 2026-10-18 | Fusion rewritten (matmul epilogues, multi-output elementwise kernels, row/reduction/gather/scatter kernels; legal only if the kernel graph stays acyclic and epilogues never feed the matmul); a cost model (FLOPs, compulsory bytes, intensity); buffer assignment with a persistent region, liveness-based transient arena, reshape aliases, in-place donated updates and a checker. The last two known bugs fixed; the v1 loop IR and template backends removed from the build |
 
-Audit rows that P1 and P2 changed:
+Audit rows that P1–P3 changed:
 
 | Spec item | Status | Notes |
 |---|---|---|
@@ -310,5 +311,8 @@ Audit rows that P1 and P2 changed:
 | Printer/parser round-trip | ✓ | Fixpoint for every op and for the MLP and Char-GPT graphs; errors carry `line:col`. A fuzzer runs 2,000 mutated modules through the parser, verifier and passes: each either raises `IRError` or, if it verifies, prints back to a fixpoint |
 | Shape inference, canonicalize, CSE, DCE | ✓ | Translation-validated on 16 graphs. Shape errors reported; canonicalization type-preserving and NaN-safe, to a fixpoint; CSE keys exact; use lists consistent |
 | Autodiff pass | ✓ | Activity analysis; every VJP checked against float64 finite differences; gradients of whole models match the reference VJPs |
-| Optimizer as ops in the graph; buffer donation | ◐ | Adam and SGD lowered into the graph with donated results; the step graph matches eager training. Executing it with in-place buffers comes with P3/P4 |
+| Optimizer as ops in the graph; buffer donation | ✓ | Adam and SGD lowered into the graph with donated results; the step graph matches eager training; buffer assignment updates every parameter and state buffer in place |
+| Fusion | ✓ | Kernel classes for every op; legality by quotient-graph acyclicity; multi-output kernels; MNIST training step in 15 kernels |
+| Memory planning | ✓ | Buffer assignment after fusion: persistent region, per-kernel liveness, 256-byte alignment, in-place updates, a checker on every plan |
+| Loop IR and lowering templates, LLVM/CUDA template backends | ✗ | Removed from the build in P3; rebuilt in P4 (loop IR v2, LLVM emitter) and P5 (PTX) |
 | Tests | ◐ | Unit tests with assertions, ASan/UBSan CI, a parser fuzzer, translation validation of the graph passes. Generated code has no differential tests yet (P4) |

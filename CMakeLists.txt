@@ -54,35 +54,18 @@ add_library(dlc_passes
     lib/passes/Autodiff.cpp
     lib/passes/Optimizer.cpp
     lib/passes/Fusion.cpp
-    lib/passes/MemoryPlanning.cpp
+    lib/passes/CostModel.cpp
+    lib/passes/BufferAssignment.cpp
 )
 target_link_libraries(dlc_passes PUBLIC dlc_ir)
 
-# 3. Loop IR Library
-add_library(dlc_loopir
-    lib/loopir/LoopIR.cpp
-    lib/loopir/Lowering.cpp
-    lib/loopir/LoopPasses.cpp
-)
-target_link_libraries(dlc_loopir PUBLIC dlc_ir)
-
-# 4. Runtime Library
+# 3. Runtime Library
 add_library(dlc_runtime
     lib/runtime/Arena.cpp
     lib/runtime/ThreadPool.cpp
-    lib/runtime/ExecutionPlan.cpp
 )
 target_include_directories(dlc_runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(dlc_runtime PUBLIC Threads::Threads)
-
-# 5. Backends Library
-add_library(dlc_backends
-    lib/backends/llvm/LLVMCodeGen.cpp
-    lib/backends/llvm/LLVMBackend.cpp
-    lib/backends/cuda/CUDABackend.cpp
-    lib/backends/cuda/CUDACodeGen.cpp
-)
-target_link_libraries(dlc_backends PUBLIC dlc_loopir dlc_runtime ${CMAKE_DL_LIBS})
 
 
 # 6. Tools: dlc-opt and Microbenchmarks
@@ -90,7 +73,7 @@ if(DLC_BUILD_TOOLS)
     add_executable(dlc-opt
         tools/dlc-opt/dlc-opt.cpp
     )
-    target_link_libraries(dlc-opt PRIVATE dlc_backends dlc_loopir dlc_passes dlc_runtime dlc_ir)
+    target_link_libraries(dlc-opt PRIVATE dlc_passes dlc_runtime dlc_ir)
 
     add_executable(dlc_fma_peak
         benchmarks/fma_peak.cpp
@@ -119,10 +102,9 @@ if(DLC_BUILD_TESTS)
         tests/unit/test_ir.cpp
         tests/unit/test_passes.cpp
         tests/unit/test_runtime.cpp
-        tests/unit/test_cuda.cpp
         tests/unit/test_known_bugs.cpp
     )
-    target_link_libraries(dlc_unit_tests PRIVATE dlc_backends dlc_passes dlc_runtime dlc_loopir dlc_ir GTest::gtest_main)
+    target_link_libraries(dlc_unit_tests PRIVATE dlc_passes dlc_runtime dlc_ir GTest::gtest_main)
     include(GoogleTest)
     gtest_discover_tests(dlc_unit_tests PROPERTIES TIMEOUT 120)
 

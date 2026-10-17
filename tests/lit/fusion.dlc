@@ -1,20 +1,39 @@
-// RUN: %dlc-opt --passes=shape-infer,fusion --emit-loopir %s | FileCheck %s
+// Fusion groups the ops into kernels and annotates each member with its kernel. The first layer's matmul absorbs the
+// bias add and the ReLU as an epilogue. The second layer's matmul absorbs its bias add and the exp/mul that read the
+// logits, and writes two outputs: the logits (for cross-entropy) and the scaled exponentials (for the sum). The
+// row-wise cross-entropy and the reduction are kernels of their own; the splat 0.5 is inlined.
+// RUN: %dlc-opt --passes=fusion %s | FileCheck %s
+// RUN: %dlc-opt --print-cost %s | FileCheck %s --check-prefix=COST
 
-// CHECK: kernel @fused_matmul_bias_relu {
-// CHECK:   parallel for i in 0..128 {
-// CHECK:     for j in 0..256 {
-// CHECK:       acc = 0.0;
-// CHECK:       for k in 0..784 vectorize(8) {
-// CHECK:         acc = fma(x[((i * 784) + k)], w[((k * 256) + j)], acc);
-// CHECK:       }
-// CHECK:       2[((i * 256) + j)] = max((acc + b[j]), 0.0);
-// CHECK:     }
-// CHECK:   }
-// CHECK: }
+// CHECK-LABEL: func @mlp
+// CHECK:      %0 = matmul(%x, %w1) : f32[128,256] {fusion.group = 0, fusion.kernel = "k0_matmul_add_relu"}
+// CHECK-NEXT: %1 = add(%0, %b1) : f32[128,256] {fusion.group = 0, fusion.kernel = "k0_matmul_add_relu"}
+// CHECK-NEXT: %2 = relu(%1) : f32[128,256] {fusion.group = 0, fusion.kernel = "k0_matmul_add_relu"}
+// CHECK-NEXT: %3 = matmul(%2, %w2) : f32[128,10] {fusion.group = 1, fusion.kernel = "k1_matmul_add_exp_mul"}
+// CHECK-NEXT: %4 = add(%3, %b2) : f32[128,10] {fusion.group = 1, fusion.kernel = "k1_matmul_add_exp_mul"}
+// CHECK-NEXT: %5 = cross_entropy(%4, %y) : f32[] {fusion.group = 2, fusion.kernel = "k2_cross_entropy"}
+// CHECK-NEXT: %6 = exp(%4) : f32[128,10] {fusion.group = 1, fusion.kernel = "k1_matmul_add_exp_mul"}
+// CHECK-NEXT: %7 = constant() : f32[] {value = 0.5}
+// CHECK-NEXT: %8 = mul(%6, %7) : f32[128,10] {fusion.group = 1, fusion.kernel = "k1_matmul_add_exp_mul"}
+// CHECK-NEXT: %9 = sum(%8) : f32[] {axes = [0, 1], fusion.group = 3, fusion.kernel = "k3_sum", keepdims = 0}
 
-func @mlp_layer(%x: f32[128,784], %w: f32[784,256], %b: f32[256]) -> f32[128,256] {
-  %0 = matmul(%x, %w) : f32[128,256]
-  %1 = add(%0, %b) : f32[128,256]
+// The first kernel reads x, w1 and b1 and writes only the ReLU output.
+// COST:      Cost model for @mlp (4 kernels)
+// COST:      k0_matmul_add_relu matmul 51445760 1336320 38.50
+// COST:      k1_matmul_add_exp_mul matmul
+// COST:      total: {{.*}} bytes fused vs {{.*}} bytes op by op ({{[0-9.]+}}% less)
+
+func @mlp(%x: f32[128,784], %w1: f32[784,256], %b1: f32[256], %w2: f32[256,10], %b2: f32[10], %y: i32[128])
+    -> (f32[], f32[]) {
+  %0 = matmul(%x, %w1) : f32[128,256]
+  %1 = add(%0, %b1) : f32[128,256]
   %2 = relu(%1) : f32[128,256]
-  return %2
+  %3 = matmul(%2, %w2) : f32[128,10]
+  %4 = add(%3, %b2) : f32[128,10]
+  %5 = cross_entropy(%4, %y) : f32[]
+  %6 = exp(%4) : f32[128,10]
+  %half = constant() : f32[] {value = 0.5}
+  %7 = mul(%6, %half) : f32[128,10]
+  %8 = sum(%7) : f32[]
+  return %5, %8
 }

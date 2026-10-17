@@ -45,8 +45,9 @@ attr       ::= integer | float | string | 'true' | 'false' | '[' [number (',' nu
   Function names are unique within a module.
 - An omitted result type is inferred from the operands and attributes; a written one must equal the inferred one.
 - Missing optional attributes get their defaults when the op is created, so the printed form lists every attribute.
-- Keys containing a `.` (`fusion.group`, `fusion.kernel`, `mem.offset`, `mem.size`) are **annotations**: passes add them
-  for IR dumps, the parser keeps them, and they don't change what the function computes.
+- Keys containing a `.` (`fusion.group`, `fusion.kernel`, `mem.region`, `mem.offset`, `mem.size`, `ad.active`) are
+  **annotations**: passes add them for IR dumps, the parser keeps them, and they don't change what the function
+  computes.
 
 ### Argument roles
 

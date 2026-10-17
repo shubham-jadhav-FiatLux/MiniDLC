@@ -250,3 +250,24 @@ pass, and re-measurement — found that v1 was not the integrated compiler the e
   P2 known bugs are fixed and moved into the regular tests; the two miscompiles translation validation caught are
   fixed too.
 
+## P3 — Fusion and buffer assignment (2026-10-18)
+
+- **Fusion** rewritten around kernel classes: a matmul with an elementwise epilogue (any elementwise op of its output
+  shape that doesn't feed it), elementwise kernels with any number of outputs, and kernels of their own for row ops,
+  reductions, gathers, scatters, transposes and constants read from memory. A merge is legal only if the kernel graph
+  stays acyclic — checked on the quotient graph, since checking paths between single ops misses cycles between
+  multi-op groups — and kernels are ordered topologically.
+- **Cost model:** FLOPs and compulsory bytes per op and per kernel; `dlc-opt --print-cost`.
+- **Buffer assignment:** params, optimizer state and consts in a persistent region; inputs, kernel outputs and results
+  in a transient arena placed by interval colouring over per-kernel live ranges, 256-byte aligned; reshapes alias
+  their operand; donated updates are written in place when the writing kernel reads the parameter only at the element
+  it writes and runs after every other reader (else copied at the end). A checker verifies every assignment.
+- **Measured** on the training step (`benchmarks/memory_plan.py`): the MNIST MLP step is 15 kernels with a 2.33 MiB
+  persistent region, a 0.76 MiB transient arena and all 14 updates in place; fusion cuts its compulsory traffic from
+  31.4 MB to 7.6 MB. Char-GPT: 157 kernels, arena 63% smaller than without reuse.
+- **Removed from the build:** the v1 loop IR, lowering templates and LLVM/CUDA text-template backends, which depended
+  on the old fusion groups; P4 and P5 replace them. The two P3 known bugs are fixed and tested; the v1 LLVM division
+  bug went with its emitter and is tracked for P4 by an expected-failure lit test.
+- **Tests:** 75 GoogleTest tests (fusion legality, cost model, buffer assignment; the fuzzer checks every mutant's
+  assignment), 12 lit tests, 243 Python tests.
+

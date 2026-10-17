@@ -1,11 +1,14 @@
-// RUN: %dlc-opt --emit-loopir %s | FileCheck %s
+// Each function of a module is fused and planned on its own: kernel ids and buffer offsets restart per function.
+// RUN: %dlc-opt --passes=fusion,buffer-assign %s | FileCheck %s
+// RUN: %dlc-opt --print-mem-report %s | FileCheck %s --check-prefix=REPORT
 
-// Each function is fused and lowered with its own groups.
-// CHECK:      kernel @fused_matmul_bias_relu {
-// CHECK:        acc = fma(x[((i * 8) + k)], w[((k * 16) + j)], acc);
-// CHECK:        2[((i * 16) + j)] = max((acc + b[j]), 0.0);
-// CHECK:      kernel @fused_elementwise_mul {
-// CHECK:        0[idx] = (p[idx] * q[idx]);
+// CHECK-LABEL: func @layer
+// CHECK:       %2 = relu(%1) : f32[4,16] {fusion.group = 0, fusion.kernel = "k0_matmul_add_relu", mem.offset = {{[0-9]+}}, mem.region = "transient", mem.size = 256}
+// CHECK-LABEL: func @scale
+// CHECK:       %0 = mul(%p, %q) : f32[64] {fusion.group = 0, fusion.kernel = "k0_mul", mem.offset = {{[0-9]+}}, mem.region = "transient", mem.size = 256}
+
+// REPORT: Buffer assignment for @layer (1 kernels, 256-byte alignment)
+// REPORT: Buffer assignment for @scale (1 kernels, 256-byte alignment)
 
 func @layer(%x: f32[4,8], %w: f32[8,16], %b: f32[16]) -> f32[4,16] {
   %0 = matmul(%x, %w) : f32[4,16]

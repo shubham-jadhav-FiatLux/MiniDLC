@@ -11,12 +11,9 @@
 #include "dlc/passes/Activity.h"
 #include "dlc/passes/Autodiff.h"
 #include "dlc/passes/Optimizer.h"
+#include "dlc/passes/BufferAssignment.h"
+#include "dlc/passes/CostModel.h"
 #include "dlc/passes/Fusion.h"
-#include "dlc/passes/MemoryPlanning.h"
-#include "dlc/loopir/Lowering.h"
-#include "dlc/loopir/LoopPasses.h"
-#include "dlc/backends/llvm/LLVMCodeGen.h"
-#include "dlc/backends/cuda/CUDACodeGen.h"
 
 #include <fstream>
 #include <iostream>
@@ -33,11 +30,9 @@ void printUsage(const char* prog) {
               << "Options:\n"
               << "  --passes=<p1,p2,...>   Comma-separated list of passes to run\n"
               << "                         Available: shape-infer, canonicalize, cse, dce, activity, autodiff,\n"
-              << "                         sgd{lr=,momentum=}, adam{lr=,beta1=,beta2=,eps=}, fusion, mem-plan\n"
-              << "  --emit-loopir          Lower optimized graph to Loop IR and print\n"
-              << "  --emit-llvm            Generate and print LLVM IR (CPU)\n"
-              << "  --emit-cuda            Generate and print CUDA C++ kernels (GPU)\n"
-              << "  --print-mem-report     Print memory planning and arena reuse report\n"
+              << "                         sgd{lr=,momentum=}, adam{lr=,beta1=,beta2=,eps=}, fusion, buffer-assign\n"
+              << "  --print-cost           Print the kernels with their FLOPs, bytes and arithmetic intensity\n"
+              << "  --print-mem-report     Print the buffer assignment: regions, offsets, live ranges, arena reuse\n"
               << "  --print-after-all      Print IR after each pass\n"
               << "  --dot                  Export Graphviz .dot representation\n"
               << "  --print-op-registry    Print the registered ops and exit\n"
@@ -140,9 +135,7 @@ int main(int argc, char* argv[]) {
     bool exportDot = false;
     bool verifyInput = true;
     bool verifyEach = true;
-    bool emitLoopIR = false;
-    bool emitLLVM = false;
-    bool emitCUDA = false;
+    bool printCost = false;
     bool printMemReport = false;
 
     for (int i = 1; i < argc; ++i) {
@@ -155,12 +148,8 @@ int main(int argc, char* argv[]) {
             return 0;
         } else if (arg.starts_with("--passes=")) {
             passesArg = arg.substr(9);
-        } else if (arg == "--emit-loopir") {
-            emitLoopIR = true;
-        } else if (arg == "--emit-llvm") {
-            emitLLVM = true;
-        } else if (arg == "--emit-cuda") {
-            emitCUDA = true;
+        } else if (arg == "--print-cost") {
+            printCost = true;
         } else if (arg == "--print-mem-report") {
             printMemReport = true;
         } else if (arg == "--print-after-all") {
@@ -223,8 +212,8 @@ int main(int argc, char* argv[]) {
                 pm.addPass(std::make_unique<dlc::OptimizerPass>(optimizerConfig(spec)));
             } else if (p == "fusion") {
                 pm.addPass(std::make_unique<dlc::FusionPass>());
-            } else if (p == "mem-plan") {
-                pm.addPass(std::make_unique<dlc::MemoryPlanningPass>());
+            } else if (p == "buffer-assign") {
+                pm.addPass(std::make_unique<dlc::BufferAssignmentPass>());
             } else {
                 std::cerr << "error: unknown pass '" << p << "'\n";
                 return 1;
@@ -232,44 +221,20 @@ int main(int argc, char* argv[]) {
         }
         pm.run(*module);
 
-        // Lowering and the memory report plan each function on their own, without annotating the module.
-        if (printMemReport) {
-            for (const auto& func : module->getFunctions()) {
-                dlc::MemoryPlanningPass memPlan(/*annotate=*/false);
-                memPlan.runOnFunction(*func);
-                std::cout << memPlan.getMemoryReport();
-            }
-        }
-
-        if (emitLoopIR || emitLLVM || emitCUDA) {
-            std::vector<dlc::loopir::KernelNest> allKernels;
-            for (const auto& func : module->getFunctions()) {
+        // The reports group and plan each function on their own, without annotating the module.
+        for (const auto& func : module->getFunctions()) {
+            if (printCost) {
                 dlc::FusionPass fusion(/*annotate=*/false);
-                dlc::MemoryPlanningPass memPlan(/*annotate=*/false);
                 fusion.runOnFunction(*func);
-                memPlan.runOnFunction(*func);
-                for (auto& k : dlc::loopir::Lowering::lowerFunction(*func, &fusion, &memPlan)) {
-                    dlc::loopir::LoopTilingPass::run(k);
-                    dlc::loopir::LoopVectorizationPass::run(k, 8);
-                    dlc::loopir::LoopParallelizationPass::run(k);
-                    dlc::loopir::BoundsCheckEliminationPass::run(k);
-                    allKernels.push_back(std::move(k));
-                }
+                std::cout << dlc::costReport(*func, fusion.getKernels());
             }
-
-            if (emitCUDA) {
-                std::cout << dlc::backends::cuda::CUDACodeGen::generateModuleCode(allKernels);
-            } else if (emitLLVM) {
-                std::cout << dlc::backends::llvm::LLVMCodeGen::generateModuleIR(allKernels);
-            } else {
-                for (const auto& k : allKernels) {
-                    std::cout << k.toString();
-                }
+            if (printMemReport) {
+                dlc::BufferAssignmentPass assign(/*annotate=*/false);
+                assign.runOnFunction(*func);
+                std::cout << assign.getReport();
             }
-            return 0;
         }
-
-        if (printMemReport) return 0;
+        if (printCost || printMemReport) return 0;
 
         if (exportDot) {
             for (const auto& func : module->getFunctions()) {

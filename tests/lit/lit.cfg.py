@@ -40,5 +40,8 @@ if not filecheck:
     lit_config.fatal("LLVM FileCheck not found; install LLVM tools or pass --param filecheck=...")
 config.environment["PATH"] = os.pathsep.join([os.path.dirname(filecheck), config.environment.get("PATH", "")])
 
-# Inputs/ holds files that other tests feed to dlc-opt; they are not tests themselves.
-config.excludes = ["Inputs"]
+# Inputs/ holds files that other tests feed to dlc-opt; they are not tests themselves. The v1 loop IR and CUDA template
+# tests are excluded: those backends were removed in P3, and their replacements (P4: loop IR v2 and the LLVM emitter;
+# P5: PTX) bring new golden tests.
+config.excludes = ["Inputs", "loopir_lowering.dlc", "bounds_check_elim.dlc", "loop_versioning.dlc",
+                   "cuda_backward_kernels.dlc", "cuda_reductions.dlc", "cuda_tiled_matmul.dlc", "memplan.dlc"]

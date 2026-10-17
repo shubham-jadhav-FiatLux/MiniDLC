@@ -8,9 +8,10 @@ own Python frontend is traced into an SSA graph IR, differentiated, optimized, l
 LLVM — for x86-64 CPUs and, via LLVM's NVPTX backend, for NVIDIA GPUs.
 
 > **Status (2026-10-18): v1 prototype, being rebuilt as v2.** An audit found that the v1 pieces were not connected end
-> to end. Since then the frontend and the C++ compiler share a textual IR (P1), and the C++ compiler builds a complete
-> training step — forward, backward and Adam/SGD update in one graph — whose gradients match finite differences (P2).
-> Training still doesn't run compiled code, and the C++ code generators are text templates. This README
+> to end. Since then the frontend and the C++ compiler share a textual IR (P1); the C++ compiler builds a complete
+> training step — forward, backward and Adam/SGD update in one graph — whose gradients match finite differences (P2);
+> and it fuses that graph into kernels and plans their memory, with every parameter updated in place (P3). Code
+> generation for the plan is next (P4); training still doesn't run compiled code. This README
 > describes what exists today; the v2 design and the status of each component are in
 > [`docs/architecture.md`](docs/architecture.md).
 
@@ -32,6 +33,9 @@ LLVM — for x86-64 CPUs and, via LLVM's NVPTX backend, for NVIDIA GPUs.
   verifier that runs after every pass; graph passes (shape inference, canonicalization to a fixpoint, CSE, DCE,
   activity analysis, reverse-mode autodiff, Adam/SGD lowering, fusion grouping, memory planning); a loop IR with
   interval range analysis and remainder-loop peeling; and `dlc-opt`, which prints the IR after each pass.
+- **Kernels and memory.** Fusion groups the training step into kernels (matmul epilogues, multi-output elementwise
+  kernels), legal only if the kernel graph stays acyclic; buffer assignment puts parameters and Adam state in a
+  persistent region, reuses a transient arena by liveness, updates parameters in place, and checks every plan.
 - **The training step as one C++ graph.** `dlc-opt --passes="autodiff,adam{lr=0.001},canonicalize,cse,dce"` turns an
   exported model into a single function that returns the loss and the updated parameters and Adam state (donated,
   i.e. updated in place). Every VJP rule matches float64 finite differences, and run in the reference interpreter the
@@ -46,9 +50,8 @@ LLVM — for x86-64 CPUs and, via LLVM's NVPTX backend, for NVIDIA GPUs.
 - **Training doesn't use the C++ compiler yet.** The frontend and `dlc-opt` exchange IR text, but
   `dl.compile(..., target="cpu")` runs the hand-written kernels for a fixed two-layer ReLU MLP. It does not compile the
   traced graph, and other models get wrong results on that target — use `target="reference"` for anything else.
-- **Memory planning ignores fusion** (it can place a fused kernel's output on top of its inputs, and reuses parameter
-  buffers), and the LLVM/CUDA emitters in `lib/backends/` pick text templates by kernel name instead of translating the
-  loop IR. They run only inside `dlc-opt` and the tests.
+- **No code generator is in the build until P4.** The v1 loop IR and text-template LLVM/CUDA emitters were removed in
+  P3; P4 brings the loop IR v2 and the LLVM emitter, P5 the GPU path.
 - **No code has run on a GPU yet**, so the CUDA emitter's output is unverified.
 - Each known bug is recorded as a disabled unit test in [`tests/unit/test_known_bugs.cpp`](tests/unit/test_known_bugs.cpp),
   an expected-failure lit test, or a strict expected failure in the translation-validation suite, to be enabled by the
@@ -62,8 +65,8 @@ MiniDLC/
 ├── pyproject.toml        # Python package; pytest configuration
 ├── .github/workflows/    # CI: sanitizer and release builds, unit and lit tests, pytest
 ├── docs/                 # architecture (v2 + status), IR spec, pass pages, perf report, course map, devlog
-├── include/dlc/, lib/    # C++: ir/, passes/, loopir/, backends/ (v1 templates), runtime/
-├── tools/dlc-opt/        # opt-style driver: --passes, --print-after-all, --dot, --emit-{loopir,llvm,cuda}
+├── include/dlc/, lib/    # C++: ir/, passes/, runtime/ (loopir/ and backends/ hold v1 code that is no longer built)
+├── tools/dlc-opt/        # opt-style driver: --passes, --print-after-all, --dot, --print-cost, --print-mem-report
 ├── python/minidlc/       # frontend, reference interpreter, IR export/parse/execute (ir.py), hand-written LLVM kernels
 ├── tests/
 │   ├── unit/             # GoogleTest; test_known_bugs.cpp records known defects as disabled tests
@@ -89,8 +92,8 @@ MiniDLC/
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j4
-ctest --test-dir build --output-on-failure   # 74 GoogleTest tests, 17 lit/FileCheck tests, the Python compiler tests
-pytest                                       # 34 Python tests + 205 compiler tests (need build/dlc-opt)
+ctest --test-dir build --output-on-failure   # 75 GoogleTest tests, 12 lit/FileCheck tests, the Python compiler tests
+pytest                                       # 34 Python tests + 209 compiler tests (need build/dlc-opt)
 ```
 
 For a sanitizer build, configure with `-DCMAKE_BUILD_TYPE=Debug -DDLC_SANITIZE=ON` (AddressSanitizer and
@@ -101,9 +104,10 @@ UndefinedBehaviorSanitizer); CI runs both configurations.
 ```bash
 PYTHONPATH=python python3 examples/export_ir.py chargpt | ./build/dlc-opt --passes=shape-infer,canonicalize,cse,dce
 ./build/dlc-opt tests/lit/roundtrip.dlc --passes=shape-infer,canonicalize,cse,dce --print-after-all
-./build/dlc-opt tests/lit/fusion.dlc --passes=shape-infer,fusion --emit-loopir
-./build/dlc-opt tests/lit/fusion.dlc --passes=shape-infer,fusion --emit-llvm   # v1 text template
-./build/dlc-opt tests/lit/cuda_tiled_matmul.dlc --emit-cuda                    # v1 text template, never run
+./build/dlc-opt tests/lit/fusion.dlc --passes=fusion --print-cost    # kernels, FLOPs, bytes, intensity
+PYTHONPATH=python python3 examples/export_ir.py mlp \
+  | ./build/dlc-opt --passes="autodiff,adam{lr=0.001},canonicalize,cse,dce" \
+  | ./build/dlc-opt --print-mem-report                               # the training step's memory plan
 ```
 
 ### Train
@@ -122,7 +126,7 @@ MNIST timings depend heavily on the BLAS library your NumPy links; see [`docs/pe
 v2 keeps the Python frontend, makes the textual graph IR the contract with the C++ compiler, adds a GPU-aware loop IR
 with per-target schedules, and generates code through one LLVM emitter for x86-64 (ORC JIT) and NVIDIA GPUs (NVPTX →
 PTX). Phases: **P0** truthful docs and real tests (done) → **P1** IR and Python↔C++ bridge (done) → **P2** training
-graph in C++ (done) → **P3** fusion and buffer assignment → **P4** CPU backend → **P5** GPU backend → **P6** Transformer on both
+graph in C++ (done) → **P3** fusion and buffer assignment (done) → **P4** CPU backend → **P5** GPU backend → **P6** Transformer on both
 targets → **P7** measurements and write-up. Details: [`docs/architecture.md`](docs/architecture.md).
 
 ## Course mapping

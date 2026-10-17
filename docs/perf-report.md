@@ -54,13 +54,27 @@ Under the compulsory-traffic model, fusion removes two round trips of the 128 KB
 (1.39× less traffic). At this size the intermediate stays in cache and the GEMM is ~99% of the work, so no speedup is
 measurable. Fusion should pay off for memory-bound chains; P7 measures elementwise-chain fusion with generated kernels.
 
-## 4. Memory planning
+## 4. Memory: fusion and buffer assignment
 
-No figure is reported. The earlier one (1.64 → 1.21 MB, 26.2%) cannot be reproduced from any input in the repository,
-and the v1 planner is unsafe: it computes liveness on the unfused op schedule, so a fused kernel's output is placed
-inside its own inputs, and it lets intermediates reuse parameter buffers. (`dlc-opt --print-mem-report` reports 16.8%,
-1.54 → 1.28 MB, on the MNIST forward graph, with the same defects.) Buffer assignment is rebuilt in P3 and re-measured on
-the executed training graph.
+The v1 figure (1.64 → 1.21 MB, 26.2%) could not be reproduced, and the v1 planner was unsafe (liveness on the unfused
+op schedule, parameters reused). P3 rebuilt both passes; these numbers are for the **training step** — forward,
+backward and Adam update in one graph, as `dlc-opt --passes="autodiff,adam{...},canonicalize,cse,dce"` builds it —
+from `benchmarks/memory_plan.py` and `dlc-opt --print-cost`. They describe the plan; the executed code arrives in P4.
+
+| Training step | Kernels | Parameters | Persistent region | Transient arena | Without reuse | Saved | In place / copied |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| MNIST MLP (batch 128) | 15 | 795.0 KiB | 2386.2 KiB | 781.5 KiB | 798.5 KiB | 2.1% | 14 / 0 |
+| Char-GPT (example config, batch 4) | 157 | 119.8 KiB | 376.2 KiB | 725.5 KiB | 1966.0 KiB | 63.1% | 113 / 0 |
+
+- The persistent region holds the parameters, the Adam moments (3× the parameters) and two bias-correction scalars;
+  every update is written **in place** (each Adam update is fused into the epilogue of the matmul that computes the
+  gradient, which reads the parameter only at the element it writes).
+- The transient arena is small for the MLP because its few large buffers are live at the same time (the input batch
+  stays live until the first layer's weight gradient). In Char-GPT, liveness lets 157 kernels share 36% of the space.
+- Fusion cuts the compulsory traffic of the MLP step from 31.4 MB (each op reading its operands and writing its result)
+  to 7.6 MB (each kernel reading its inputs and writing its outputs), 75.7% less.
+- The checker (`BufferAssignment::verify`) runs on every assignment: no two buffers that are live at the same time
+  overlap, and every in-place update runs after all other readers of its argument.
 
 ## 5. MNIST MLP training
 
@@ -138,10 +152,10 @@ tho".
 
 | Suite | Count | What it checks |
 |---|:---:|---|
-| GoogleTest (`tests/unit`) | 74 enabled, 3 disabled | IR round trips, malformed input, a 2,000-module mutation fuzzer, registry type rules, verifier, passes (autodiff, activity, optimizer, canonicalize, CSE), loop IR, runtime, CUDA template text. The disabled tests record known bugs |
-| lit + FileCheck (`tests/lit`) | 17 (16 pass, 1 expected failure) | `dlc-opt` output after passes, round trip, error messages, autodiff and optimizer lowering |
+| GoogleTest (`tests/unit`) | 75 | IR round trips, malformed input, a 2,000-module mutation fuzzer (each mutant's buffer assignment checked), registry type rules, verifier, passes (autodiff, activity, optimizer, canonicalize, CSE, fusion legality, cost model, buffer assignment), runtime |
+| lit + FileCheck (`tests/lit`) | 12 (11 pass, 1 expected failure) | `dlc-opt` output after passes, round trip, error messages, autodiff, optimizer lowering, fusion, cost and memory reports |
 | Translation validation (`tests/python`) | 164 | Each graph pass on 16 exported graphs vs the unoptimized function, in float64; autodiff's gradients vs the reference VJPs |
-| C++ training graph (`tests/python`) | 41 | Every C++ VJP vs float64 finite differences; the MLP and Char-GPT step graphs vs eager Adam/SGD training |
+| C++ training graph (`tests/python`) | 43 | Every C++ VJP vs float64 finite differences; the MLP and Char-GPT step graphs vs eager Adam/SGD training; their buffer assignment (in place, arena reuse) |
 | Gradient checks | all 18 ops | Reference-interpreter VJPs vs float64 central differences |
 | Contract tests | 9 | NaN/Inf, overflow, softmax axes, broadcasting, zero-size dims — on the reference interpreter only |
 | Random-DAG fuzzer | 25 seeds | Reference VJPs vs finite differences (11 of the 25 graphs check a single input gradient) |

@@ -17,19 +17,20 @@ planned (phase given). The defects are detailed in [`architecture.md`](architect
 | Reverse-mode autodiff (VJPs) | `python/minidlc/reference.py`, `lib/passes/Autodiff.cpp` | Chain rule / adjoint method | ✓ Python and C++; every C++ VJP checked against float64 finite differences |
 | Activity analysis | `lib/passes/Activity.cpp` | CS6843 (dataflow) | ✓ varied ∩ useful; no gradient for the input batch |
 | Optimizer lowering, buffer donation | `lib/passes/Optimizer.cpp` | — | ✓ Adam/SGD in the graph; step graph matches eager training |
-| Dependences and fusion legality | `lib/passes/Fusion.cpp` | CS6843 (dependence analysis) | ◐ groups ops without legality checks (P3) |
-| Liveness-based memory planning | `lib/passes/MemoryPlanning.cpp` | CS6843; register-allocation analogy | ◐ greedy interval offset assignment; unsafe with fusion (P3) |
-| Interval range analysis, bounds-check elimination | `lib/loopir/LoopPasses.cpp` | CS6843 A2 (range analysis), A4 (bounds checks) | ◐ analysis and remainder peeling work; no guards to remove yet (P4) |
+| Dependences and fusion legality | `lib/passes/Fusion.cpp` | CS6843 (dependence analysis) | ✓ merges legal only if the kernel graph stays acyclic |
+| Liveness-based memory planning | `lib/passes/BufferAssignment.cpp` | CS6843; register-allocation analogy | ✓ per-kernel liveness, interval colouring, in-place updates, checker |
+| Roofline cost model | `lib/passes/CostModel.cpp` | CS6400 / ID5130 | ✓ FLOPs and compulsory bytes per kernel |
+| Interval range analysis, bounds-check elimination | loop IR v2 (P4) | CS6843 A2 (range analysis), A4 (bounds checks) | ○ P4 (the v1 analysis left the build with the v1 loop IR in P3) |
 | Golden IR tests (lit + FileCheck) | `tests/lit/` | CS6843 / LLVM tooling | ✓ |
-| Cache blocking, loop tiling | `lib/loopir/LoopPasses.cpp` | CS6600 Computer Architecture | ○ the tiling pass is a placeholder (P4) |
+| Cache blocking, loop tiling | loop IR v2 schedules (P4) | CS6600 Computer Architecture | ○ P4 |
 | SIMD vectorization (AVX2) | `python/minidlc/llvm_engine.py` | CS6600 / CS6400 | ✓ hand-written `<8 x float>` kernels; ○ generated (P4) |
-| ILP through unrolling | `lib/loopir/LoopPasses.cpp` | CS6600 | ○ attribute only (P4) |
+| ILP through unrolling | loop IR v2 schedules (P4) | CS6600 | ○ P4 |
 | Roofline model | `benchmarks/`, `docs/perf-report.md` | CS6400 / ID5130 | ✓ CPU, measured; GPU ceilings only (P5) |
 | Thread-pool runtime | `include/dlc/runtime/ThreadPool.h` | ID5130 (work sharing) | ◐ mutex + condition-variable queue; not on the executed path (P4) |
 | Numerical stability (log-sum-exp, NaN semantics) | `python/minidlc/reference.py`, `python/minidlc/llvm_engine.py` | ID5130 (floating point) | ✓ reference interpreter and hand-written CPU kernels |
-| Shared-memory tiling, coalescing, bank conflicts | `lib/backends/cuda/CUDACodeGen.cpp` | CS6023 GPU Programming | ◐ text templates, never run; transposed tiles unpadded (P5) |
-| Warp-shuffle reductions | `lib/backends/cuda/CUDACodeGen.cpp` | CS6023 (warp primitives) | ◐ the template reduces only warp 0, so rows longer than 32 are wrong (P5) |
-| Atomic scatter (`atomicAdd`) | `lib/backends/cuda/CUDACodeGen.cpp` | CS6023 (atomics) | ◐ template, never run (P5) |
+| Shared-memory tiling, coalescing, bank conflicts | GPU schedules (P5) | CS6023 GPU Programming | ○ P5 (the v1 CUDA text templates left the build in P3) |
+| Warp-shuffle reductions | GPU schedules (P5) | CS6023 (warp primitives) | ○ P5 |
+| Atomic scatter (`atomicAdd`) | GPU schedules (P5) | CS6023 (atomics) | ○ P5 |
 | PTX via LLVM NVPTX; CUDA driver API | — | CS6023 + LLVM | ○ P5 |
 
 ## By course

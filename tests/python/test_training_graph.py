@@ -5,6 +5,8 @@ Needs a built dlc-opt (DLC_OPT or build/dlc-opt); skipped otherwise.
 """
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import pytest
 
@@ -194,3 +196,30 @@ def test_one_graph_is_one_training_step(model_name: str, opt_name: str):
         np.testing.assert_allclose(step_loss, values[loss], rtol=1e-9)
     for p in model.parameters():
         np.testing.assert_allclose(runner.values[names[id(p)]], p.data, rtol=1e-7, atol=1e-8, err_msg=names[id(p)])
+
+
+# --- Buffer assignment of the training graph ----------------------------------------------------------------------
+
+
+def _memory_report(model_name: str) -> dict:
+    np.random.seed(0)
+    model, loss, _ = {"mlp": _mlp, "chargpt": _chargpt}[model_name]()
+    func = ir.export(loss, name=model_name, module=model)
+    step = dlcopt.run(func.to_text(), "--passes=autodiff,adam{lr=0.01},canonicalize,cse,dce")
+    report = dlcopt.run(step, "--print-mem-report")  # the checker runs on every assignment
+    numbers = {
+        "persistent": int(re.search(r"persistent region: (\d+) bytes", report).group(1)),
+        "transient": int(re.search(r"transient arena: +(\d+) bytes", report).group(1)),
+        "unshared": int(re.search(r"vs (\d+) without reuse", report).group(1)),
+        "in_place": int(re.search(r"in-place updates: +(\d+)", report).group(1)),
+        "copies": int(re.search(r"copied at the end: (\d+)", report).group(1)),
+        "donated": sum(kind == "donates" for kind, _ in ir.parse_function(step).result_kinds()),
+    }
+    return numbers
+
+
+@pytest.mark.parametrize("model_name", ["mlp", "chargpt"])
+def test_training_step_updates_in_place_and_reuses_the_arena(model_name: str):
+    m = _memory_report(model_name)
+    assert m["in_place"] == m["donated"] and m["copies"] == 0, m
+    assert m["transient"] < m["unshared"], m
