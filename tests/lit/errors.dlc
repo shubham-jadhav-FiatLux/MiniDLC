@@ -1,0 +1,31 @@
+// Malformed input is rejected with a located message instead of being misparsed or hanging.
+// RUN: not %dlc-opt %S/Inputs/undefined_value.dlc 2>&1 | FileCheck %s --check-prefix=UNDEF
+// RUN: not %dlc-opt %S/Inputs/unknown_op.dlc 2>&1 | FileCheck %s --check-prefix=UNKNOWN-OP
+// RUN: not %dlc-opt %S/Inputs/wrong_arity.dlc 2>&1 | FileCheck %s --check-prefix=ARITY
+// RUN: not %dlc-opt %S/Inputs/redefinition.dlc 2>&1 | FileCheck %s --check-prefix=REDEF
+// RUN: not %dlc-opt %S/Inputs/bad_attribute_kind.dlc 2>&1 | FileCheck %s --check-prefix=ATTR-KIND
+// RUN: not %dlc-opt %S/Inputs/unknown_attribute.dlc 2>&1 | FileCheck %s --check-prefix=ATTR-UNKNOWN
+// RUN: not %dlc-opt %S/Inputs/missing_paren.dlc 2>&1 | FileCheck %s --check-prefix=PAREN
+// RUN: not %dlc-opt %S/Inputs/bad_character.dlc 2>&1 | FileCheck %s --check-prefix=CHAR
+// RUN: not %dlc-opt %S/Inputs/unterminated_function.dlc 2>&1 | FileCheck %s --check-prefix=EOF
+// RUN: not %dlc-opt %S/Inputs/matmul_mismatch.dlc 2>&1 | FileCheck %s --check-prefix=MATMUL
+// RUN: not %dlc-opt %S/Inputs/return_type_mismatch.dlc 2>&1 | FileCheck %s --check-prefix=RETURN
+// RUN: not %dlc-opt %S/Inputs/missing_return.dlc 2>&1 | FileCheck %s --check-prefix=NO-RETURN
+// RUN: not %dlc-opt %S/Inputs/duplicate_function.dlc 2>&1 | FileCheck %s --check-prefix=DUP-FUNC
+
+// UNDEF: error: 2:16: use of undefined value '%typo'
+// UNKNOWN-OP: error: 2:8: unknown op 'frobnicate'
+// ARITY: error: 2:8: 'add' expects 2 operand(s), got 1
+// REDEF: error: 3:3: redefinition of '%0'
+// ATTR-KIND: error: 2:30: attribute 'axis' of 'softmax' must be int
+// ATTR-UNKNOWN: error: 2:30: unknown attribute 'temperature' for 'softmax'
+// PAREN: error: 2:16: expected ')', got ':'
+// CHAR: error: 2:25: unexpected character ';'
+// EOF: error: 4:1: expected '}' to close function '@f'
+// MATMUL: error: input failed verification:
+// MATMUL: matmul operand shapes don't match: f32[4,8] x f32[4,8]
+// RETURN: error: input failed verification:
+// RETURN: returned value 0 has type f32[4] but the function declares f32[3]
+// NO-RETURN: error: input failed verification:
+// NO-RETURN: function has no 'return'
+// DUP-FUNC: error: 4:6: redefinition of function '@f'

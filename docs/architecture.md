@@ -1,8 +1,9 @@
 # MiniDLC Architecture
 
 This document has two parts: the **v2 design** that MiniDLC is being rebuilt to (Part 1), and the **status of each
-component** as of the 2026-10-17 audit (Part 2). Known bugs are recorded as disabled unit tests in
-`tests/unit/test_known_bugs.cpp` and expected-failure lit tests; each is enabled by the phase that fixes it.
+component** as of the 2026-10-17 audit, followed by the phases completed since (Part 2). Known bugs are recorded as
+disabled unit tests in `tests/unit/test_known_bugs.cpp`, expected-failure lit tests and strict expected failures in the
+translation-validation suite; each is enabled by the phase that fixes it.
 
 ## Part 1: v2 design
 
@@ -277,7 +278,8 @@ AddressSanitizer/UndefinedBehaviorSanitizer, targeted repro programs, and re-mea
   is still reading.
 - MNIST, 2 epochs: `cpu` target 31.6 s / 96.88%; reference interpreter 72.6 s with the system NumPy (netlib BLAS) and
   13.6 s with an OpenBLAS NumPy.
-- Same AVX2 GEMM, fused vs unfused epilogue: 1.07×. OpenBLAS runs the layer GEMM in 0.69 ms vs 7.41 ms.
+- Same AVX2 GEMM, fused vs unfused epilogue: 0.99–1.00× on an idle machine. OpenBLAS runs the layer GEMM in 0.69 ms
+  vs 7.41 ms.
 - 79% of the `cpu` step is the scalar backward `matmul_transA` (31.5 ms vs 6.6 ms for the vectorized forward GEMM).
 - Char-GPT: the 40-step demo ends near the unigram baseline (3.31 nats); a seeded 2,000-step run reaches 2.10 nats
   held-out (bigram baseline 2.45).
@@ -290,3 +292,20 @@ AddressSanitizer/UndefinedBehaviorSanitizer, targeted repro programs, and re-mea
 - `target="cpu"` runs hand-written AVX2 LLVM IR kernels (`python/minidlc/llvm_engine.py`) for a fixed two-layer ReLU MLP.
 
 The C++ compiler is exercised by `dlc-opt` (IR dumps after each pass, loop IR, LLVM and CUDA text) and by the tests.
+
+### Progress since the audit
+
+| Phase | Completed | What changed |
+|---|---|---|
+| **P0** | 2026-10-17 | Docs and resume claim only what exists. GoogleTest with assertions in every build; 13 known bugs recorded as disabled tests; lit with LLVM's FileCheck; CI builds Debug with ASan/UBSan and Release |
+| **P1** | 2026-10-18 | Op registry; parser and verifier rewritten; use-list hygiene; Python exporter, IR parser and executor; translation validation of the graph passes. Five known bugs fixed (parser round trip, undefined operands, DCE use lists, matmul shape checks, constant-folding use-after-free); 8 remain |
+
+Audit rows that P1 changed:
+
+| Spec item | Status | Notes |
+|---|---|---|
+| Python ↔ C++ link | ◐ | IR text both ways: `minidlc.ir.export` writes canonical IR that `dlc-opt` reads; `minidlc.ir.parse_function` and `execute` run its output. No in-process binding yet (P4) |
+| Verifier (types, shapes, dominance) | ✓ | Registry type rules, attributes, dominance, signature, single trailing return, use lists; runs on `dlc-opt`'s input and after every pass |
+| Printer/parser round-trip | ✓ | Fixpoint for every op and for the MLP and Char-GPT graphs; errors carry `line:col`. A fuzzer runs 2,000 mutated modules through the parser, verifier and passes: each either raises `IRError` or, if it verifies, prints back to a fixpoint |
+| Shape inference, canonicalize, CSE, DCE | ◐ | Translation-validated on 16 graphs. Shape errors reported, folding memory-safe, use lists kept consistent. Still wrong (P2): CSE merges constants of different types or nearby values; `x * 0` changes the result type |
+| Tests | ◐ | Unit tests with assertions, ASan/UBSan CI, a parser fuzzer, translation validation of the graph passes. Generated code has no differential tests yet (P4) |

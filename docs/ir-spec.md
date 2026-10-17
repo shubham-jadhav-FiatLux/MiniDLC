@@ -1,67 +1,165 @@
 # MiniDLC Graph IR Specification
 
-This describes the v1 graph IR and loop IR as implemented. The v2 changes — an op registry, backward primitives,
-explicit guards, thread binding and memory scopes in the loop IR — are described in [`architecture.md`](architecture.md).
+The textual graph IR is the contract between the Python frontend and the C++ compiler: `minidlc.ir.export` writes it,
+`dlc-opt` reads, optimizes and prints it, and `minidlc.ir.execute` runs it in the NumPy reference interpreter. This
+document describes the graph IR as of phase P1 and the v1 loop IR (section 5); the v2 changes to the loop IR are in
+[`architecture.md`](architecture.md).
 
-## 1. Syntax and Grammar
-
-The Graph IR is a textual, SSA-based language representing dataflow graphs of tensor operations.
-
-### Example Function
+## 1. Example
 
 ```dlc
-func @mlp_forward(%x: f32[128,784], %w1: f32[784,256], %b1: f32[256]) -> f32[128,256] {
-  %0 = matmul(%x, %w1) : f32[128,256]
-  %1 = add(%0, %b1) : f32[128,256]
+func @mlp(%x: f32[128,784], %y: i32[128], %fc1.weight: f32[784,256] {param}, %fc1.bias: f32[256] {param},
+          %fc2.weight: f32[256,10] {param}, %fc2.bias: f32[10] {param}) -> (f32[], f32[128,10]) {
+  %0 = matmul(%x, %fc1.weight) : f32[128,256]
+  %1 = add(%0, %fc1.bias) : f32[128,256]
   %2 = relu(%1) : f32[128,256]
-  return %2
+  %3 = matmul(%2, %fc2.weight) : f32[128,10]
+  %4 = add(%3, %fc2.bias) : f32[128,10]
+  %5 = cross_entropy(%4, %y) : f32[]
+  return %5, %4
 }
 ```
 
-## 2. Type System
+This is `examples/export_ir.py mlp` (the printer writes the signature on one line).
 
-- **Primitive Types**:
-  - `f32`: 32-bit IEEE 754 floating point.
-  - `i32`: 32-bit signed integer (indices, categorical labels).
-- **Tensor Types**:
-  - `f32[d0, d1, ...]` represents a multidimensional tensor with static integer dimensions.
-  - `f32[]`: 0-D scalar tensor.
+## 2. Grammar
+
+```
+module     ::= function*
+function   ::= 'func' '@' name '(' [arg (',' arg)*] ')' '->' results '{' statement* '}'
+arg        ::= '%' name ':' type ['{' role '}']
+role       ::= 'input' | 'param' | 'const' | 'state'
+results    ::= type | '(' [type (',' type)*] ')'
+type       ::= ('f32' | 'i32') '[' [dim (',' dim)*] ']'
+statement  ::= '%' name '=' op '(' [value (',' value)*] ')' [':' type] [attributes]
+             | 'return' [value (',' value)* | '(' [value (',' value)*] ')']
+attributes ::= '{' [key '=' attr (',' key '=' attr)*] '}'
+attr       ::= integer | float | string | 'true' | 'false' | '[' [number (',' number)*] ']'
+```
+
+- Value and function names are `[A-Za-z0-9_.$]+`; attribute keys are `[A-Za-z_][A-Za-z0-9_.]*`.
+- Numbers: an optional `-`, digits, an optional fraction and exponent; also `nan`, `inf` and `-inf`. Strings use double
+  quotes with the escapes `\"`, `\\`, `\n` and `\t`. `//` starts a comment that runs to the end of the line.
+- A value is defined once per function (arguments and results share one namespace) and used only after its definition.
+  Function names are unique within a module.
+- An omitted result type is inferred from the operands and attributes; a written one must equal the inferred one.
+- Missing optional attributes get their defaults when the op is created, so the printed form lists every attribute.
+- Keys containing a `.` (`fusion.group`, `fusion.kernel`, `mem.offset`, `mem.size`) are **annotations**: passes add them
+  for IR dumps, the parser keeps them, and they don't change what the function computes.
+
+### Argument roles
+
+| Role | Holds | Example |
+|---|---|---|
+| `input` (default, not printed) | data fed on every step | images, labels, token ids |
+| `param` | trainable weights | `%fc1.weight` |
+| `const` | data fixed when the graph is built | `%causal_mask`, `%positions` |
+| `state` | optimizer state that persists across steps (P2) | Adam moments |
+
+Autodiff with activity analysis (P2) will differentiate only `param` arguments; buffer assignment (P3) will keep
+`param` and `state` arguments out of the reused arena.
+
+### Types and size limits
+
+`f32` is a 32-bit IEEE float, `i32` a 32-bit signed integer (indices and labels). A tensor type lists its static
+dimensions; `f32[]` is a scalar. Dimensions are non-negative, and the product of the dimensions (counting a zero
+dimension as one) is at most 2⁴⁸, so element counts, strides and byte sizes cannot overflow.
 
 ## 3. Operations
 
-| Op Category | Operations | Description |
-|-------------|------------|-------------|
-| Linear Algebra | `matmul` | Matrix multiplication (including batched 3D) |
-| Binary Elementwise | `add`, `sub`, `mul`, `div` | Elementwise with NumPy-style broadcasting |
-| Unary Elementwise | `relu`, `gelu`, `exp`, `log` | Unary functions |
-| Reduction | `sum`, `mean` | Reduction along specified axes |
-| Normalization | `softmax`, `log_softmax`, `layernorm` | Normalization along specified axes |
-| Loss Functions | `cross_entropy` | Categorical cross entropy with integer targets |
-| Manipulation | `transpose`, `reshape` | Tensor transposition and dimension reshapes |
-| Indexing & Memory | `embedding`, `constant`, `onehot` | Table gather, constant literals, one-hot encoding |
+The op registry (`include/dlc/ir/OpRegistry.h`, `lib/ir/OpRegistry.cpp`) holds each op's operand count, attributes and
+type rule. The builder, parser, verifier and shape inference all use it, and `dlc-opt --print-op-registry` lists it;
+`minidlc.ir.OPS` mirrors it and a test compares the two.
 
-Planned for P2 (needed to express backward graphs): `cmp_gt`, `select`, `broadcast_to`, `reduce_sum(axes)`,
-`reduce_max(axes)`, `scatter_add`, `cast`, `tanh`, `rsqrt`, and `transpose_a`/`transpose_b` flags on `matmul`.
+| Op | Operands | Attributes (default) | Result |
+|---|---|---|---|
+| `add`, `sub`, `mul`, `div` | two `f32` | — | NumPy broadcast of the operand shapes |
+| `relu`, `gelu`, `exp`, `log` | one `f32` | — | the operand's type |
+| `matmul` | two `f32` | — | `[M,K]×[K,N]→[M,N]`, `[B,M,K]×[K,N]→[B,M,N]`, `[B,M,K]×[B,K,N]→[B,M,N]`, `[B,H,M,K]×[B,H,K,N]→[B,H,M,N]` |
+| `softmax`, `log_softmax` | one `f32`, rank ≥ 1 | `axis` int (`-1`) | the operand's type |
+| `layernorm` | `x` `f32` of rank ≥ 1; `gamma`, `beta` `f32[D]`, D = last dim of `x` | `eps` float > 0 (`1e-05`) | `x`'s type |
+| `cross_entropy` | logits `f32[N,C]` or `f32[B,T,C]`; targets `i32` of the logits' shape without C | — | `f32[]`, the mean over rows |
+| `sum`, `mean` | one `f32` | `axes` distinct ints (all axes); `keepdims` 0 or 1 (`0`) | the reduced shape |
+| `transpose` | one tensor | `perm` a permutation (reversed axes) | the permuted shape, same element type |
+| `reshape` | one tensor | `shape` ints, **required**, same element count | `shape` |
+| `embedding` | table `f32[V,D]`, indices `i32` | — | indices' shape + `[D]` |
+| `onehot` | indices `i32` | `num_classes` int > 0, **required** | `f32`, indices' shape + `[C]` |
+| `constant` | none | `value` float, **required** | the written type (required) |
+| `return` | any number | — | none; must be the function's last op |
 
-## 4. Verification Rules
+Negative axes count from the end. Planned for P2, to express backward graphs: `cmp_gt`, `select`, `broadcast_to`,
+`reduce_max`, `scatter_add`, `cast`, `tanh`, `rsqrt`, and `transpose_a`/`transpose_b` flags on `matmul`.
 
-Checked by the v1 verifier (`lib/ir/Verifier.cpp`):
+## 4. Printing, verification and errors
 
-1. **Def before use:** every operand is a function argument or the result of an earlier op.
-2. **Terminator:** a non-empty function contains a `return`.
+### Canonical form
 
-Not yet checked (P1): per-op type and shape rules (broadcast compatibility, matmul inner dimensions, non-negative
-dimensions), the returned values against the declared signature, and that `return` is the last op.
+The printer (`Function::toString`, `lib/ir/SlotTracker.cpp`) writes:
 
-### Parser limitations (v1)
+- arguments under their own names when those are valid (`[A-Za-z_][A-Za-z0-9_.$]*`) and unique, otherwise `argN`;
+- op results renumbered `%0`, `%1`, … in program order;
+- every result type, and attributes sorted by key;
+- floats in the shortest form that reads back as the same double, laid out like Python's `repr` (`0.5`, `1e-05`,
+  `1e+16`, `nan`, `-inf`);
+- `-> T` for one result and `-> (T1, T2, ...)` otherwise; `return %a, %b` (the parser also accepts `return(%a, %b)`).
 
-- Attribute dictionaries such as `{axis = 0}` are skipped. Ops get default attributes (`axis = -1`, `eps = 1e-5`), and
-  ops without a dedicated builder (`transpose`, `reshape`, `constant`, `onehot`) are created with no attributes.
-- An operand name that was never defined is dropped silently.
-- `return` takes a single value written as `return %v`. The printer's `return(%v)` form does not re-parse, and
-  `return %a, %b` makes the parser loop forever.
+Printing, parsing and printing again gives the same text (`tests/lit/roundtrip.dlc`; `IRParser.*` and the mutation
+fuzzer in `tests/unit/test_ir.cpp`). The exporter writes this form, so `dlc-opt` with no passes prints an exported
+function back unchanged.
 
-These are fixed in P1, together with a print → parse → print round-trip test.
+### Verifier
+
+`lib/ir/Verifier.cpp` checks:
+
+1. every op is registered, with the registered number of operands and results and no null operand;
+2. required attributes are present, every attribute has its declared kind, and other keys are rejected unless they are
+   annotations;
+3. each result type equals the type the registry infers (broadcasting, matmul dimensions, axes, permutations, reshape
+   counts, index types);
+4. operands are arguments or results of earlier ops;
+5. there is exactly one `return`, it is the last op, and it matches the declared result count and types;
+6. each value's use list names exactly the ops that use it.
+
+`dlc-opt` verifies its input (skip with `--no-verify-input`) and, through the pass manager, the module after every pass
+(skip both with `--no-verify`).
+
+### Errors
+
+Malformed input raises `IRError` with the position of the offending token; `dlc-opt` prints it and exits with status 1.
+`tests/lit/errors.dlc` covers each kind:
+
+```
+error: 2:16: use of undefined value '%typo'
+error: 2:8: 'add' expects 2 operand(s), got 1
+error: 2:30: attribute 'axis' of 'softmax' must be int
+error: 4:6: redefinition of function '@f'
+error: input failed verification:
+  [@f] '%0 = matmul(%a, %b) : f32[4,8]': matmul operand shapes don't match: f32[4,8] x f32[4,8]
+```
+
+A pass that leaves the module invalid is named: `verification failed after pass 'canonicalize': ...`; an error raised
+inside a pass is prefixed `pass 'autodiff': ...`.
+
+### Python side
+
+`python/minidlc/ir.py`:
+
+- `export(outputs, name, module=None)` turns a traced graph into an `IRFunction`. Placeholders become `input` arguments,
+  `nn.Parameter`s `param` arguments (named by `module.named_parameters()`, e.g. `%block_0.attn.q_proj.weight`),
+  tensor-valued constants `const` arguments, and `f32` scalars `constant` ops. The data of `param` and `const`
+  arguments is kept in `IRFunction.bindings`.
+- `parse_module(text)` / `parse_function(text)` read IR text such as `dlc-opt` output; `IRFunction.to_text()` prints it
+  the way the C++ printer does.
+- `execute(func, feeds)` runs a function in the reference interpreter (`ReferenceInterpreter.forward`).
+
+### Translation validation
+
+`tests/python/test_translation_validation.py` exports 16 graphs (softmax regression, an MLP, a two-layer Char-GPT, a
+graph of the remaining ops and patterns, ten random DAGs, and two graphs that trigger known bugs) and runs each through
+`shape-infer`, `canonicalize`, `cse`, `dce`, `fusion`, `mem-plan` and the full pipeline. The output of `dlc-opt` is parsed
+and executed in float64, and must match the unoptimized function within 1e-12. Autodiff is checked for keeping the loss
+and, on the linear model, against the reference gradients. Known miscompiles are strict expected failures, so fixing
+one fails the test until the marker is removed.
 
 ## 5. Loop IR Specification
 

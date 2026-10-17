@@ -7,6 +7,7 @@ from . import nn
 from . import optim
 from . import data
 from .reference import ReferenceInterpreter
+from . import ir
 
 # Top-level functional op aliases
 matmul = ops.matmul
@@ -39,6 +40,7 @@ __all__ = [
     "optim",
     "data",
     "ReferenceInterpreter",
+    "ir",
     "matmul",
     "add",
     "sub",

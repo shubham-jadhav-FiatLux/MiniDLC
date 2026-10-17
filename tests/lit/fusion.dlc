@@ -5,9 +5,9 @@
 // CHECK:     for j in 0..256 {
 // CHECK:       acc = 0.0;
 // CHECK:       for k in 0..784 vectorize(8) {
-// CHECK:         acc = fma(arg0[((i * 784) + k)], arg1[((k * 256) + j)], acc);
+// CHECK:         acc = fma(x[((i * 784) + k)], w[((k * 256) + j)], acc);
 // CHECK:       }
-// CHECK:       2[((i * 256) + j)] = max((acc + arg2[j]), 0.0);
+// CHECK:       2[((i * 256) + j)] = max((acc + b[j]), 0.0);
 // CHECK:     }
 // CHECK:   }
 // CHECK: }

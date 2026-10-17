@@ -16,6 +16,8 @@ struct VerificationResult {
     }
 };
 
+// Checks every op against the op registry (operand count, attributes, inferred result type), definitions before
+// uses, a single trailing 'return' matching the signature, and use lists that match the actual uses.
 class Verifier {
 public:
     static VerificationResult verify(const Module& module);

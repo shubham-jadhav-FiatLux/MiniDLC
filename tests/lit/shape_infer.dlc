@@ -1,9 +1,14 @@
-// RUN: %dlc-opt --passes=shape-infer %s | FileCheck %s
+// RUN: %dlc-opt --no-verify-input --passes=shape-infer %s | FileCheck %s
+// RUN: not %dlc-opt %s 2>&1 | FileCheck %s --check-prefix=INVALID
 
-// The declared result type is deliberately wrong; shape inference must replace it with the broadcast shape.
-// CHECK: func @test_shape_broadcast(%arg0: f32[128,1], %arg1: f32[256]) -> f32[128,256] {
-// CHECK:   %0 = add(%arg0, %arg1) : f32[128,256]
-// CHECK:   return(%0)
+// The declared result type is deliberately wrong. The verifier rejects the input as written; shape inference
+// replaces the type with the broadcast shape.
+// INVALID: error: input failed verification:
+// INVALID: result type f32[1] does not match the inferred type f32[128,256]
+
+// CHECK: func @test_shape_broadcast(%a: f32[128,1], %b: f32[256]) -> f32[128,256] {
+// CHECK:   %0 = add(%a, %b) : f32[128,256]
+// CHECK:   return %0
 // CHECK: }
 
 func @test_shape_broadcast(%a: f32[128,1], %b: f32[256]) -> f32[128,256] {

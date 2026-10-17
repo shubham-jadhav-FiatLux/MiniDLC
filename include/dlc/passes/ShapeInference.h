@@ -4,6 +4,7 @@
 
 namespace dlc {
 
+// Recomputes every result type from the op registry's type rules, in program order; invalid shapes raise IRError.
 class ShapeInferencePass : public Pass {
 public:
     std::string getName() const override { return "shape-infer"; }

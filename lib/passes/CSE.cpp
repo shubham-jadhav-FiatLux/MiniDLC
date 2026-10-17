@@ -51,16 +51,9 @@ bool CSEPass::runOnFunction(Function& func) {
             ValuePtr existingVal = it->second;
             ValuePtr currentVal = op->getResult(0);
 
-            auto uses = currentVal->getUses();
-            for (auto* user : uses) {
-                for (size_t i = 0; i < user->getNumOperands(); ++i) {
-                    if (user->getOperand(i) == currentVal) {
-                        user->setOperand(i, existingVal);
-                        changed = true;
-                    }
-                }
-            }
+            replaceAllUsesWith(currentVal, existingVal);
             toRemove.push_back(op);
+            changed = true;
         } else {
             if (op->getNumResults() > 0) {
                 exprMap[key] = op->getResult(0);
@@ -69,7 +62,7 @@ bool CSEPass::runOnFunction(Function& func) {
     }
 
     for (auto* deadOp : toRemove) {
-        entry->removeOperation(deadOp);
+        entry->eraseOperation(deadOp);
     }
 
     return changed;

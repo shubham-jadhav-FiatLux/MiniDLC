@@ -1,0 +1,14 @@
+// RUN: %dlc-opt --passes=canonicalize,dce %s | FileCheck %s
+
+// x + 0 and x * 1 fold to x; DCE then removes the dead constants and arithmetic.
+// CHECK-LABEL: func @canon(%x: f32[8]) -> f32[8] {
+// CHECK-NEXT:   return %x
+// CHECK-NEXT: }
+
+func @canon(%x: f32[8]) -> f32[8] {
+  %zero = constant() : f32[8] {value = 0.0}
+  %0 = add(%x, %zero) : f32[8]
+  %one = constant() : f32[] {value = 1.0}
+  %1 = mul(%0, %one) : f32[8]
+  return %1
+}

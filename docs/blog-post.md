@@ -77,12 +77,18 @@ each pass, re-measurement — showed otherwise.
   PTX that the CUDA driver compiles at load time. PTX needs no GPU or CUDA toolkit to produce — Clang 23 on the
   development laptop already turns a hand-written NVPTX kernel into `shfl.sync.down`, `bar.sync` and `max.NaN.f32`
   instructions — so GPU code is generated and golden-tested locally and run on a Colab T4.
-- **Phases,** each ending in a tested state: truthful docs and real tests (P0, done) → IR and Python↔C++ bridge (P1) →
+- **Phases,** each ending in a tested state: truthful docs and real tests (P0, done) → IR and Python↔C++ bridge (P1, done) →
   training graph in C++ (P2) → fusion and buffer assignment (P3) → CPU backend (P4) → GPU backend (P5) → Transformer
   on both targets (P6) → measurements and write-up (P7).
 
 ## 7. Where things stand
 
-The tests now fail when they should: 21 unit tests with assertions in every build, 13 known bugs recorded as disabled
-tests, lit tests checked by LLVM's FileCheck, gradient checks for all 18 ops, and CI with AddressSanitizer and
-UndefinedBehaviorSanitizer. The next step is the bridge between the frontend and the compiler.
+The tests now fail when they should, and the frontend and the compiler share a textual IR. A traced model is exported
+as IR text; `dlc-opt` parses, verifies and optimizes it and prints it back; the reference interpreter runs the result.
+That makes translation validation cheap: every graph pass runs on 16 exported graphs — softmax regression, an MLP, a
+small Char-GPT, random DAGs — and must produce the same outputs in float64. The suite reproduces two known miscompiles
+end to end (CSE merging `0.1000001` with `0.1000002`, and `x * 0` changing a result type) as strict expected failures.
+Underneath are 55 unit tests with assertions in every build (including a parser fuzzer), 8 remaining known bugs
+recorded as disabled tests, lit tests checked by LLVM's FileCheck, gradient checks for all 18 ops, and CI with
+AddressSanitizer and UndefinedBehaviorSanitizer. The next step is the training graph in C++: backward primitives and
+correct VJPs (P2).

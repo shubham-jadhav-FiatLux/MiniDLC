@@ -38,6 +38,8 @@ add_library(dlc_ir
     lib/ir/Verifier.cpp
     lib/ir/Printer.cpp
     lib/ir/Parser.cpp
+    lib/ir/OpRegistry.cpp
+    lib/ir/SlotTracker.cpp
 )
 target_include_directories(dlc_ir PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
@@ -120,7 +122,7 @@ if(DLC_BUILD_TESTS)
     )
     target_link_libraries(dlc_unit_tests PRIVATE dlc_backends dlc_passes dlc_runtime dlc_loopir dlc_ir GTest::gtest_main)
     include(GoogleTest)
-    gtest_discover_tests(dlc_unit_tests)
+    gtest_discover_tests(dlc_unit_tests PROPERTIES TIMEOUT 120)
 
     # Golden IR tests: lit drives dlc-opt and checks its output with LLVM's FileCheck
     find_program(LIT_EXECUTABLE NAMES lit llvm-lit)
@@ -132,5 +134,21 @@ if(DLC_BUILD_TESTS)
                     --param filecheck=${FILECHECK_EXECUTABLE})
     else()
         message(STATUS "lit tests disabled: they need dlc-opt, lit and FileCheck")
+    endif()
+
+    # Translation validation: the Python suite runs dlc-opt's passes on exported graphs and compares the results in
+    # the NumPy reference interpreter
+    find_package(Python3 COMPONENTS Interpreter)
+    if(DLC_BUILD_TOOLS AND Python3_Interpreter_FOUND)
+        execute_process(COMMAND ${Python3_EXECUTABLE} -c "import numpy, pytest"
+                        RESULT_VARIABLE DLC_PYTHON_DEPS_MISSING OUTPUT_QUIET ERROR_QUIET)
+    endif()
+    if(DLC_BUILD_TOOLS AND Python3_Interpreter_FOUND AND DLC_PYTHON_DEPS_MISSING EQUAL 0)
+        add_test(NAME translation_validation
+            COMMAND ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider tests/python/test_translation_validation.py
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+        set_tests_properties(translation_validation PROPERTIES ENVIRONMENT "DLC_OPT=$<TARGET_FILE:dlc-opt>")
+    else()
+        message(STATUS "translation validation disabled: it needs dlc-opt and a Python 3 with numpy and pytest")
     endif()
 endif()

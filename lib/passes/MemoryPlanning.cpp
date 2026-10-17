@@ -1,4 +1,5 @@
 #include "dlc/passes/MemoryPlanning.h"
+#include "dlc/ir/SlotTracker.h"
 #include <algorithm>
 #include <vector>
 #include <sstream>
@@ -19,6 +20,7 @@ static bool intervalsInterfere(const LiveInterval& a, const LiveInterval& b) {
 
 bool MemoryPlanningPass::runOnFunction(Function& func) {
     valueOffsets_.clear();
+    reportEntries_.clear();
     totalArenaSize_ = 0;
     unoptimizedSize_ = 0;
 
@@ -144,12 +146,19 @@ bool MemoryPlanningPass::runOnFunction(Function& func) {
         totalArenaSize_ = std::max(totalArenaSize_, chosenOffset + alignedSize);
 
         // Annotate defining operation with memory planning attributes
-        if (Operation* defOp = item.val->getDefiningOp()) {
+        Operation* defOp = annotate_ ? item.val->getDefiningOp() : nullptr;
+        if (defOp) {
             defOp->setAttribute("mem.offset", chosenOffset);
             defOp->setAttribute("mem.size", item.sizeBytes);
         }
     }
 
+    SlotTracker names(func);
+    for (const auto& [val, offset] : valueOffsets_) reportEntries_.push_back({names.name(val), offset});
+    std::sort(reportEntries_.begin(), reportEntries_.end(), [](const ReportEntry& a, const ReportEntry& b) {
+        return a.offset.offsetBytes != b.offset.offsetBytes ? a.offset.offsetBytes < b.offset.offsetBytes
+                                                            : a.name < b.name;
+    });
     return true;
 }
 
@@ -166,9 +175,9 @@ std::string MemoryPlanningPass::getMemoryReport() const {
             << std::fixed << std::setprecision(1) << savedPct << "%)\n";
     }
     oss << "Allocated Tensors:\n";
-    for (const auto& [val, offset] : valueOffsets_) {
-        oss << "  %" << val->getName() << " -> offset " << offset.offsetBytes
-            << " bytes, size " << offset.sizeBytes << " bytes\n";
+    for (const auto& entry : reportEntries_) {
+        oss << "  %" << entry.name << " -> offset " << entry.offset.offsetBytes
+            << " bytes, size " << entry.offset.sizeBytes << " bytes\n";
     }
     return oss.str();
 }

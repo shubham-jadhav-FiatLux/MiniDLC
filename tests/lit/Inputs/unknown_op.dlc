@@ -1,0 +1,4 @@
+func @f(%a: f32[4]) -> f32[4] {
+  %0 = frobnicate(%a) : f32[4]
+  return %0
+}

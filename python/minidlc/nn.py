@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional, Tuple, Union
 import numpy as np
 from .tensor import Tensor
 from . import ops
@@ -37,6 +37,22 @@ class Module:
         for m in self._modules.values():
             params.extend(m.parameters())
         return params
+
+    def named_parameters(self) -> List[Tuple[str, Parameter]]:
+        """Each parameter once, with its attribute path such as 'block_0.attn.q_proj.weight'."""
+        named: List[Tuple[str, Parameter]] = []
+        seen = set()
+
+        def visit(module: "Module", prefix: str) -> None:
+            for name, p in module._parameters.items():
+                if id(p) not in seen:
+                    seen.add(id(p))
+                    named.append((prefix + name, p))
+            for name, m in module._modules.items():
+                visit(m, prefix + name + ".")
+
+        visit(self, "")
+        return named
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         return self.forward(*args, **kwargs)
@@ -187,7 +203,7 @@ class CharGPT(Module):
 
         if pos is None:
             pos_indices = np.arange(T_sz, dtype=np.int32).reshape(1, T_sz)
-            pos_tensor = Tensor(shape=(1, T_sz), dtype="i32", op="constant", data=pos_indices)
+            pos_tensor = Tensor(shape=(1, T_sz), dtype="i32", op="constant", data=pos_indices, name="positions")
             pos_embed = self.pos_emb(pos_tensor)  # [1, T, D]
         else:
             pos_embed = self.pos_emb(pos)

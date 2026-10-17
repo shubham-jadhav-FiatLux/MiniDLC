@@ -1,0 +1,6 @@
+func @f(%x: f32[2]) -> f32[2] {
+  return %x
+}
+func @f(%x: f32[2]) -> f32[2] {
+  return %x
+}

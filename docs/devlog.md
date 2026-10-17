@@ -199,3 +199,29 @@ pass, and re-measurement — found that v1 was not the integrated compiler the e
 - **Toolchain:** LLVM 23 development package (headers, `LLVMConfig.cmake`, `FileCheck`); the X86 and NVPTX targets
   are available for P4–P5.
 
+## P1 — IR contract between Python and C++ (2026-10-18)
+
+- **Op registry** (`lib/ir/OpRegistry.cpp`): operand count, attributes with kinds and defaults, and a type rule for each
+  of the 21 ops. The builder, parser, verifier and shape inference all use it; `dlc-opt --print-op-registry` lists it.
+- **Parser and printer:** a recursive-descent parser with a lexer that reports `line:col` errors (undefined or redefined
+  values, unknown ops and attributes, wrong attribute kinds, arity, malformed tokens, oversized types). It reads
+  attributes, argument roles (`input`, `param`, `const`, `state`), multi-value returns in both forms, comments and
+  dotted annotations, and infers omitted types. The printer is canonical: results renumbered, defaults written out,
+  attributes sorted, floats laid out like Python's `repr`. Print → parse → print is a fixpoint.
+- **Verifier:** registry type rules and attributes, dominance, a single trailing `return` matching the signature, and
+  use lists; `dlc-opt` verifies its input and the pass manager verifies after every pass, naming the pass that broke the
+  module.
+- **Use-list hygiene:** erasing an op unlinks it from its operands and refuses ops whose results are still used;
+  `replaceAllUsesWith` replaces the per-pass helpers. Constant folding walks a snapshot of the op list (it was a
+  use-after-free). Kernel buffers in the loop IR are named by the printer's slot names, so unnamed values no longer
+  collide.
+- **Python side** (`python/minidlc/ir.py`): `export` writes a traced graph as canonical IR (parameters named after the
+  module attributes, e.g. `%block_0.attn.q_proj.weight`); `parse_module` reads `dlc-opt` output; `execute` runs it in
+  the reference interpreter. `examples/export_ir.py` exports the MNIST MLP or Char-GPT for `dlc-opt`.
+- **Tests:** 55 GoogleTest tests (round trips of every op, a table of malformed inputs, a mutation fuzzer that runs
+  2,000 mutated modules through the parser, verifier and passes, registry rules, verifier checks, pass-manager errors),
+  16 lit tests, and translation validation: each graph pass on 16 exported graphs (softmax regression, MLP, Char-GPT,
+  ten random DAGs and more), executed before and after in float64. Five known bugs are fixed and moved into the regular
+  tests; the translation-validation suite catches two more miscompiles (CSE merging nearby constants, `x * 0` changing
+  a result type), recorded as strict expected failures for P2.
+

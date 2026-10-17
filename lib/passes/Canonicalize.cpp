@@ -3,27 +3,11 @@
 
 namespace dlc {
 
-static void replaceAllUses(ValuePtr from, ValuePtr to) {
-    if (!from || !to || from == to) return;
-    auto uses = from->getUses();
-    for (auto* user : uses) {
-        for (size_t i = 0; i < user->getNumOperands(); ++i) {
-            if (user->getOperand(i) == from) {
-                user->setOperand(i, to);
-            }
-        }
-    }
-}
-
-static bool isConstantValue(ValuePtr val, double& outVal) {
-    if (val && val->getDefiningOp() && val->getDefiningOp()->getOpName() == "constant") {
-        auto* cop = dynamic_cast<ConstantOp*>(val->getDefiningOp());
-        if (cop) {
-            outVal = cop->getValue();
-            return true;
-        }
-    }
-    return false;
+static bool isConstantValue(const ValuePtr& val, double& outVal) {
+    const Operation* def = val ? val->getDefiningOp() : nullptr;
+    if (!def || def->getOpName() != "constant") return false;
+    outVal = def->getDoubleAttr("value");
+    return true;
 }
 
 bool CanonicalizePass::runOnFunction(Function& func) {
@@ -31,8 +15,9 @@ bool CanonicalizePass::runOnFunction(Function& func) {
     Block* entry = func.getEntryBlock();
     if (!entry) return false;
 
-    // Pattern simplifications & constant folding
-    for (auto& op : entry->getOperations()) {
+    // Pattern simplifications & constant folding. Iterate over a snapshot: folding inserts new ops into the block.
+    const std::vector<OperationPtr> ops = entry->getOperations();
+    for (const auto& op : ops) {
         const std::string& name = op->getOpName();
         if (op->getNumResults() == 0) continue;
         ValuePtr res = op->getResult(0);
@@ -48,13 +33,13 @@ bool CanonicalizePass::runOnFunction(Function& func) {
                 // Constant fold
                 auto folded = std::make_shared<ConstantOp>(vL + vR, res->getType());
                 entry->insertOperation(0, folded);
-                replaceAllUses(res, folded->getResult(0));
+                replaceAllUsesWith(res, folded->getResult(0));
                 changed = true;
             } else if (isCR && vR == 0.0) {
-                replaceAllUses(res, lhs);
+                replaceAllUsesWith(res, lhs);
                 changed = true;
             } else if (isCL && vL == 0.0) {
-                replaceAllUses(res, rhs);
+                replaceAllUsesWith(res, rhs);
                 changed = true;
             }
         } else if (name == "sub" && op->getNumOperands() == 2) {
@@ -67,10 +52,10 @@ bool CanonicalizePass::runOnFunction(Function& func) {
             if (isCL && isCR) {
                 auto folded = std::make_shared<ConstantOp>(vL - vR, res->getType());
                 entry->insertOperation(0, folded);
-                replaceAllUses(res, folded->getResult(0));
+                replaceAllUsesWith(res, folded->getResult(0));
                 changed = true;
             } else if (isCR && vR == 0.0) {
-                replaceAllUses(res, lhs);
+                replaceAllUsesWith(res, lhs);
                 changed = true;
             }
         } else if (name == "mul" && op->getNumOperands() == 2) {
@@ -83,19 +68,19 @@ bool CanonicalizePass::runOnFunction(Function& func) {
             if (isCL && isCR) {
                 auto folded = std::make_shared<ConstantOp>(vL * vR, res->getType());
                 entry->insertOperation(0, folded);
-                replaceAllUses(res, folded->getResult(0));
+                replaceAllUsesWith(res, folded->getResult(0));
                 changed = true;
             } else if ((isCR && vR == 1.0)) {
-                replaceAllUses(res, lhs);
+                replaceAllUsesWith(res, lhs);
                 changed = true;
             } else if ((isCL && vL == 1.0)) {
-                replaceAllUses(res, rhs);
+                replaceAllUsesWith(res, rhs);
                 changed = true;
             } else if ((isCR && vR == 0.0)) {
-                replaceAllUses(res, rhs);
+                replaceAllUsesWith(res, rhs);
                 changed = true;
             } else if ((isCL && vL == 0.0)) {
-                replaceAllUses(res, lhs);
+                replaceAllUsesWith(res, lhs);
                 changed = true;
             }
         } else if (name == "div" && op->getNumOperands() == 2) {
@@ -108,10 +93,10 @@ bool CanonicalizePass::runOnFunction(Function& func) {
             if (isCL && isCR && vR != 0.0) {
                 auto folded = std::make_shared<ConstantOp>(vL / vR, res->getType());
                 entry->insertOperation(0, folded);
-                replaceAllUses(res, folded->getResult(0));
+                replaceAllUsesWith(res, folded->getResult(0));
                 changed = true;
             } else if (isCR && vR == 1.0) {
-                replaceAllUses(res, lhs);
+                replaceAllUsesWith(res, lhs);
                 changed = true;
             }
         }

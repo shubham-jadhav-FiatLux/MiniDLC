@@ -56,17 +56,17 @@ bool AutodiffPass::runOnFunction(Function& func) {
 
         ValuePtr curr = dY;
         if (targetShape.empty()) {
-            return builder.createSum(curr, -1, false);
+            return builder.createSum(curr, std::vector<int64_t>{-1}, false);
         }
 
         int64_t extraDims = static_cast<int64_t>(yShape.size()) - static_cast<int64_t>(targetShape.size());
         for (int64_t i = 0; i < extraDims; ++i) {
-            curr = builder.createSum(curr, 0, false);
+            curr = builder.createSum(curr, std::vector<int64_t>{0}, false);
         }
 
         for (size_t i = 0; i < targetShape.size(); ++i) {
             if (targetShape[i] == 1 && i < getShape(curr).size() && getShape(curr)[i] > 1) {
-                curr = builder.createSum(curr, static_cast<int64_t>(i), true);
+                curr = builder.createSum(curr, std::vector<int64_t>{static_cast<int64_t>(i)}, true);
             }
         }
         return curr;
@@ -76,7 +76,7 @@ bool AutodiffPass::runOnFunction(Function& func) {
     std::vector<OperationPtr> forwardOps = entry->getOperations();
 
     // Remove the forward return op temporarily to append backward pass
-    entry->removeOperation(returnOp);
+    entry->eraseOperation(returnOp);
 
     // Reverse topological traversal
     for (auto it = forwardOps.rbegin(); it != forwardOps.rend(); ++it) {
@@ -168,14 +168,14 @@ bool AutodiffPass::runOnFunction(Function& func) {
             // dX = S * (dY - sum(dY * S))
             ValuePtr inVal = op->getOperand(0);
             ValuePtr prod = builder.createMul(dOut, outVal);
-            ValuePtr sumProd = builder.createSum(prod, -1, true);
+            ValuePtr sumProd = builder.createSum(prod, std::vector<int64_t>{-1}, true);
             ValuePtr sub = builder.createSub(dOut, sumProd);
             ValuePtr dX = builder.createMul(outVal, sub);
             accumulateAdjoint(inVal, dX);
         } else if (opName == "log_softmax") {
             // dX = dY - softmax(X) * sum(dY)
             ValuePtr inVal = op->getOperand(0);
-            ValuePtr sumDOut = builder.createSum(dOut, -1, true);
+            ValuePtr sumDOut = builder.createSum(dOut, std::vector<int64_t>{-1}, true);
             ValuePtr softmaxVal = builder.createExp(outVal);
             ValuePtr prod = builder.createMul(softmaxVal, sumDOut);
             ValuePtr dX = builder.createSub(dOut, prod);
@@ -231,6 +231,9 @@ bool AutodiffPass::runOnFunction(Function& func) {
     }
     builder.createReturn(newReturns);
 
+    std::vector<TypePtr> resultTypes;
+    for (const auto& value : newReturns) resultTypes.push_back(value->getType());
+    func.setResultTypes(resultTypes);
     return true;
 }
 

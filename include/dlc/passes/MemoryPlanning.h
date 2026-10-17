@@ -3,6 +3,7 @@
 #include "dlc/passes/Pass.h"
 #include <unordered_map>
 #include <string>
+#include <vector>
 
 namespace dlc {
 
@@ -13,6 +14,9 @@ struct MemoryOffset {
 
 class MemoryPlanningPass : public Pass {
 public:
+    // With `annotate`, each planned value's defining op records mem.offset / mem.size attributes for IR dumps.
+    explicit MemoryPlanningPass(bool annotate = true) : annotate_(annotate) {}
+
     std::string getName() const override { return "mem-plan"; }
     bool runOnFunction(Function& func) override;
 
@@ -24,6 +28,13 @@ public:
     std::string getMemoryReport() const;
 
 private:
+    struct ReportEntry {
+        std::string name;
+        MemoryOffset offset;
+    };
+
+    bool annotate_{true};
+    std::vector<ReportEntry> reportEntries_;
     int64_t totalArenaSize_{0};
     int64_t unoptimizedSize_{0};
     std::unordered_map<Value*, MemoryOffset> valueOffsets_;

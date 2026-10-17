@@ -29,12 +29,16 @@ struct FusedGroup {
 
 class FusionPass : public Pass {
 public:
+    // With `annotate`, each grouped op records fusion.group / fusion.kernel attributes for IR dumps.
+    explicit FusionPass(bool annotate = true) : annotate_(annotate) {}
+
     std::string getName() const override { return "fusion"; }
     bool runOnFunction(Function& func) override;
 
     const std::vector<FusedGroup>& getFusedGroups() const { return fusedGroups_; }
 
 private:
+    bool annotate_{true};
     std::vector<FusedGroup> fusedGroups_;
 };
 

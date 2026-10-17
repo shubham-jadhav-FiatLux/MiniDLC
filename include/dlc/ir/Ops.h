@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dlc/ir/Operation.h"
+#include <optional>
 
 namespace dlc {
 
@@ -76,17 +77,18 @@ public:
     double getEps() const;
 };
 
+// Reductions over a list of axes; without axes they reduce every axis (the registry fills the default).
 class SumOp : public Operation {
 public:
-    SumOp(ValuePtr operand, int64_t axis, bool keepdims, TypePtr resultType);
-    int64_t getAxis() const;
+    SumOp(ValuePtr operand, std::optional<std::vector<int64_t>> axes, bool keepdims, TypePtr resultType);
+    std::vector<int64_t> getAxes() const;
     bool getKeepDims() const;
 };
 
 class MeanOp : public Operation {
 public:
-    MeanOp(ValuePtr operand, int64_t axis, bool keepdims, TypePtr resultType);
-    int64_t getAxis() const;
+    MeanOp(ValuePtr operand, std::optional<std::vector<int64_t>> axes, bool keepdims, TypePtr resultType);
+    std::vector<int64_t> getAxes() const;
     bool getKeepDims() const;
 };
 

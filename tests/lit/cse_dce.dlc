@@ -1,0 +1,16 @@
+// RUN: %dlc-opt --passes=cse,dce %s | FileCheck %s
+
+// CSE merges the duplicate add; DCE removes the unused mul and the merged duplicate.
+// CHECK-LABEL: func @cse_dce(%a: f32[16], %b: f32[16]) -> f32[16] {
+// CHECK-NEXT:   %0 = add(%a, %b) : f32[16]
+// CHECK-NEXT:   %1 = relu(%0) : f32[16]
+// CHECK-NEXT:   return %1
+// CHECK-NEXT: }
+
+func @cse_dce(%a: f32[16], %b: f32[16]) -> f32[16] {
+  %0 = add(%a, %b) : f32[16]
+  %1 = add(%a, %b) : f32[16]
+  %2 = mul(%a, %b) : f32[16]
+  %3 = relu(%1) : f32[16]
+  return %3
+}

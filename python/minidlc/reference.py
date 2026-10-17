@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Dict, List, Tuple, Any, Optional
+from typing import Dict, List, Tuple, Any, Optional, Sequence, Union
 import numpy as np
 from .tensor import Tensor
 
@@ -21,7 +21,10 @@ class ReferenceInterpreter:
     def __init__(self, dtype: np.dtype = np.float32):
         self.dtype = dtype
 
-    def forward(self, root: Tensor, feed_dict: Dict[Tensor, np.ndarray]) -> Dict[Tensor, np.ndarray]:
+    def forward(
+        self, root: Union[Tensor, Sequence[Tensor]], feed_dict: Dict[Tensor, np.ndarray]
+    ) -> Dict[Tensor, np.ndarray]:
+        """Evaluates every node that `root` (one tensor or several) depends on."""
         values: Dict[Tensor, np.ndarray] = {}
 
         # Topologically sort nodes
@@ -35,7 +38,8 @@ class ReferenceInterpreter:
                     build_topo(inp)
                 topo.append(node)
 
-        build_topo(root)
+        for r in ([root] if isinstance(root, Tensor) else root):
+            build_topo(r)
 
         for node in topo:
             if node in feed_dict:
@@ -120,6 +124,9 @@ class ReferenceInterpreter:
                 table = values[node.inputs[0]]
                 idx = values[node.inputs[1]].astype(np.int64)
                 values[node] = table[idx]
+            elif node.op == "onehot":
+                idx = values[node.inputs[0]].astype(np.int64)
+                values[node] = np.eye(node.attrs["num_classes"], dtype=self.dtype)[idx]
             else:
                 raise NotImplementedError(f"Unsupported op: {node.op}")
 
@@ -277,7 +284,8 @@ class ReferenceInterpreter:
                 inp = node.inputs[0]
                 axis = node.attrs.get("axis", None)
                 keepdims = node.attrs.get("keepdims", False)
-                n_elem = inp.shape[axis] if axis is not None else np.prod(inp.shape)
+                axes = range(len(inp.shape)) if axis is None else (axis if isinstance(axis, tuple) else (axis,))
+                n_elem = int(np.prod([inp.shape[a] for a in axes]))
                 if axis is None:
                     expanded_dY = dY
                 else:

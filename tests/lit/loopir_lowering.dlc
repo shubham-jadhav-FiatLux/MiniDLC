@@ -2,7 +2,7 @@
 
 // CHECK: kernel @fused_elementwise_add {
 // CHECK:   parallel for idx in 0..32768 vectorize(8) {
-// CHECK:     1[idx] = max((arg0[idx] + arg1[idx]), 0.0);
+// CHECK:     1[idx] = max((a[idx] + b[idx]), 0.0);
 // CHECK:   }
 // CHECK: }
 

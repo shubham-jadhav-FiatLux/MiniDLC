@@ -21,6 +21,10 @@ Turn a forward graph with a scalar loss into a graph that also computes gradient
   1/n); LayerNorm skips the normalization Jacobian; `softmax` and `log_softmax` ignore `axis`; 3-D cross-entropy divides
   by the wrong N; `embedding` and 3-D × 2-D matmul get no gradient. It differentiates with respect to every argument,
   ignores its parameter list, and appends no optimizer update.
+- **Checks (P1):** the builder infers every result type, so a VJP that would build an ill-typed op now fails with an
+  error instead of emitting invalid IR. `tests/python/test_translation_validation.py` runs the pass on 16 exported
+  graphs: the loss is preserved on 15 (one random DAG trips the `sum` VJP), and on softmax regression the gradients
+  match the reference interpreter's. The MLP gradient check is a strict expected failure until the ReLU VJP is fixed.
 
 ## v2 (P2)
 Backward primitives (`cmp_gt`, `select`, `reduce_sum(axes)`, `broadcast_to`, `scatter_add`, …) make every VJP

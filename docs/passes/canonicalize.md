@@ -11,12 +11,15 @@ Simplify algebraic identities and evaluate constant expressions at compile time,
 
 The pass makes a single sweep over the block.
 
-## Status (v1)
-- Constant folding inserts the folded constant into the op list while iterating over it, which is a heap-use-after-free
-  under AddressSanitizer (`KnownBugs.DISABLED_ConstantFoldingIsMemorySafe`).
-- Identity rewrites don't check result types: `x[4,4] * 0` is replaced by the scalar constant, changing the function's
-  result type. `x * 0 → 0` is also wrong for NaN and Inf inputs.
-- Constants created by the parser are generic ops, so nothing folds in `dlc-opt` or the lit tests.
+## Status (P1)
+- Folding walks a snapshot of the op list, so inserting the folded constant no longer invalidates the walk (it was a
+  heap-use-after-free; `Canonicalize.FoldsConstantsSafely`).
+- Constants are recognized by op name, so parsed IR folds too (`Canonicalize.FoldsParsedConstants`,
+  `tests/lit/canonicalize.dlc`).
+- Translation-validated on 16 exported graphs. Still wrong (P2): identity rewrites don't check result types, so
+  `x[4] * 0` is replaced by the scalar constant and changes the function's type (the `mul_by_zero` case in
+  `tests/python/test_translation_validation.py` and `KnownBugs.DISABLED_CanonicalizePreservesResultTypes`); `x * 0 → 0`
+  is also wrong for NaN and Inf inputs.
 - No fixpoint iteration and no commutative operand normalization.
 
 ## v2 (P2)

@@ -59,37 +59,37 @@ double LayerNormOp::getEps() const {
     return std::get<double>(getAttribute("eps"));
 }
 
-SumOp::SumOp(ValuePtr operand, int64_t axis, bool keepdims, TypePtr resultType)
+SumOp::SumOp(ValuePtr operand, std::optional<std::vector<int64_t>> axes, bool keepdims, TypePtr resultType)
     : Operation("sum", {operand}, {resultType}) {
-    setAttribute("axis", axis);
+    if (axes) setAttribute("axes", *axes);
     setAttribute("keepdims", static_cast<int64_t>(keepdims ? 1 : 0));
 }
 
-int64_t SumOp::getAxis() const {
-    return std::get<int64_t>(getAttribute("axis"));
+std::vector<int64_t> SumOp::getAxes() const {
+    return getIntListAttr("axes");
 }
 
 bool SumOp::getKeepDims() const {
-    return std::get<int64_t>(getAttribute("keepdims")) != 0;
+    return getIntAttr("keepdims") != 0;
 }
 
-MeanOp::MeanOp(ValuePtr operand, int64_t axis, bool keepdims, TypePtr resultType)
+MeanOp::MeanOp(ValuePtr operand, std::optional<std::vector<int64_t>> axes, bool keepdims, TypePtr resultType)
     : Operation("mean", {operand}, {resultType}) {
-    setAttribute("axis", axis);
+    if (axes) setAttribute("axes", *axes);
     setAttribute("keepdims", static_cast<int64_t>(keepdims ? 1 : 0));
 }
 
-int64_t MeanOp::getAxis() const {
-    return std::get<int64_t>(getAttribute("axis"));
+std::vector<int64_t> MeanOp::getAxes() const {
+    return getIntListAttr("axes");
 }
 
 bool MeanOp::getKeepDims() const {
-    return std::get<int64_t>(getAttribute("keepdims")) != 0;
+    return getIntAttr("keepdims") != 0;
 }
 
 TransposeOp::TransposeOp(ValuePtr operand, std::vector<int64_t> permutation, TypePtr resultType)
     : Operation("transpose", {operand}, {resultType}) {
-    setAttribute("perm", permutation);
+    if (!permutation.empty()) setAttribute("perm", permutation); // otherwise the registry default reverses the axes
 }
 
 std::vector<int64_t> TransposeOp::getPermutation() const {

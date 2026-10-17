@@ -138,14 +138,15 @@ tho".
 
 | Suite | Count | What it checks |
 |---|:---:|---|
-| GoogleTest (`tests/unit`) | 21 enabled, 13 disabled | IR, passes, loop IR, runtime, CUDA template text. The disabled tests record known bugs |
-| lit + FileCheck (`tests/lit`) | 11 (10 pass, 1 expected failure) | `dlc-opt` output after passes |
+| GoogleTest (`tests/unit`) | 55 enabled, 8 disabled | IR round trips, malformed input, a 2,000-module mutation fuzzer, registry type rules, verifier, passes, loop IR, runtime, CUDA template text. The disabled tests record known bugs |
+| lit + FileCheck (`tests/lit`) | 16 (15 pass, 1 expected failure) | `dlc-opt` output after passes, round trip, error messages |
+| Translation validation (`tests/python`) | 167 (161 pass, 6 strict expected failures) | Each graph pass on 16 exported graphs vs the unoptimized function, in float64; autodiff's loss and gradients |
 | Gradient checks | all 18 ops | Reference-interpreter VJPs vs float64 central differences |
 | Contract tests | 9 | NaN/Inf, overflow, softmax axes, broadcasting, zero-size dims — on the reference interpreter only |
 | Random-DAG fuzzer | 25 seeds | Reference VJPs vs finite differences (11 of the 25 graphs check a single input gradient) |
 
-These tests cover the reference interpreter and the C++ passes in isolation. Nothing yet compares compiled code with the
-reference; differential testing arrives with P4.
+These tests cover the reference interpreter and the C++ graph passes. Nothing yet compares generated code with the
+reference; differential testing of generated code arrives with P4.
 
 ## 9. Withdrawn claims (2026-10-17 audit)
 

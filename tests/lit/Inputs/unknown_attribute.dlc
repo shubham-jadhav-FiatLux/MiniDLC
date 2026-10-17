@@ -1,0 +1,4 @@
+func @f(%a: f32[4]) -> f32[4] {
+  %0 = softmax(%a) : f32[4] {temperature = 2}
+  return %0
+}

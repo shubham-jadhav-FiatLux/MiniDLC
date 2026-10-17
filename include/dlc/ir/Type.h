@@ -17,6 +17,13 @@ std::string dataTypeToString(DataType type);
 
 using Shape = std::vector<int64_t>;
 
+// Upper bound on the size of any tensor type, which keeps element counts, strides and byte sizes far from overflow.
+constexpr int64_t kMaxTensorElements = int64_t{1} << 48;
+
+// The element count of `shape`, or -1 when a dimension is negative or the dimensions multiply past
+// kMaxTensorElements (a zero dimension counts as 1 there, so every stride stays in range as well).
+int64_t checkedNumElements(const Shape& shape);
+
 bool computeBroadcastShape(const Shape& s1, const Shape& s2, Shape& outShape);
 
 class Type {

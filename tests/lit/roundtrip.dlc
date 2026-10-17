@@ -1,0 +1,57 @@
+// Printing, re-parsing and printing again must reproduce the same text (attributes, argument roles, comments and
+// multi-value returns included), and the printed form is canonical: results are renumbered, default attributes are
+// written out, and attributes are sorted.
+// RUN: %dlc-opt %s > %t.1
+// RUN: %dlc-opt %t.1 > %t.2
+// RUN: diff %t.1 %t.2
+// RUN: FileCheck %s < %t.1
+
+// CHECK-LABEL: func @everything(%x: f32[2,3,4], %w: f32[4,5] {param}, %gamma: f32[5] {param}, %beta: f32[5] {param}, %table: f32[10,5] {param}, %ids: i32[2,3], %targets: i32[2,3], %mask: f32[3,5] {const}) -> (f32[], f32[2,3,5]) {
+// CHECK-NEXT:   %0 = matmul(%x, %w) : f32[2,3,5]
+// CHECK-NEXT:   %1 = embedding(%table, %ids) : f32[2,3,5]
+// CHECK-NEXT:   %2 = add(%0, %1) : f32[2,3,5]
+// CHECK-NEXT:   %3 = mul(%2, %mask) : f32[2,3,5]
+// CHECK-NEXT:   %4 = constant() : f32[] {value = 0.5}
+// CHECK-NEXT:   %5 = div(%3, %4) : f32[2,3,5]
+// CHECK-NEXT:   %6 = layernorm(%5, %gamma, %beta) : f32[2,3,5] {eps = 1e-05}
+// CHECK-NEXT:   %7 = gelu(%6) : f32[2,3,5]
+// CHECK-NEXT:   %8 = softmax(%7) : f32[2,3,5] {axis = 1}
+// CHECK-NEXT:   %9 = log_softmax(%8) : f32[2,3,5] {axis = -1}
+// CHECK-NEXT:   %10 = exp(%9) : f32[2,3,5]
+// CHECK-NEXT:   %11 = relu(%10) : f32[2,3,5]
+// CHECK-NEXT:   %12 = sub(%11, %7) : f32[2,3,5]
+// CHECK-NEXT:   %13 = transpose(%12) : f32[5,3,2] {perm = [2, 1, 0]}
+// CHECK-NEXT:   %14 = reshape(%13) : f32[15,2] {shape = [15, 2]}
+// CHECK-NEXT:   %15 = sum(%14) : f32[2] {axes = [0], keepdims = 0}
+// CHECK-NEXT:   %16 = mean(%12) : f32[1,1,5] {axes = [0, 1], keepdims = 1}
+// CHECK-NEXT:   %17 = log(%16) : f32[1,1,5]
+// CHECK-NEXT:   %18 = onehot(%targets) : f32[2,3,5] {num_classes = 5}
+// CHECK-NEXT:   %19 = cross_entropy(%12, %targets) : f32[]
+// CHECK-NEXT:   return %19, %0
+// CHECK-NEXT: }
+
+func @everything(%x: f32[2,3,4], %w: f32[4,5] {param}, %gamma: f32[5] {param}, %beta: f32[5] {param},
+                 %table: f32[10,5] {param}, %ids: i32[2,3], %targets: i32[2,3], %mask: f32[3,5] {const})
+    -> (f32[], f32[2,3,5]) {
+  %mm = matmul(%x, %w) : f32[2,3,5]            // 3-D x 2-D
+  %emb = embedding(%table, %ids) : f32[2,3,5]
+  %sum = add(%mm, %emb) : f32[2,3,5]
+  %masked = mul(%sum, %mask) : f32[2,3,5]      // broadcasts [3,5]
+  %half = constant() : f32[] {value = 0.5}
+  %scaled = div(%masked, %half)                // type inferred when omitted
+  %ln = layernorm(%scaled, %gamma, %beta) : f32[2,3,5]
+  %g = gelu(%ln) : f32[2,3,5]
+  %s = softmax(%g) : f32[2,3,5] {axis = 1}
+  %ls = log_softmax(%s) : f32[2,3,5]
+  %e = exp(%ls) : f32[2,3,5]
+  %r = relu(%e) : f32[2,3,5]
+  %d = sub(%r, %g) : f32[2,3,5]
+  %t = transpose(%d) : f32[5,3,2]              // default permutation reverses the axes
+  %rs = reshape(%t) : f32[15,2] {shape = [15, 2]}
+  %red = sum(%rs) : f32[2] {axes = [0]}
+  %avg = mean(%d) : f32[1,1,5] {axes = [0, 1], keepdims = 1}
+  %lg = log(%avg) : f32[1,1,5]
+  %oh = onehot(%targets) : f32[2,3,5] {num_classes = 5}
+  %loss = cross_entropy(%d, %targets) : f32[]
+  return(%loss, %mm)
+}

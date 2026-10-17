@@ -48,7 +48,7 @@ def triu_mask(seq_len: int, dtype: str = "f32") -> Tensor:
     for i in range(seq_len):
         for j in range(i + 1):
             mask_data[i, j] = 0.0
-    return Tensor(shape=(seq_len, seq_len), dtype=dtype, op="constant", data=mask_data)
+    return Tensor(shape=(seq_len, seq_len), dtype=dtype, op="constant", data=mask_data, name="causal_mask")
 
 def add(a: Union[Tensor, float, int], b: Union[Tensor, float, int]) -> Tensor:
     if not isinstance(a, Tensor):

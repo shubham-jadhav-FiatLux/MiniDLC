@@ -39,3 +39,6 @@ filecheck = find_filecheck()
 if not filecheck:
     lit_config.fatal("LLVM FileCheck not found; install LLVM tools or pass --param filecheck=...")
 config.environment["PATH"] = os.pathsep.join([os.path.dirname(filecheck), config.environment.get("PATH", "")])
+
+# Inputs/ holds files that other tests feed to dlc-opt; they are not tests themselves.
+config.excludes = ["Inputs"]

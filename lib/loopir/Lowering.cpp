@@ -1,12 +1,14 @@
 #include "dlc/loopir/Lowering.h"
 #include "dlc/ir/Ops.h"
+#include "dlc/ir/SlotTracker.h"
 #include <iostream>
 
 namespace dlc::loopir {
 
-static Buffer makeBufferFromValue(Value* val, const MemoryPlanningPass* memPlan, bool isInput = false, bool isOutput = false) {
+static Buffer makeBufferFromValue(Value* val, const SlotTracker& names, const MemoryPlanningPass* memPlan,
+                                  bool isInput = false, bool isOutput = false) {
     Buffer buf;
-    buf.name = val->getName();
+    buf.name = names.name(val);
     buf.isInput = isInput;
     buf.isOutput = isOutput;
     if (val->getType()->isTensor()) {
@@ -29,6 +31,7 @@ static Buffer makeBufferFromValue(Value* val, const MemoryPlanningPass* memPlan,
 
 static KernelNest lowerMatmulEpilogueGroup(
     const FusedGroup& group,
+    const SlotTracker& names,
     const MemoryPlanningPass* memPlan
 ) {
     Operation* mmOp = group.matmulOp;
@@ -49,8 +52,8 @@ static KernelNest lowerMatmulEpilogueGroup(
 
     KernelNest kernel(group.name);
 
-    Buffer bufA = makeBufferFromValue(valA, memPlan, true, false);
-    Buffer bufB = makeBufferFromValue(valB, memPlan, true, false);
+    Buffer bufA = makeBufferFromValue(valA, names, memPlan, true, false);
+    Buffer bufB = makeBufferFromValue(valB, names, memPlan, true, false);
     kernel.addBuffer(bufA);
     kernel.addBuffer(bufB);
 
@@ -63,10 +66,10 @@ static KernelNest lowerMatmulEpilogueGroup(
         } else {
             valBias = biasAdd->getOperand(0).get();
         }
-        kernel.addBuffer(makeBufferFromValue(valBias, memPlan, true, false));
+        kernel.addBuffer(makeBufferFromValue(valBias, names, memPlan, true, false));
     }
 
-    Buffer bufOut = makeBufferFromValue(finalOut, memPlan, false, true);
+    Buffer bufOut = makeBufferFromValue(finalOut, names, memPlan, false, true);
     kernel.addBuffer(bufOut);
 
     // Compute FLOPs & bytes moved
@@ -113,7 +116,7 @@ static KernelNest lowerMatmulEpilogueGroup(
 
     ExprPtr epilogueVal = std::make_shared<VarExpr>("acc");
     if (valBias) {
-        auto loadBias = std::make_shared<LoadExpr>(valBias->getName(), std::make_shared<VarExpr>("j"));
+        auto loadBias = std::make_shared<LoadExpr>(names.name(valBias), std::make_shared<VarExpr>("j"));
         epilogueVal = std::make_shared<BinaryExpr>(BinaryOp::Add, epilogueVal, loadBias);
     }
     if (act && act->getOpName() == "relu") {
@@ -135,6 +138,7 @@ static KernelNest lowerMatmulEpilogueGroup(
 
 static KernelNest lowerElementwiseGroup(
     const FusedGroup& group,
+    const SlotTracker& names,
     const MemoryPlanningPass* memPlan
 ) {
     KernelNest kernel(group.name);
@@ -160,14 +164,14 @@ static KernelNest lowerElementwiseGroup(
                 }
                 if (internal) break;
             }
-            if (!internal && !registered.count(opVal->getName())) {
-                kernel.addBuffer(makeBufferFromValue(opVal, memPlan, true, false));
-                registered.insert(opVal->getName());
+            if (!internal && !registered.count(names.name(opVal))) {
+                kernel.addBuffer(makeBufferFromValue(opVal, names, memPlan, true, false));
+                registered.insert(names.name(opVal));
             }
         }
     }
 
-    Buffer outBuf = makeBufferFromValue(lastOp->getResult(0).get(), memPlan, false, true);
+    Buffer outBuf = makeBufferFromValue(lastOp->getResult(0).get(), names, memPlan, false, true);
     kernel.addBuffer(outBuf);
 
     int64_t flops = static_cast<int64_t>(group.operations.size()) * totalElements;
@@ -194,19 +198,19 @@ static KernelNest lowerElementwiseGroup(
         auto op0Type = std::static_pointer_cast<TensorType>(op0->getType());
         auto op1Type = std::static_pointer_cast<TensorType>(op1->getType());
 
-        ExprPtr load0 = std::make_shared<LoadExpr>(op0->getName(), idxVar);
+        ExprPtr load0 = std::make_shared<LoadExpr>(names.name(op0), idxVar);
         ExprPtr load1;
         if (op1Type->getNumElements() == 1) {
-            load1 = std::make_shared<LoadExpr>(op1->getName(), std::make_shared<ConstExpr>(0));
+            load1 = std::make_shared<LoadExpr>(names.name(op1), std::make_shared<ConstExpr>(0));
         } else if (op1Type->getNumElements() < op0Type->getNumElements() && !op1Type->getShape().empty()) {
             int64_t innerDim = op1Type->getShape().back();
             auto modIdx = std::make_shared<BinaryExpr>(BinaryOp::Sub, idxVar,
                 std::make_shared<BinaryExpr>(BinaryOp::Mul,
                     std::make_shared<BinaryExpr>(BinaryOp::Div, idxVar, std::make_shared<ConstExpr>(innerDim)),
                     std::make_shared<ConstExpr>(innerDim)));
-            load1 = std::make_shared<LoadExpr>(op1->getName(), modIdx);
+            load1 = std::make_shared<LoadExpr>(names.name(op1), modIdx);
         } else {
-            load1 = std::make_shared<LoadExpr>(op1->getName(), idxVar);
+            load1 = std::make_shared<LoadExpr>(names.name(op1), idxVar);
         }
 
         currentExpr = std::make_shared<BinaryExpr>(bop, load0, load1);
@@ -215,7 +219,7 @@ static KernelNest lowerElementwiseGroup(
         if (firstOp->getOpName() == "exp") uop = UnaryOp::Exp;
         else if (firstOp->getOpName() == "log") uop = UnaryOp::Log;
         auto op0 = firstOp->getOperand(0).get();
-        auto load0 = std::make_shared<LoadExpr>(op0->getName(), idxVar);
+        auto load0 = std::make_shared<LoadExpr>(names.name(op0), idxVar);
         currentExpr = std::make_shared<UnaryExpr>(uop, load0);
     }
 
@@ -239,15 +243,16 @@ static KernelNest lowerElementwiseGroup(
 
 static KernelNest lowerGenericOp(
     Operation* op,
+    const SlotTracker& names,
     const MemoryPlanningPass* memPlan
 ) {
     KernelNest kernel(op->getOpName() + "_kernel");
 
     for (size_t i = 0; i < op->getNumOperands(); ++i) {
-        kernel.addBuffer(makeBufferFromValue(op->getOperand(i).get(), memPlan, true, false));
+        kernel.addBuffer(makeBufferFromValue(op->getOperand(i).get(), names, memPlan, true, false));
     }
     for (size_t i = 0; i < op->getNumResults(); ++i) {
-        kernel.addBuffer(makeBufferFromValue(op->getResult(i).get(), memPlan, false, true));
+        kernel.addBuffer(makeBufferFromValue(op->getResult(i).get(), names, memPlan, false, true));
     }
 
     if (op->getNumResults() > 0 && op->getResult(0)->getType()->isTensor()) {
@@ -258,11 +263,11 @@ static KernelNest lowerGenericOp(
 
         ExprPtr valExpr;
         if (op->getNumOperands() >= 1) {
-            valExpr = std::make_shared<LoadExpr>(op->getOperand(0)->getName(), idxVar);
+            valExpr = std::make_shared<LoadExpr>(names.name(op->getOperand(0).get()), idxVar);
         } else {
             valExpr = std::make_shared<ConstExpr>(0.0);
         }
-        loop->addBodyStmt(std::make_shared<StoreStmt>(op->getResult(0)->getName(), idxVar, valExpr));
+        loop->addBodyStmt(std::make_shared<StoreStmt>(names.name(op->getResult(0).get()), idxVar, valExpr));
         kernel.addRootStmt(loop);
     }
 
@@ -277,16 +282,17 @@ std::vector<KernelNest> Lowering::lowerFunction(
     std::vector<KernelNest> kernels;
     const Block* entry = func.getEntryBlock();
     if (!entry) return kernels;
+    SlotTracker names(func);
 
     if (fusion && !fusion->getFusedGroups().empty()) {
         for (const auto& group : fusion->getFusedGroups()) {
             if (group.kind == FusedGroupKind::MatmulEpilogue) {
-                kernels.push_back(lowerMatmulEpilogueGroup(group, memPlan));
+                kernels.push_back(lowerMatmulEpilogueGroup(group, names, memPlan));
             } else if (group.kind == FusedGroupKind::Elementwise) {
-                kernels.push_back(lowerElementwiseGroup(group, memPlan));
+                kernels.push_back(lowerElementwiseGroup(group, names, memPlan));
             } else {
                 for (Operation* op : group.operations) {
-                    kernels.push_back(lowerGenericOp(op, memPlan));
+                    kernels.push_back(lowerGenericOp(op, names, memPlan));
                 }
             }
         }
@@ -302,9 +308,9 @@ std::vector<KernelNest> Lowering::lowerFunction(
                 mmGroup.name = "matmul";
                 mmGroup.matmulOp = op;
                 mmGroup.operations.push_back(op);
-                kernels.push_back(lowerMatmulEpilogueGroup(mmGroup, memPlan));
+                kernels.push_back(lowerMatmulEpilogueGroup(mmGroup, names, memPlan));
             } else {
-                kernels.push_back(lowerGenericOp(op, memPlan));
+                kernels.push_back(lowerGenericOp(op, names, memPlan));
             }
         }
     }

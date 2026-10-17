@@ -1,4 +1,5 @@
 #include "dlc/ir/Type.h"
+#include <algorithm>
 #include <sstream>
 
 namespace dlc {
@@ -9,6 +10,18 @@ std::string dataTypeToString(DataType type) {
         case DataType::Int32:   return "i32";
     }
     return "unknown";
+}
+
+int64_t checkedNumElements(const Shape& shape) {
+    int64_t bound = 1;
+    int64_t count = 1;
+    for (int64_t dim : shape) {
+        if (dim < 0 || __builtin_mul_overflow(bound, std::max<int64_t>(dim, 1), &bound) || bound > kMaxTensorElements) {
+            return -1;
+        }
+        count *= dim;
+    }
+    return count;
 }
 
 bool computeBroadcastShape(const Shape& a, const Shape& b, Shape& outShape) {

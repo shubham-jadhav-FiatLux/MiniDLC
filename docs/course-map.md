@@ -9,10 +9,11 @@ planned (phase given). The defects are detailed in [`architecture.md`](architect
 
 | Concept | Where | Course | Status |
 |---|---|---|---|
-| SSA form, IR design, verifier, textual IR | `include/dlc/ir/`, `lib/ir/` | CS6843 Program Analysis | ◐ verifier checks only def-before-use; parser drops attributes (P1) |
+| SSA form, IR design, verifier, textual IR | `include/dlc/ir/`, `lib/ir/` | CS6843 Program Analysis | ✓ op registry; verifier with per-op type rules, dominance and use-list checks; parser that round-trips |
 | Value numbering (CSE) | `lib/passes/CSE.cpp` | CS6843 (available expressions) | ◐ key ignores result types; doubles keyed to 6 digits (P2) |
-| Reverse reachability (DCE) | `lib/passes/DCE.cpp` | CS6843 (liveness) | ◐ erased ops stay in use lists (P1) |
-| Abstract interpretation over shapes | `lib/passes/ShapeInference.cpp` | CS6843 | ◐ infers shapes but reports no errors (P1) |
+| Reverse reachability (DCE) | `lib/passes/DCE.cpp` | CS6843 (liveness) | ✓ erased ops are unlinked from their operands' use lists |
+| Abstract interpretation over shapes | `lib/passes/ShapeInference.cpp`, `lib/ir/OpRegistry.cpp` | CS6843 | ✓ registry type rules; invalid programs rejected |
+| Translation validation of passes | `tests/python/test_translation_validation.py` | CS6843 (semantics preservation) | ✓ every graph pass on 16 exported graphs; known miscompiles are strict expected failures |
 | Reverse-mode autodiff (VJPs) | `python/minidlc/reference.py`, `lib/passes/Autodiff.cpp` | Chain rule / adjoint method | ✓ Python, all 18 ops gradient-checked; ◐ C++ VJPs wrong for ReLU, GELU, mean, LayerNorm (P2) |
 | Activity analysis | — | CS6843 (dataflow) | ○ P2 |
 | Dependences and fusion legality | `lib/passes/Fusion.cpp` | CS6843 (dependence analysis) | ◐ groups ops without legality checks (P3) |
@@ -33,8 +34,13 @@ planned (phase given). The defects are detailed in [`architecture.md`](architect
 ## By course
 
 ### CS6843 Program Analysis
-- **SSA and verification.** The graph IR is in SSA form; the verifier checks that every operand is defined before use
-  and that a return exists. Per-op type rules, signature checks and a parser that round-trips come in P1.
+- **SSA and verification.** The graph IR is in SSA form. An op registry gives each op's operand count, attributes and
+  type rule; the verifier checks those rules, that operands are defined before use, the return against the signature,
+  and that every use list matches the actual uses. The parser and printer round-trip.
+- **Translation validation.** Instead of proving each pass correct, every run is checked: each graph pass runs on
+  exported graphs, and the optimized function must compute the same outputs as the original in the reference
+  interpreter. Two miscompiles the suite catches (CSE merging nearby constants, `x * 0` changing a result type) are
+  scheduled for P2.
 - **Dataflow.** CSE numbers values by hashing (op, operands, attributes) within the single block; DCE marks values live
   backwards from the return. Activity analysis for autodiff (forward "varied" × backward "useful") comes in P2.
 - **Memory planning.** Live intervals over the schedule, then greedy offset assignment (largest first) with an

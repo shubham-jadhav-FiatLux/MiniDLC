@@ -1,14 +1,18 @@
-// RUN: %dlc-opt --passes=shape-infer %s | FileCheck %s
+// RUN: %dlc-opt --no-verify-input --passes=shape-infer %s | FileCheck %s
+// RUN: not %dlc-opt %s 2>&1 | FileCheck %s --check-prefix=INVALID
 
-// The declared result types are deliberately wrong; shape inference must propagate the real ones.
-// CHECK: func @test_layer(%arg0: f32[128,784], %arg1: f32[784,256], %arg2: f32[256]) -> f32[128,256] {
-// CHECK:   %0 = matmul(%arg0, %arg1) : f32[128,256]
-// CHECK:   %1 = add(%0, %arg2) : f32[128,256]
+// The declared result types are deliberately wrong; shape inference must propagate the real ones in order.
+// INVALID: error: input failed verification:
+// INVALID: '%0 = matmul(%x, %w) : f32[1]': result type f32[1] does not match the inferred type f32[128,256]
+
+// CHECK: func @test_layer(%x: f32[128,784], %w: f32[784,256] {param}, %b: f32[256] {param}) -> f32[128,256] {
+// CHECK:   %0 = matmul(%x, %w) : f32[128,256]
+// CHECK:   %1 = add(%0, %b) : f32[128,256]
 // CHECK:   %2 = relu(%1) : f32[128,256]
-// CHECK:   return(%2)
+// CHECK:   return %2
 // CHECK: }
 
-func @test_layer(%x: f32[128,784], %w: f32[784,256], %b: f32[256]) -> f32[128,256] {
+func @test_layer(%x: f32[128,784], %w: f32[784,256] {param}, %b: f32[256] {param}) -> f32[128,256] {
   %0 = matmul(%x, %w) : f32[1]
   %1 = add(%0, %b) : f32[1]
   %2 = relu(%1) : f32[1]

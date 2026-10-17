@@ -37,18 +37,18 @@ bool DCEPass::runOnFunction(Function& func) {
         }
     }
 
-    // Remove operations not marked live
+    // Remove operations not marked live, users before producers so every erased op is already unused
     std::vector<Operation*> toRemove;
-    for (const auto& opPtr : entry->getOperations()) {
-        Operation* op = opPtr.get();
-        if (liveOps.find(op) == liveOps.end()) {
-            toRemove.push_back(op);
+    const auto& ops = entry->getOperations();
+    for (auto it = ops.rbegin(); it != ops.rend(); ++it) {
+        if (liveOps.find(it->get()) == liveOps.end()) {
+            toRemove.push_back(it->get());
             changed = true;
         }
     }
 
     for (auto* deadOp : toRemove) {
-        entry->removeOperation(deadOp);
+        entry->eraseOperation(deadOp);
     }
 
     return changed;

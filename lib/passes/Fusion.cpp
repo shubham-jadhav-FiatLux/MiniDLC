@@ -177,7 +177,7 @@ bool FusionPass::runOnFunction(Function& func) {
     // Annotate operations in IR with fusion grouping for inspection and IR dumps
     for (const auto& group : fusedGroups_) {
         for (Operation* grpOp : group.operations) {
-            if (grpOp) {
+            if (grpOp && annotate_) {
                 grpOp->setAttribute("fusion.group", group.groupId);
                 grpOp->setAttribute("fusion.kernel", group.name);
             }

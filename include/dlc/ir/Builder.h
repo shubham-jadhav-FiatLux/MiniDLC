@@ -2,10 +2,13 @@
 
 #include "dlc/ir/Module.h"
 #include "dlc/ir/Ops.h"
+#include <map>
 #include <memory>
+#include <optional>
 
 namespace dlc {
 
+// Creates ops at the end of a block. Result types come from the op registry unless one is passed explicitly.
 class IRBuilder {
 public:
     IRBuilder() = default;
@@ -19,6 +22,10 @@ public:
     FunctionPtr createFunction(const std::string& name,
                                const std::vector<TypePtr>& argTypes,
                                const std::vector<TypePtr>& resultTypes);
+
+    // Any registered op by name.
+    ValuePtr createOp(const std::string& opName, std::vector<ValuePtr> operands,
+                      const std::map<std::string, AttributeValue>& attributes = {}, TypePtr resultType = nullptr);
 
     // High level op builders
     ValuePtr createMatmul(ValuePtr lhs, ValuePtr rhs, TypePtr resultType = nullptr);
@@ -37,9 +44,13 @@ public:
     ValuePtr createCrossEntropy(ValuePtr logits, ValuePtr targets, TypePtr resultType = nullptr);
     ValuePtr createLayerNorm(ValuePtr x, ValuePtr gamma, ValuePtr beta, double eps = 1e-5, TypePtr resultType = nullptr);
 
-    ValuePtr createSum(ValuePtr operand, int64_t axis = -1, bool keepdims = false, TypePtr resultType = nullptr);
-    ValuePtr createMean(ValuePtr operand, int64_t axis = -1, bool keepdims = false, TypePtr resultType = nullptr);
+    // Without `axes` the reduction covers every axis.
+    ValuePtr createSum(ValuePtr operand, std::optional<std::vector<int64_t>> axes = std::nullopt,
+                       bool keepdims = false, TypePtr resultType = nullptr);
+    ValuePtr createMean(ValuePtr operand, std::optional<std::vector<int64_t>> axes = std::nullopt,
+                        bool keepdims = false, TypePtr resultType = nullptr);
 
+    // An empty `perm` reverses the axes.
     ValuePtr createTranspose(ValuePtr operand, std::vector<int64_t> perm, TypePtr resultType = nullptr);
     ValuePtr createReshape(ValuePtr operand, Shape newShape, TypePtr resultType = nullptr);
     ValuePtr createEmbedding(ValuePtr table, ValuePtr indices, TypePtr resultType = nullptr);
@@ -49,6 +60,9 @@ public:
     void createReturn(const std::vector<ValuePtr>& values);
 
 private:
+    // Fills default attributes, infers the result type unless `explicitType` is given, and appends the op.
+    ValuePtr insert(OperationPtr op, const TypePtr& explicitType);
+
     Block* insertBlock_{nullptr};
     uint32_t nextValueId_{0};
 };

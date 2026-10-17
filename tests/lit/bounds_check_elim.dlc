@@ -6,7 +6,7 @@
 // CHECK:     for j in 0..128 {
 // CHECK:       acc = 0.0;
 // CHECK:       for k in 0..256 vectorize(8) {
-// CHECK:         acc = fma(arg0[((i * 256) + k)], arg1[((k * 128) + j)], acc);
+// CHECK:         acc = fma(a[((i * 256) + k)], b[((k * 128) + j)], acc);
 // CHECK:       }
 // CHECK:       0[((i * 128) + j)] = acc;
 // CHECK:     }

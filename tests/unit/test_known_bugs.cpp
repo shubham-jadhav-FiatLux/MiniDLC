@@ -1,22 +1,17 @@
 // Known defects found by the 2026-10-17 audit. Each test states the correct behaviour and stays DISABLED_ until
-// the phase that fixes it (see docs/architecture.md); enable it in the same change as the fix. To see the current
-// failures, run: dlc_unit_tests --gtest_also_run_disabled_tests --gtest_filter='KnownBugs.*'
-// (DISABLED_ConstantFoldingIsMemorySafe aborts under AddressSanitizer until it is fixed.)
+// the phase that fixes it (see docs/architecture.md); when a phase fixes one, it moves into the regular test files.
+// To see the current failures, run: dlc_unit_tests --gtest_also_run_disabled_tests --gtest_filter='KnownBugs.*'
 #include "dlc/backends/llvm/LLVMCodeGen.h"
 #include "dlc/ir/Builder.h"
 #include "dlc/ir/Parser.h"
-#include "dlc/ir/Verifier.h"
 #include "dlc/loopir/Lowering.h"
 #include "dlc/passes/Autodiff.h"
 #include "dlc/passes/CSE.h"
 #include "dlc/passes/Canonicalize.h"
-#include "dlc/passes/DCE.h"
 #include "dlc/passes/Fusion.h"
 #include "dlc/passes/MemoryPlanning.h"
-#include "dlc/passes/ShapeInference.h"
 #include <gtest/gtest.h>
 #include <algorithm>
-#include <stdexcept>
 
 namespace {
 
@@ -42,66 +37,6 @@ func @layer(%x: f32[128,784], %w: f32[784,256], %b: f32[256]) -> f32[128,256] {
 }
 )";
 
-// P1: the parser drops attributes, and re-parses the printed `return(%v)` as an empty return plus a stray op.
-TEST(KnownBugs, DISABLED_PrintParsePrintIsAFixpoint) {
-    auto mod = IRParser::parseModule(R"(
-func @f(%x: f32[4,8]) -> f32[8] {
-  %0 = softmax(%x) : f32[4,8] {axis = 0}
-  %1 = sum(%0) : f32[8] {axis = 0, keepdims = 0}
-  return %1
-}
-)");
-    ASSERT_NE(mod, nullptr);
-    std::string once = mod->toString();
-    EXPECT_NE(once.find("axis = 0"), std::string::npos) << once;
-
-    auto reparsed = IRParser::parseModule(once);
-    ASSERT_NE(reparsed, nullptr);
-    EXPECT_EQ(reparsed->toString(), once);
-}
-
-// P1: an undefined operand must be an error; the parser silently drops it today.
-TEST(KnownBugs, DISABLED_ParserRejectsUndefinedOperands) {
-    bool rejected = false;
-    try {
-        auto mod = IRParser::parseModule(R"(
-func @g(%a: f32[4]) -> f32[4] {
-  %0 = add(%a, %typo) : f32[4]
-  return %0
-}
-)");
-        rejected = mod == nullptr || !Verifier::verify(*mod).success;
-    } catch (const std::exception&) {
-        rejected = true;
-    }
-    EXPECT_TRUE(rejected);
-}
-
-// P1: erasing an op must unlink it from its operands' use lists; v1 leaves dangling pointers behind.
-TEST(KnownBugs, DISABLED_DCEUnlinksErasedUsers) {
-    IRBuilder builder;
-    auto func = builder.createFunction("dce", {f32({4})}, {f32({4})});
-    auto x = func->getArguments()[0];
-    auto live = builder.createExp(x);
-    builder.createRelu(x); // dead
-    builder.createReturn({live});
-
-    DCEPass().runOnFunction(*func);
-    EXPECT_EQ(x->getUses().size(), 1u);
-}
-
-// P1: the verifier must check per-op type rules (inner dimensions of a matmul must agree).
-TEST(KnownBugs, DISABLED_VerifierRejectsInvalidMatmulShapes) {
-    IRBuilder builder;
-    auto func = builder.createFunction("bad", {f32({4, 8}), f32({4, 8})}, {f32({4, 8})});
-    const auto& args = func->getArguments();
-    auto mm = builder.createMatmul(args[0], args[1], f32({4, 8}));
-    builder.createReturn({mm});
-
-    ShapeInferencePass().runOnFunction(*func);
-    EXPECT_FALSE(Verifier::verify(*func).success);
-}
-
 // P2: the ReLU VJP must mask the upstream gradient; v1 computes dOut * x because there is no select op.
 TEST(KnownBugs, DISABLED_AutodiffReluBackwardMasksTheGradient) {
     IRBuilder builder;
@@ -114,31 +49,18 @@ TEST(KnownBugs, DISABLED_AutodiffReluBackwardMasksTheGradient) {
     EXPECT_TRUE(hasOp(*func, "select"));
 }
 
-// P2: with activity analysis only parameters get gradients; v1 ignores the parameter list.
+// P2: with activity analysis only arguments with the param role get gradients; v1 differentiates every argument.
 TEST(KnownBugs, DISABLED_AutodiffBuildsGradientsOnlyForParameters) {
     IRBuilder builder;
     auto func = builder.createFunction("ad", {f32({4, 8}), f32({8, 3})}, {f32({})});
+    func->setArgRole(1, ArgRole::Param); // arg0 is the input batch, arg1 the weight
     const auto& args = func->getArguments();
     builder.createReturn({builder.createSum(builder.createMatmul(args[0], args[1]))});
 
-    AutodiffPass({"arg1"}).runOnFunction(*func); // arg0 is the input batch, arg1 the weight
+    AutodiffPass().runOnFunction(*func);
     const auto& ret = func->getEntryBlock()->getOperations().back();
     ASSERT_EQ(ret->getNumOperands(), 2u); // loss, dW
     EXPECT_EQ(ret->getOperand(1)->getType()->toString(), "f32[8,3]");
-}
-
-// P2: folding add(2, 3) inserts into the op list while iterating it (heap-use-after-free under ASan).
-TEST(KnownBugs, DISABLED_ConstantFoldingIsMemorySafe) {
-    IRBuilder builder;
-    auto func = builder.createFunction("fold", {}, {f32({})});
-    auto sum = builder.createAdd(builder.createConstant(2.0, f32({})), builder.createConstant(3.0, f32({})));
-    builder.createReturn({sum});
-
-    CanonicalizePass().runOnFunction(*func);
-    auto* folded = dynamic_cast<ConstantOp*>(
-        func->getEntryBlock()->getOperations().back()->getOperand(0)->getDefiningOp());
-    ASSERT_NE(folded, nullptr);
-    EXPECT_DOUBLE_EQ(folded->getValue(), 5.0);
 }
 
 // P2: identity rewrites must keep the result type; v1 rewrites x[4,4] * 0 into the scalar constant.

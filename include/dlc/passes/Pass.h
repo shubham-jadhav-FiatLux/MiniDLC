@@ -24,12 +24,16 @@ public:
 
     void addPass(PassPtr pass) { passes_.push_back(std::move(pass)); }
     void setPrintAfterAll(bool enable) { printAfterAll_ = enable; }
+    // Verify the module after every pass; a failure raises IRError naming the pass.
+    void setVerifyEach(bool enable) { verifyEach_ = enable; }
 
+    // Errors raised by a pass are rethrown as IRError prefixed with the pass name.
     bool run(Module& module);
 
 private:
     std::vector<PassPtr> passes_;
     bool printAfterAll_{false};
+    bool verifyEach_{false};
 };
 
 } // namespace dlc
