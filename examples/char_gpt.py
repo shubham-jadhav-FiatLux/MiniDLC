@@ -3,10 +3,10 @@
 Example: Autoregressive Character-Level Transformer trained on TinyShakespeare using MiniDLC.
 Demonstrates:
   1. Learned token and position embeddings.
-  2. Multi-head causal self-attention with causal triangular masking.
+  2. Causal self-attention with a triangular mask (single-head for now; head splitting arrives in v2, phase P6).
   3. Pre-LN Transformer blocks with residual connections and GELU feed-forward MLPs.
   4. Automatic differentiation with cross-entropy loss and Adam optimization.
-  5. Unified compilation pipeline via dl.compile(loss, optimizer, target='reference').
+  5. Training through dl.compile(loss, optimizer, target='reference'), i.e. the NumPy reference interpreter.
   6. Autoregressive character generation given prompts.
 """
 
@@ -55,6 +55,7 @@ def main():
         elif arg.startswith("--lr="):
             lr = float(arg.split("=")[1])
 
+    np.random.seed(1337)  # before model init, so weights and batches are reproducible
     print(f"\n[2/4] Initializing Transformer model...")
     print(f"  Block size (context) : {block_size}")
     print(f"  Model dimension (d)  : {d_model}")
@@ -84,7 +85,6 @@ def main():
     train_step = dl.compile(loss_node, optimizer=optimizer, target="reference")
 
     print(f"  Training for {num_steps} iterations (Adam lr={lr})...")
-    np.random.seed(1337)
     batches = tinyshakespeare_batches(data, batch_size=batch_size, block_size=block_size, steps=num_steps)
 
     t0 = time.time()

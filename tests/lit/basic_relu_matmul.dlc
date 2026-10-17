@@ -1,5 +1,6 @@
 // RUN: %dlc-opt --passes=shape-infer %s | FileCheck %s
 
+// The declared result types are deliberately wrong; shape inference must propagate the real ones.
 // CHECK: func @test_layer(%arg0: f32[128,784], %arg1: f32[784,256], %arg2: f32[256]) -> f32[128,256] {
 // CHECK:   %0 = matmul(%arg0, %arg1) : f32[128,256]
 // CHECK:   %1 = add(%0, %arg2) : f32[128,256]
@@ -8,8 +9,8 @@
 // CHECK: }
 
 func @test_layer(%x: f32[128,784], %w: f32[784,256], %b: f32[256]) -> f32[128,256] {
-  %0 = matmul(%x, %w) : f32[128,256]
-  %1 = add(%0, %b) : f32[128,256]
-  %2 = relu(%1) : f32[128,256]
+  %0 = matmul(%x, %w) : f32[1]
+  %1 = add(%0, %b) : f32[1]
+  %2 = relu(%1) : f32[1]
   return %2
 }

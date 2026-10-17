@@ -16,7 +16,15 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 # Options
 option(DLC_BUILD_TOOLS "Build MiniDLC compiler tools (e.g. dlc-opt)" ON)
 option(DLC_BUILD_TESTS "Build MiniDLC tests" ON)
-option(DLC_BUILD_PYTHON "Build Python bindings" OFF)
+option(DLC_BUILD_PYTHON "Build Python bindings (not implemented yet)" OFF)
+option(DLC_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+
+if(DLC_SANITIZE)
+    add_compile_options(-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address,undefined)
+endif()
+
+find_package(Threads REQUIRED)
 
 # 1. Core IR Library
 add_library(dlc_ir
@@ -61,6 +69,7 @@ add_library(dlc_runtime
     lib/runtime/ExecutionPlan.cpp
 )
 target_include_directories(dlc_runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(dlc_runtime PUBLIC Threads::Threads)
 
 # 5. Backends Library
 add_library(dlc_backends
@@ -73,7 +82,6 @@ target_link_libraries(dlc_backends PUBLIC dlc_loopir dlc_runtime ${CMAKE_DL_LIBS
 
 
 # 6. Tools: dlc-opt and Microbenchmarks
-find_package(Threads REQUIRED)
 if(DLC_BUILD_TOOLS)
     add_executable(dlc-opt
         tools/dlc-opt/dlc-opt.cpp
@@ -87,22 +95,20 @@ if(DLC_BUILD_TOOLS)
     target_link_libraries(dlc_fma_peak PRIVATE Threads::Threads)
 endif()
 
-# 7. Unit Tests
+# 7. Tests: GoogleTest unit tests and lit/FileCheck golden tests
 if(DLC_BUILD_TESTS)
     enable_testing()
-    include(FetchContent)
-    FetchContent_Declare(
-        googletest
-        URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip
-    )
-    # Prevent overriding parent compiler/linker settings on Windows
-    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-    
-    # Try finding system GTest or FetchContent
-    find_package(GTest QUIET)
+    find_package(GTest CONFIG QUIET)
     if(NOT GTest_FOUND)
-        # Note: If offline or build without network, fallback to simple custom runner
-        # or FetchContent when network is available
+        include(FetchContent)
+        FetchContent_Declare(
+            googletest
+            URL https://github.com/google/googletest/archive/refs/tags/v1.15.2.zip
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        )
+        set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+        set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+        FetchContent_MakeAvailable(googletest)
     endif()
 
     add_executable(dlc_unit_tests
@@ -110,8 +116,21 @@ if(DLC_BUILD_TESTS)
         tests/unit/test_passes.cpp
         tests/unit/test_runtime.cpp
         tests/unit/test_cuda.cpp
+        tests/unit/test_known_bugs.cpp
     )
-    target_link_libraries(dlc_unit_tests PRIVATE dlc_backends dlc_passes dlc_runtime dlc_loopir dlc_ir)
+    target_link_libraries(dlc_unit_tests PRIVATE dlc_backends dlc_passes dlc_runtime dlc_loopir dlc_ir GTest::gtest_main)
+    include(GoogleTest)
+    gtest_discover_tests(dlc_unit_tests)
 
-    add_test(NAME dlc_unit_tests COMMAND dlc_unit_tests)
+    # Golden IR tests: lit drives dlc-opt and checks its output with LLVM's FileCheck
+    find_program(LIT_EXECUTABLE NAMES lit llvm-lit)
+    find_program(FILECHECK_EXECUTABLE NAMES FileCheck HINTS /usr/lib/llvm-23/bin /usr/lib/llvm-18/bin)
+    if(DLC_BUILD_TOOLS AND LIT_EXECUTABLE AND FILECHECK_EXECUTABLE)
+        add_test(NAME lit
+            COMMAND ${LIT_EXECUTABLE} -sv ${CMAKE_CURRENT_SOURCE_DIR}/tests/lit
+                    --param dlc_opt=$<TARGET_FILE:dlc-opt>
+                    --param filecheck=${FILECHECK_EXECUTABLE})
+    else()
+        message(STATUS "lit tests disabled: they need dlc-opt, lit and FileCheck")
+    endif()
 endif()

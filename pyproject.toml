@@ -29,3 +29,4 @@ include = ["minidlc*"]
 [tool.pytest.ini_options]
 testpaths = ["tests/python"]
 python_files = "test_*.py"
+pythonpath = ["python"]

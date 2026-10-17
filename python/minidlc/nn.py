@@ -99,6 +99,11 @@ class Sequential(Module):
         return x
 
 class MultiHeadAttention(Module):
+    """Causal scaled dot-product attention with q/k/v/output projections.
+
+    Heads are not split yet: this computes single-head attention over all d_model channels, scaled by
+    1/sqrt(d_model / num_heads). Real head splitting (reshape + transpose + 4-D matmul) arrives in v2, phase P6.
+    """
     def __init__(self, d_model: int, num_heads: int, causal: bool = True) -> None:
         super().__init__()
         assert d_model % num_heads == 0, f"d_model {d_model} must be divisible by num_heads {num_heads}"

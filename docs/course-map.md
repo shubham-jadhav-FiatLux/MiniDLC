@@ -1,65 +1,65 @@
-# Course-Concept Mapping
+# Course-Concept Map
 
-This document provides a comprehensive mapping between academic coursework and the architectural implementation of **MiniDLC**. Every major compiler pass, runtime optimization, and hardware backend directly exercises concepts from graduate computer science and systems coursework.
+How MiniDLC uses graduate coursework from IIT Madras, and how far each concept is implemented.
 
----
+Status: **✓** implemented and tested · **◐** implemented with known defects, or not on an executed path yet · **○**
+planned (phase given). The defects are detailed in [`architecture.md`](architecture.md), Part 2.
 
-## 1. Summary Map
+## Summary
 
-| Concept | Location in MiniDLC | Course Reference |
-|---|---|---|
-| **SSA Form, IR Design & Type Verification** | `include/dlc/ir/`, `lib/ir/` | **CS6843 Program Analysis** (L1–L4, LLVM Primer) |
-| **Dataflow Analysis: Available Expressions (CSE)** | `lib/passes/CSE.cpp` | **CS6843 Program Analysis** (L6 Dataflow Frameworks) |
-| **Dataflow Analysis: Liveness & Reverse Reachability (DCE)** | `lib/passes/DCE.cpp` | **CS6843 Program Analysis** (L7 Liveness & Dead Code) |
-| **Abstract Interpretation (Shape Lattice)** | `lib/passes/ShapeInference.cpp` | **CS6843 Program Analysis** (L14 Abstract Interpretation) |
-| **Interval Range Analysis & Bounds-Check Elimination** | `lib/loopir/LoopPasses.cpp` | **CS6843 Program Analysis** (Assignment A2 & A4) |
-| **Dependence Analysis & Fusion Legality** | `lib/passes/Fusion.cpp` | **CS6843 Program Analysis** (Loop Parallelism & Dependences) |
-| **Lit / FileCheck Golden Testing Workflow** | `tests/lit/` | **CS6843 Program Analysis** (LLVM Developer Tooling) |
-| **Register Allocation Analogy: Liveness Memory Planning** | `lib/passes/MemoryPlanning.cpp` | **CS6843 Program Analysis** (Chaitin-Briggs Interval Coloring) |
-| **Shared-Memory 2D Tiling & Bank Conflicts** | `lib/backends/cuda/CUDACodeGen.cpp` | **CS6023 GPU Programming** (L3 CUDA Memory Hierarchy) |
-| **Intra-Warp Tree Reductions (`__shfl_down_sync`)** | `lib/backends/cuda/CUDACodeGen.cpp` | **CS6023 GPU Programming** (L8 Warp Primitives & Shuffles) |
-| **Hardware Atomic Scatter Updates (`atomicAdd`)** | `lib/backends/cuda/CUDACodeGen.cpp` | **CS6023 GPU Programming** (L4 Synchronization & Atomics) |
-| **Global Memory Coalescing & Transposition** | `lib/backends/cuda/CUDACodeGen.cpp` | **CS6023 GPU Programming** (L3 DRAM Coalescing) |
-| **Cache Blocking & Loop Tiling** | `lib/loopir/LoopPasses.cpp` | **CS6600 Computer Architecture** (L10 Cache Hierarchies) |
-| **Instruction-Level Parallelism (ILP) & Unrolling** | `lib/loopir/LoopPasses.cpp` | **CS6600 Computer Architecture** (L5 Dynamic Scheduling & ILP) |
-| **SIMD Vectorization (256-bit AVX2)** | `lib/backends/llvm/LLVMCodeGen.cpp` | **CS6600 / CS6400 Computer Architecture** (SIMD Execution) |
-| **Roofline Performance Modeling** | `benchmarks/roofline.py`, `docs/perf-report.md` | **CS6400 ACA / ID5130 PSC** (Arithmetic Intensity) |
-| **Thread-Pool Runtime & Static Chunking** | `include/dlc/runtime/ThreadPool.h` | **ID5130 Parallel Scientific Computing** (L5 OpenMP & Work-sharing) |
-| **Numerical Stability (Log-Sum-Exp, fp32 Accumulation)** | `lib/passes/Autodiff.cpp`, `python/minidlc/reference.py` | **ID5130 Parallel Scientific Computing** (Floating-Point Numerics) |
-| **Reverse-Mode Autodiff (Vector-Jacobian Products)** | `lib/passes/Autodiff.cpp` | **Mathematical Foundations** (Chain Rule & Adjoint State Method) |
+| Concept | Where | Course | Status |
+|---|---|---|---|
+| SSA form, IR design, verifier, textual IR | `include/dlc/ir/`, `lib/ir/` | CS6843 Program Analysis | ◐ verifier checks only def-before-use; parser drops attributes (P1) |
+| Value numbering (CSE) | `lib/passes/CSE.cpp` | CS6843 (available expressions) | ◐ key ignores result types; doubles keyed to 6 digits (P2) |
+| Reverse reachability (DCE) | `lib/passes/DCE.cpp` | CS6843 (liveness) | ◐ erased ops stay in use lists (P1) |
+| Abstract interpretation over shapes | `lib/passes/ShapeInference.cpp` | CS6843 | ◐ infers shapes but reports no errors (P1) |
+| Reverse-mode autodiff (VJPs) | `python/minidlc/reference.py`, `lib/passes/Autodiff.cpp` | Chain rule / adjoint method | ✓ Python, all 18 ops gradient-checked; ◐ C++ VJPs wrong for ReLU, GELU, mean, LayerNorm (P2) |
+| Activity analysis | — | CS6843 (dataflow) | ○ P2 |
+| Dependences and fusion legality | `lib/passes/Fusion.cpp` | CS6843 (dependence analysis) | ◐ groups ops without legality checks (P3) |
+| Liveness-based memory planning | `lib/passes/MemoryPlanning.cpp` | CS6843; register-allocation analogy | ◐ greedy interval offset assignment; unsafe with fusion (P3) |
+| Interval range analysis, bounds-check elimination | `lib/loopir/LoopPasses.cpp` | CS6843 A2 (range analysis), A4 (bounds checks) | ◐ analysis and remainder peeling work; no guards to remove yet (P4) |
+| Golden IR tests (lit + FileCheck) | `tests/lit/` | CS6843 / LLVM tooling | ✓ |
+| Cache blocking, loop tiling | `lib/loopir/LoopPasses.cpp` | CS6600 Computer Architecture | ○ the tiling pass is a placeholder (P4) |
+| SIMD vectorization (AVX2) | `python/minidlc/llvm_engine.py` | CS6600 / CS6400 | ✓ hand-written `<8 x float>` kernels; ○ generated (P4) |
+| ILP through unrolling | `lib/loopir/LoopPasses.cpp` | CS6600 | ○ attribute only (P4) |
+| Roofline model | `benchmarks/`, `docs/perf-report.md` | CS6400 / ID5130 | ✓ CPU, measured; GPU ceilings only (P5) |
+| Thread-pool runtime | `include/dlc/runtime/ThreadPool.h` | ID5130 (work sharing) | ◐ mutex + condition-variable queue; not on the executed path (P4) |
+| Numerical stability (log-sum-exp, NaN semantics) | `python/minidlc/reference.py`, `python/minidlc/llvm_engine.py` | ID5130 (floating point) | ✓ reference interpreter and hand-written CPU kernels |
+| Shared-memory tiling, coalescing, bank conflicts | `lib/backends/cuda/CUDACodeGen.cpp` | CS6023 GPU Programming | ◐ text templates, never run; transposed tiles unpadded (P5) |
+| Warp-shuffle reductions | `lib/backends/cuda/CUDACodeGen.cpp` | CS6023 (warp primitives) | ◐ the template reduces only warp 0, so rows longer than 32 are wrong (P5) |
+| Atomic scatter (`atomicAdd`) | `lib/backends/cuda/CUDACodeGen.cpp` | CS6023 (atomics) | ◐ template, never run (P5) |
+| PTX via LLVM NVPTX; CUDA driver API | — | CS6023 + LLVM | ○ P5 |
 
----
+## By course
 
-## 2. Course-by-Course Technical Deep Dive
+### CS6843 Program Analysis
+- **SSA and verification.** The graph IR is in SSA form; the verifier checks that every operand is defined before use
+  and that a return exists. Per-op type rules, signature checks and a parser that round-trips come in P1.
+- **Dataflow.** CSE numbers values by hashing (op, operands, attributes) within the single block; DCE marks values live
+  backwards from the return. Activity analysis for autodiff (forward "varied" × backward "useful") comes in P2.
+- **Memory planning.** Live intervals over the schedule, then greedy offset assignment (largest first) with an
+  interference check — the interval-colouring analogy to register allocation. v2 moves it to kernel granularity, after
+  fusion, with parameters in a persistent region (P3).
+- **Range analysis and bounds checks (A2/A4).** Interval arithmetic over loop induction variables proves affine
+  accesses in bounds, and loops whose trip count is not a multiple of the vector width are split into a vector main
+  loop and a scalar tail. In v2 the loop IR has explicit guards, so the analysis deletes guards it proves redundant and
+  splits GPU tiles into unguarded interior and guarded boundary blocks (P4–P5).
 
-### A. CS6843 Program Analysis
-- **SSA Construction & Dominance**: Graph IR maintains static single-assignment (SSA) discipline where every value has a unique defining operation. The verifier checks dominance properties before running optimizations.
-- **Dataflow Analysis (DFA)**:
-  - *Available Expressions (CSE)*: Computes forward available expressions via op hashing and operand value numbering to merge redundant operations in $O(N)$ time.
-  - *Liveness Analysis (DCE)*: Traverses backward from function outputs to identify live sets. Unreferenced nodes without side-effects are purged.
-  - *Memory Planning*: Models buffer lifetimes as liveness intervals $[t_{\text{start}}, t_{\text{end}}]$ over scheduled kernel executions. Constructs an interval interference graph and solves memory reuse via greedy coloring, saving **26.2% peak DRAM**.
-- **Static Range Analysis & Bounds-Check Elimination (Assignments A2 & A4)**:
-  - Propagates interval ranges $\text{Env}: v \mapsto [0, \text{bound}-1]$ across nested induction variables.
-  - Statically proves affine index expressions $A[\text{idx}]$ remain within $[0, N-1]$, stamping `bounds_check_eliminated = true`.
-  - Implements **loop versioning/peeling** (A4) when dimensions are non-tile multiples, producing an un-guarded vectorized main loop and a scalar cleanup tail loop.
+### CS6023 GPU Programming
+- The v1 CUDA emitter produces text for shared-memory tiled GEMMs, warp-shuffle reductions and an `atomicAdd` scatter,
+  but none of it has been compiled or run, and the softmax template combines only warp 0's partial results.
+- v2 generates GPU code from the loop IR through LLVM's NVPTX backend: thread-bound loops, shared-memory staging with
+  padding against bank conflicts, warp shuffles plus a shared-memory combine across warps, and atomics, validated on a
+  T4 with `compute-sanitizer` (P5).
 
-### B. CS6023 GPU Programming
-- **Shared Memory Staging**: Tiled matrix multiplications (`matmul`, `matmul_transA`, `matmul_transB`) stage $16 \times 16$ blocks in `__shared__ float sA[16][16]` and `sB[16][16]`, providing **$16\times$ data reuse** and cutting DRAM traffic by $16\times$.
-- **Coalesced DRAM Access**: Matrix transposition in backpropagation ($X^T dY$ or $dY W^T$) is performed in on-chip shared memory at zero DRAM cost, maintaining 100% coalesced 32-byte/64-byte global transactions.
-- **Warp-Shuffle Primitives (`__shfl_down_sync`)**:
-  - Implements in-warp reduction trees for row-wise softmax and cross-entropy across 5 butterfly steps ($16 \to 8 \to 4 \to 2 \to 1$).
-  - Eliminates shared-memory latency and `__syncthreads()` barrier stalls.
-- **Hardware Atomic Scatter (`atomicAdd`)**: Handles gradient scatter-accumulation in backward embedding lookup tables across multiple thread blocks.
+### CS6600 / CS6400 Computer Architecture
+- The MNIST kernels are hand-written AVX2 LLVM IR: `<8 x float>` loads, `llvm.fmuladd`, and `llvm.maximum` for a
+  NaN-propagating ReLU. The forward GEMM vectorizes over output columns; the backward GEMMs are scalar.
+- The roofline is measured on the development laptop (FMA peak, STREAM copy). Tiling, unrolling and vectorization as
+  compiler transformations arrive with the v2 CPU schedules (P4).
 
-### C. CS6600 / CS6400 Computer Architecture
-- **Cache-Aware Blocking**: Tiling passes partition large matrix multiplication iteration spaces into $32 \times 64 \times 32$ blocks sized to fit within L1 ($32\text{ KB}$) and L2 ($256\text{ KB}$) caches.
-- **AVX2 Vectorization**: Lowers contiguous loops to 256-bit SIMD instructions (`<8 x float>`), leveraging 8-wide hardware vector ALUs.
-- **Loop Unrolling**: Unrolls innermost computation loops by factor 4, hiding ALU latency and maximizing instruction-level parallelism (ILP).
-- **Roofline Analysis**: Establishes theoretical hardware bounds (Peak FLOP/s vs Memory Bandwidth) and plots kernel operational points to diagnose compute-bound vs memory-bound regimes.
-
-### D. ID5130 Parallel Scientific Computing
-- **Lightweight Thread Pooling**: Multi-threaded CPU execution uses a persistent C++ `std::thread` pool with lock-free atomic task queues, avoiding OpenMP runtime library dependencies.
-- **Numerical Stability**:
-  - Softmax and cross-entropy evaluate $z - \max(z)$ before exponentiation to eliminate floating-point overflow.
-  - Cross-entropy gradient directly computes $(p_i - y_i) / N$ instead of evaluating $1/p_i \cdot \nabla p_i$, preventing catastrophic cancellation and `NaN` propagation.
-  - IEEE-754 / PyTorch NaN semantics are maintained across activations (`llvm.maximum` on CPU, `(x != x) ? x : ...` on GPU).
+### ID5130 Parallel Scientific Computing
+- Numerics: softmax and cross-entropy subtract the row maximum before `exp`; the cross-entropy gradient is computed as
+  `(softmax − onehot) / N`; ReLU propagates NaN as PyTorch does. Contract tests cover these on the reference interpreter.
+- The C++ thread pool (mutex and condition-variable task queue, `parallelFor` over chunks) exists but no executed path
+  uses it yet; the v2 CPU runtime dispatches parallel loops through it (P4).

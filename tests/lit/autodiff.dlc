@@ -1,13 +1,18 @@
 // RUN: %dlc-opt --passes=autodiff %s | FileCheck %s
 
-// CHECK: func @test_autodiff_fanout(%arg0: f32[128,784], %arg1: f32[784,256]) -> f32[] {
+// XFAIL: *
+// The v1 autodiff pass multiplies the upstream gradient by the ReLU input instead of masking it, because the op set
+// has no compare/select ops yet. Remove the XFAIL line when P2 adds the backward primitives.
+
+// CHECK: func @test_autodiff(%arg0: f32[128,784], %arg1: f32[784,256]) -> f32[] {
 // CHECK:   %0 = matmul(%arg0, %arg1) : f32[128,256]
 // CHECK:   %1 = relu(%0) : f32[128,256]
 // CHECK:   %2 = sum(%1) : f32[]
+// CHECK:   cmp_gt(%0
+// CHECK:   select(
 // CHECK:   return(%2
-// CHECK: }
 
-func @test_autodiff_fanout(%x: f32[128,784], %w: f32[784,256]) -> f32[] {
+func @test_autodiff(%x: f32[128,784], %w: f32[784,256]) -> f32[] {
   %0 = matmul(%x, %w) : f32[128,256]
   %1 = relu(%0) : f32[128,256]
   %2 = sum(%1) : f32[]

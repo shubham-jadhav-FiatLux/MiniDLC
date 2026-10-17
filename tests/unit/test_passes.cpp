@@ -1,152 +1,162 @@
 #include "dlc/ir/Builder.h"
-#include "dlc/passes/ShapeInference.h"
-#include "dlc/passes/Canonicalize.h"
-#include "dlc/passes/CSE.h"
-#include "dlc/passes/DCE.h"
 #include "dlc/passes/Autodiff.h"
+#include "dlc/passes/CSE.h"
+#include "dlc/passes/Canonicalize.h"
+#include "dlc/passes/DCE.h"
 #include "dlc/passes/Fusion.h"
 #include "dlc/passes/MemoryPlanning.h"
-#include <cassert>
-#include <iostream>
+#include "dlc/passes/ShapeInference.h"
+#include <gtest/gtest.h>
+#include <algorithm>
+#include <unordered_map>
 
+namespace {
 
-void testShapeBroadcasting() {
-    dlc::Shape a = {128, 1};
-    dlc::Shape b = {256};
-    dlc::Shape out;
-    bool ok = dlc::ShapeInferencePass::broadcastShapes(a, b, out);
-    assert(ok);
-    (void)ok;
-    assert(out.size() == 2);
-    assert(out[0] == 128);
-    assert(out[1] == 256);
-    std::cout << "[PASS] testShapeBroadcasting\n";
+using namespace dlc;
+
+TypePtr f32(Shape shape) { return std::make_shared<TensorType>(DataType::Float32, std::move(shape)); }
+
+std::vector<std::string> opNames(Function& func) {
+    std::vector<std::string> names;
+    for (const auto& op : func.getEntryBlock()->getOperations()) names.push_back(op->getOpName());
+    return names;
 }
 
-void testCSEAndDCE() {
-    dlc::IRBuilder builder;
-    auto f32_vec = std::make_shared<dlc::TensorType>(dlc::DataType::Float32, dlc::Shape{128});
-    auto func = builder.createFunction("test_cse", {f32_vec, f32_vec}, {f32_vec});
-    auto a = func->getArguments()[0];
-    auto b = func->getArguments()[1];
+TEST(ShapeInference, BroadcastsTrailingDimensions) {
+    Shape out;
+    ASSERT_TRUE(ShapeInferencePass::broadcastShapes({128, 1}, {256}, out));
+    EXPECT_EQ(out, (Shape{128, 256}));
+}
 
-    // Create identical operations
-    auto sum1 = builder.createAdd(a, b);
-    auto sum2 = builder.createAdd(a, b); // Redundant
+TEST(ShapeInference, RejectsIncompatibleBroadcast) {
+    Shape out;
+    EXPECT_FALSE(ShapeInferencePass::broadcastShapes({128, 3}, {256}, out));
+}
 
-    // Dead op
-    auto dead = builder.createMul(a, b);
+TEST(ShapeInference, CorrectsWrongResultTypes) {
+    IRBuilder builder;
+    auto func = builder.createFunction("infer", {f32({128, 784}), f32({784, 256}), f32({256})}, {f32({128, 256})});
+    const auto& args = func->getArguments();
+    auto mm = builder.createMatmul(args[0], args[1], f32({1}));
+    auto add = builder.createAdd(mm, args[2], f32({1}));
+    builder.createReturn({add});
 
-    // Live return uses sum2
+    EXPECT_TRUE(ShapeInferencePass().runOnFunction(*func));
+    EXPECT_EQ(mm->getType()->toString(), "f32[128,256]");
+    EXPECT_EQ(add->getType()->toString(), "f32[128,256]");
+}
+
+TEST(CSEAndDCE, MergesDuplicatesAndRemovesDeadOps) {
+    IRBuilder builder;
+    auto func = builder.createFunction("test_cse", {f32({128}), f32({128})}, {f32({128})});
+    const auto& args = func->getArguments();
+
+    auto sum1 = builder.createAdd(args[0], args[1]);
+    auto sum2 = builder.createAdd(args[0], args[1]); // duplicate of sum1
+    builder.createMul(args[0], args[1]);             // dead
     auto out = builder.createRelu(sum2);
     builder.createReturn({out});
 
-    // Run CSE
-    dlc::CSEPass cse;
-    bool cseChanged = cse.runOnFunction(*func);
-    assert(cseChanged);
-    (void)cseChanged;
+    EXPECT_TRUE(CSEPass().runOnFunction(*func));
+    EXPECT_EQ(out->getDefiningOp()->getOperand(0), sum1);
 
-    // Run DCE
-    dlc::DCEPass dce;
-    bool dceChanged = dce.runOnFunction(*func);
-    assert(dceChanged);
-    (void)dceChanged;
-
-    std::cout << "[PASS] testCSEAndDCE\n";
+    EXPECT_TRUE(DCEPass().runOnFunction(*func));
+    EXPECT_EQ(opNames(*func), (std::vector<std::string>{"add", "relu", "return"}));
 }
 
-void testCanonicalize() {
-    dlc::IRBuilder builder;
-    auto f32_vec = std::make_shared<dlc::TensorType>(dlc::DataType::Float32, dlc::Shape{128});
-    auto func = builder.createFunction("test_canon", {f32_vec}, {f32_vec});
+TEST(Canonicalize, ReplacesAddOfZeroWithItsOperand) {
+    IRBuilder builder;
+    auto func = builder.createFunction("test_canon", {f32({128})}, {f32({128})});
     auto x = func->getArguments()[0];
 
-    auto cZero = builder.createConstant(0.0, f32_vec);
-    auto added = builder.createAdd(x, cZero); // x + 0 -> x
+    auto zero = builder.createConstant(0.0, f32({128}));
+    auto added = builder.createAdd(x, zero);
     builder.createReturn({added});
 
-    dlc::CanonicalizePass canon;
-    bool changed = canon.runOnFunction(*func);
-    assert(changed);
-    (void)changed;
-    std::cout << "[PASS] testCanonicalize\n";
+    EXPECT_TRUE(CanonicalizePass().runOnFunction(*func));
+    EXPECT_EQ(func->getEntryBlock()->getOperations().back()->getOperand(0), x);
 }
 
-void testAutodiff() {
-    dlc::IRBuilder builder;
-    auto f32_2d = std::make_shared<dlc::TensorType>(dlc::DataType::Float32, dlc::Shape{128, 784});
-    auto f32_w = std::make_shared<dlc::TensorType>(dlc::DataType::Float32, dlc::Shape{784, 256});
-    auto func = builder.createFunction("test_ad", {f32_2d, f32_w}, {f32_2d});
-    auto x = func->getArguments()[0];
-    auto w = func->getArguments()[1];
+// Structure only: the v1 VJPs for relu/gelu/mean/layernorm are numerically wrong; see test_known_bugs.cpp (P2).
+TEST(Autodiff, ReturnsLossAndArgumentGradients) {
+    IRBuilder builder;
+    auto func = builder.createFunction("test_ad", {f32({128, 784}), f32({784, 256})}, {f32({})});
+    const auto& args = func->getArguments();
 
-    auto mm = builder.createMatmul(x, w);
+    auto mm = builder.createMatmul(args[0], args[1]);
     auto relu = builder.createRelu(mm);
     auto loss = builder.createSum(relu);
     builder.createReturn({loss});
 
-    dlc::AutodiffPass ad;
-    bool changed = ad.runOnFunction(*func);
-    assert(changed);
-    (void)changed;
-    std::cout << "[PASS] testAutodiff\n";
+    EXPECT_TRUE(AutodiffPass().runOnFunction(*func));
+    const auto& ret = func->getEntryBlock()->getOperations().back();
+    ASSERT_EQ(ret->getOpName(), "return");
+    ASSERT_EQ(ret->getNumOperands(), 3u);
+    EXPECT_EQ(ret->getOperand(0), loss);
+    EXPECT_EQ(ret->getOperand(1)->getType()->toString(), "f32[128,784]");
+    EXPECT_EQ(ret->getOperand(2)->getType()->toString(), "f32[784,256]");
 }
 
-void testFusion() {
-    dlc::IRBuilder builder;
-    auto f32_2d = std::make_shared<dlc::TensorType>(dlc::DataType::Float32, dlc::Shape{128, 784});
-    auto f32_w = std::make_shared<dlc::TensorType>(dlc::DataType::Float32, dlc::Shape{784, 256});
-    auto f32_b = std::make_shared<dlc::TensorType>(dlc::DataType::Float32, dlc::Shape{256});
-    auto func = builder.createFunction("test_fuse", {f32_2d, f32_w, f32_b}, {f32_2d});
-    auto x = func->getArguments()[0];
-    auto w = func->getArguments()[1];
-    auto b = func->getArguments()[2];
+TEST(Fusion, GroupsMatmulBiasReluIntoOneEpilogueKernel) {
+    IRBuilder builder;
+    auto func = builder.createFunction("test_fuse", {f32({128, 784}), f32({784, 256}), f32({256})},
+                                       {f32({128, 256})});
+    const auto& args = func->getArguments();
 
-    auto mm = builder.createMatmul(x, w);
-    auto add = builder.createAdd(mm, b);
+    auto mm = builder.createMatmul(args[0], args[1]);
+    auto add = builder.createAdd(mm, args[2]);
     auto relu = builder.createRelu(add);
     builder.createReturn({relu});
 
-    dlc::FusionPass fusion;
-    bool ok = fusion.runOnFunction(*func);
-    assert(ok);
-    (void)ok;
-    assert(!fusion.getFusedGroups().empty());
-    assert(fusion.getFusedGroups()[0].kind == dlc::FusedGroupKind::MatmulEpilogue);
-    assert(fusion.getFusedGroups()[0].name == "fused_matmul_bias_relu");
-    std::cout << "[PASS] testFusion\n";
+    FusionPass fusion;
+    EXPECT_TRUE(fusion.runOnFunction(*func));
+    ASSERT_FALSE(fusion.getFusedGroups().empty());
+    const auto& group = fusion.getFusedGroups()[0];
+    EXPECT_EQ(group.kind, FusedGroupKind::MatmulEpilogue);
+    EXPECT_EQ(group.name, "fused_matmul_bias_relu");
+    EXPECT_EQ(group.operations.size(), 3u);
 }
 
-void testMemoryPlanning() {
-    dlc::IRBuilder builder;
-    auto f32_vec = std::make_shared<dlc::TensorType>(dlc::DataType::Float32, dlc::Shape{128, 256});
-    auto func = builder.createFunction("test_mem", {f32_vec, f32_vec}, {f32_vec});
-    auto x = func->getArguments()[0];
-    auto y = func->getArguments()[1];
+// Op-by-op schedule: values whose live ranges overlap must get disjoint arena ranges.
+TEST(MemoryPlanning, LiveValuesNeverShareMemory) {
+    IRBuilder builder;
+    auto func = builder.createFunction("test_mem", {f32({128, 256}), f32({128, 256})}, {f32({128, 256})});
+    const auto& args = func->getArguments();
 
-    auto t1 = builder.createAdd(x, y);
+    auto t1 = builder.createAdd(args[0], args[1]);
     auto r1 = builder.createRelu(t1);
-    auto t2 = builder.createMul(r1, x);
+    auto t2 = builder.createMul(r1, args[0]);
     auto r2 = builder.createRelu(t2);
     builder.createReturn({r2});
 
-    dlc::MemoryPlanningPass memPlan;
-    bool ok = memPlan.runOnFunction(*func);
-    assert(ok);
-    (void)ok;
-    assert(memPlan.getTotalArenaSize() > 0);
-    assert(memPlan.getUnoptimizedSize() >= memPlan.getTotalArenaSize());
-    std::cout << "[PASS] testMemoryPlanning\n";
+    MemoryPlanningPass memPlan;
+    ASSERT_TRUE(memPlan.runOnFunction(*func));
+    EXPECT_GT(memPlan.getTotalArenaSize(), 0);
+    EXPECT_LT(memPlan.getTotalArenaSize(), memPlan.getUnoptimizedSize());
+
+    // Live range = [defining step, last use]; arguments are defined at step 0, return keeps values live to the end.
+    const auto& ops = func->getEntryBlock()->getOperations();
+    std::unordered_map<Value*, std::pair<int64_t, int64_t>> live;
+    for (const auto& arg : args) live[arg.get()] = {0, 0};
+    for (int64_t step = 0; step < static_cast<int64_t>(ops.size()); ++step) {
+        for (const auto& operand : ops[step]->getOperands()) {
+            auto end = ops[step]->getOpName() == "return" ? static_cast<int64_t>(ops.size()) : step;
+            live[operand.get()].second = std::max(live[operand.get()].second, end);
+        }
+        for (const auto& result : ops[step]->getResults()) live[result.get()] = {step, step};
+    }
+
+    const auto& offsets = memPlan.getOffsets();
+    for (const auto& [a, ra] : live) {
+        for (const auto& [b, rb] : live) {
+            if (a == b || std::max(ra.first, rb.first) > std::min(ra.second, rb.second)) continue;
+            const auto& oa = offsets.at(a);
+            const auto& ob = offsets.at(b);
+            EXPECT_GE(std::max(oa.offsetBytes, ob.offsetBytes),
+                      std::min(oa.offsetBytes + oa.sizeBytes, ob.offsetBytes + ob.sizeBytes))
+                << "live values share arena bytes";
+        }
+    }
 }
 
-int main_passes_tests() {
-    testShapeBroadcasting();
-    testCSEAndDCE();
-    testCanonicalize();
-    testAutodiff();
-    testFusion();
-    testMemoryPlanning();
-    return 0;
-}
-
+} // namespace

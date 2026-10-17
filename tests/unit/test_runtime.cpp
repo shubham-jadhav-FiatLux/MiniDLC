@@ -1,130 +1,117 @@
-#include "dlc/runtime/Arena.h"
-#include "dlc/runtime/ThreadPool.h"
-#include "dlc/runtime/ExecutionPlan.h"
-#include "dlc/loopir/LoopIR.h"
-#include "dlc/loopir/Lowering.h"
-#include "dlc/loopir/LoopPasses.h"
 #include "dlc/backends/llvm/LLVMCodeGen.h"
 #include "dlc/ir/Builder.h"
-#include <cassert>
-#include <iostream>
+#include "dlc/loopir/LoopIR.h"
+#include "dlc/loopir/LoopPasses.h"
+#include "dlc/loopir/Lowering.h"
+#include "dlc/runtime/Arena.h"
+#include "dlc/runtime/ThreadPool.h"
+#include <gtest/gtest.h>
 #include <atomic>
+#include <cstdint>
+#include <vector>
 
-// Declared in test_ir.cpp, test_passes.cpp, test_cuda.cpp
-int main_ir_tests();
-int main_passes_tests();
-int main_cuda_tests();
+namespace {
 
-void testArena() {
-    dlc::runtime::ArenaAllocator arena(1024 * 1024); // 1 MB
-    assert(arena.getCapacity() == 1024 * 1024);
-    assert(arena.getRawPointer() != nullptr);
+using namespace dlc;
+
+TypePtr f32(Shape shape) { return std::make_shared<TensorType>(DataType::Float32, std::move(shape)); }
+
+TEST(Arena, AllocatesAlignedZeroedMemory) {
+    runtime::ArenaAllocator arena(1024 * 1024);
+    EXPECT_EQ(arena.getCapacity(), 1024u * 1024u);
+    ASSERT_NE(arena.getRawPointer(), nullptr);
+    EXPECT_EQ(reinterpret_cast<std::uintptr_t>(arena.getRawPointer()) % 64, 0u);
 
     float* ptr = static_cast<float*>(arena.getOffsetPointer(64));
+    EXPECT_EQ(*ptr, 0.0f);
     *ptr = 42.0f;
-    assert(*ptr == 42.0f);
-    std::cout << "[PASS] testArena\n";
+    EXPECT_EQ(*static_cast<float*>(arena.getOffsetPointer(64)), 42.0f);
 }
 
-void testThreadPool() {
-    dlc::runtime::ThreadPool pool(4);
-    std::atomic<int> counter{0};
-    pool.parallelFor(0, 100, [&counter](int64_t /*i*/) {
-        counter.fetch_add(1, std::memory_order_relaxed);
-    });
-    assert(counter.load() == 100);
-    std::cout << "[PASS] testThreadPool\n";
+TEST(ThreadPool, ParallelForVisitsEveryIndexOnce) {
+    runtime::ThreadPool pool(4);
+    std::vector<std::atomic<int>> visits(100);
+    pool.parallelFor(0, 100, [&visits](int64_t i) { visits[i].fetch_add(1, std::memory_order_relaxed); });
+    for (size_t i = 0; i < visits.size(); ++i) EXPECT_EQ(visits[i].load(), 1) << "index " << i;
 }
 
-void testLoopIRAndLowering() {
-
-    dlc::IRBuilder builder;
-    auto f32_mat = std::make_shared<dlc::TensorType>(dlc::DataType::Float32, dlc::Shape{128, 256});
-    auto func = builder.createFunction("test_lowering", {f32_mat, f32_mat}, {f32_mat});
-    auto x = func->getArguments()[0];
-    auto y = func->getArguments()[1];
-
-    auto add = builder.createAdd(x, y);
+TEST(LoopIR, LowersFusedAddReluToOneVectorizedParallelLoop) {
+    IRBuilder builder;
+    auto func = builder.createFunction("test_lowering", {f32({128, 256}), f32({128, 256})}, {f32({128, 256})});
+    const auto& args = func->getArguments();
+    auto add = builder.createAdd(args[0], args[1]);
     auto relu = builder.createRelu(add);
     builder.createReturn({relu});
 
-    dlc::FusionPass fusion;
+    FusionPass fusion;
     fusion.runOnFunction(*func);
+    auto kernels = loopir::Lowering::lowerFunction(*func, &fusion, nullptr);
+    ASSERT_EQ(kernels.size(), 1u);
+    EXPECT_EQ(kernels[0].getName(), "fused_elementwise_add");
 
-    auto kernels = dlc::loopir::Lowering::lowerFunction(*func, &fusion, nullptr);
-    assert(!kernels.empty());
-    assert(kernels[0].getName() == "fused_elementwise_add");
-
-    dlc::loopir::LoopVectorizationPass::run(kernels[0], 8);
-    dlc::loopir::LoopParallelizationPass::run(kernels[0]);
-    bool bce = dlc::loopir::BoundsCheckEliminationPass::run(kernels[0]);
-    assert(bce);
-    (void)bce;
+    loopir::LoopVectorizationPass::run(kernels[0], 8);
+    loopir::LoopParallelizationPass::run(kernels[0]);
+    EXPECT_TRUE(loopir::BoundsCheckEliminationPass::run(kernels[0]));
 
     std::string irStr = kernels[0].toString();
-    assert(irStr.find("vectorize(8)") != std::string::npos);
-    assert(irStr.find("parallel") != std::string::npos);
-
-    std::cout << "[PASS] testLoopIRAndLowering\n";
+    EXPECT_NE(irStr.find("parallel for idx in 0..32768 vectorize(8)"), std::string::npos) << irStr;
+    EXPECT_NE(irStr.find("max((arg0[idx] + arg1[idx]), 0.0)"), std::string::npos) << irStr;
 }
 
-void testLLVMCodeGen() {
-    dlc::loopir::KernelNest kernel("test_vec_kernel");
-    dlc::loopir::Buffer bOut{"out", dlc::DataType::Float32, {128, 256}, {}, 0, 131072, false, true, false};
-    dlc::loopir::Buffer bIn{"in", dlc::DataType::Float32, {128, 256}, {}, 131072, 131072, true, false, false};
+// Text only: the v1 emitter picks a template by kernel name; it is not compiled or executed here.
+TEST(LLVMCodeGen, EmitsVectorKernelText) {
+    loopir::KernelNest kernel("test_vec_kernel");
+    loopir::Buffer bOut{"out", DataType::Float32, {128, 256}, {}, 0, 131072, false, true, false};
+    loopir::Buffer bIn{"in", DataType::Float32, {128, 256}, {}, 131072, 131072, true, false, false};
     kernel.addBuffer(bIn);
     kernel.addBuffer(bOut);
 
-    auto loop = std::make_shared<dlc::loopir::ForLoop>("idx", 0, 32768);
+    auto loop = std::make_shared<loopir::ForLoop>("idx", 0, 32768);
     loop->setVectorWidth(8);
     kernel.addRootStmt(loop);
 
-    std::string llvmIR = dlc::backends::llvm::LLVMCodeGen::generateKernelIR(kernel);
-    assert(llvmIR.find("define void @test_vec_kernel") != std::string::npos);
-    assert(llvmIR.find("<8 x float>") != std::string::npos);
-
-    std::cout << "[PASS] testLLVMCodeGen\n";
+    std::string llvmIR = backends::llvm::LLVMCodeGen::generateKernelIR(kernel);
+    EXPECT_NE(llvmIR.find("define void @test_vec_kernel"), std::string::npos);
+    EXPECT_NE(llvmIR.find("<8 x float>"), std::string::npos);
 }
 
-void testLoopVersioningAndBCE() {
-    // Non-tile-multiple shape (130 elements with vector width 8: 130 = 16*8 + 2)
-    dlc::loopir::KernelNest kernel("test_versioned_kernel");
-    dlc::loopir::Buffer bOut{"out", dlc::DataType::Float32, {130}, {}, 0, 130 * 4, false, true, false};
-    dlc::loopir::Buffer bIn{"in", dlc::DataType::Float32, {130}, {}, 130 * 4, 130 * 4, true, false, false};
+TEST(BoundsCheckElimination, PeelsNonMultipleVectorLoopIntoMainAndTail) {
+    // 130 elements with vector width 8: 130 = 16 * 8 + 2
+    loopir::KernelNest kernel("test_versioned_kernel");
+    loopir::Buffer bOut{"out", DataType::Float32, {130}, {}, 0, 130 * 4, false, true, false};
+    loopir::Buffer bIn{"in", DataType::Float32, {130}, {}, 130 * 4, 130 * 4, true, false, false};
     kernel.addBuffer(bIn);
     kernel.addBuffer(bOut);
 
-    auto loop = std::make_shared<dlc::loopir::ForLoop>("idx", 0, 130);
+    auto loop = std::make_shared<loopir::ForLoop>("idx", 0, 130);
     loop->setVectorWidth(8);
-    auto load = std::make_shared<dlc::loopir::LoadExpr>("in", std::make_shared<dlc::loopir::VarExpr>("idx"));
-    auto store = std::make_shared<dlc::loopir::StoreStmt>("out", std::make_shared<dlc::loopir::VarExpr>("idx"), load);
-    loop->addBodyStmt(store);
+    auto load = std::make_shared<loopir::LoadExpr>("in", std::make_shared<loopir::VarExpr>("idx"));
+    loop->addBodyStmt(std::make_shared<loopir::StoreStmt>("out", std::make_shared<loopir::VarExpr>("idx"), load));
     kernel.addRootStmt(loop);
 
-    bool bce = dlc::loopir::BoundsCheckEliminationPass::run(kernel);
-    assert(bce);
-    (void)bce;
-    assert(kernel.hasBoundsCheckEliminated());
+    EXPECT_TRUE(loopir::BoundsCheckEliminationPass::run(kernel));
+    EXPECT_TRUE(kernel.hasBoundsCheckEliminated());
 
     std::string irStr = kernel.toString();
-    assert(irStr.find("0..128 vectorize(8)") != std::string::npos);
-    assert(irStr.find("128..130") != std::string::npos);
-    assert(irStr.find("attributes {bounds_check_eliminated = true}") != std::string::npos);
-
-    std::cout << "[PASS] testLoopVersioningAndBCE\n";
+    EXPECT_NE(irStr.find("for idx in 0..128 vectorize(8)"), std::string::npos) << irStr;
+    EXPECT_NE(irStr.find("for idx in 128..130 {"), std::string::npos) << irStr;
+    EXPECT_NE(irStr.find("attributes {bounds_check_eliminated = true}"), std::string::npos) << irStr;
 }
 
-int main() {
-    std::cout << "Running MiniDLC Unit Tests...\n";
-    main_ir_tests();
-    main_passes_tests();
-    testArena();
-    testThreadPool();
-    testLoopIRAndLowering();
-    testLLVMCodeGen();
-    testLoopVersioningAndBCE();
-    main_cuda_tests();
-    std::cout << "All Unit Tests Passed Successfully!\n";
-    return 0;
+TEST(BoundsCheckElimination, RejectsOutOfBoundsAccess) {
+    loopir::KernelNest kernel("test_oob_kernel");
+    loopir::Buffer bOut{"out", DataType::Float32, {64}, {}, 0, 64 * 4, false, true, false};
+    loopir::Buffer bIn{"in", DataType::Float32, {32}, {}, 64 * 4, 32 * 4, true, false, false};
+    kernel.addBuffer(bIn);
+    kernel.addBuffer(bOut);
+
+    auto loop = std::make_shared<loopir::ForLoop>("idx", 0, 64);
+    auto load = std::make_shared<loopir::LoadExpr>("in", std::make_shared<loopir::VarExpr>("idx"));
+    loop->addBodyStmt(std::make_shared<loopir::StoreStmt>("out", std::make_shared<loopir::VarExpr>("idx"), load));
+    kernel.addRootStmt(loop);
+
+    EXPECT_FALSE(loopir::BoundsCheckEliminationPass::run(kernel));
+    EXPECT_FALSE(kernel.hasBoundsCheckEliminated());
 }
 
+} // namespace

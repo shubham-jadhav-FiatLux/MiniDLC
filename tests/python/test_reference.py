@@ -67,7 +67,7 @@ def test_reference_transpose_reshape():
     expected = np.transpose(x_val, (2, 0, 1)).reshape(4, 6)
     np.testing.assert_allclose(vals[r], expected, rtol=1e-5, atol=1e-5)
 
-def test_all():
+def run_all():
     test_reference_matmul_relu()
     test_reference_softmax_cross_entropy()
     test_reference_layernorm()
@@ -75,4 +75,4 @@ def test_all():
     print("[PASS] All Reference Interpreter Tests Passed Successfully!")
 
 if __name__ == "__main__":
-    test_all()
+    run_all()

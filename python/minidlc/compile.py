@@ -26,7 +26,13 @@ def compile(
     target: str = "reference",
     profile: bool = False,
 ) -> Callable[..., float]:
-    """Compiles forward, autodiff backward, and optimizer update into a callable step function."""
+    """Returns a training-step function for `loss` on the given target.
+
+    - "reference": runs the traced graph in the NumPy interpreter, with reverse-mode autodiff and the optimizer.
+    - "cpu": runs hand-written LLVM IR kernels (llvm_engine.py) for a fixed two-layer ReLU MLP with cross-entropy and
+      Adam. It does not compile the traced graph; other models get wrong results on this target.
+    - "cuda": not implemented yet.
+    """
     if target == "reference":
         interp = ReferenceInterpreter(dtype=np.float32)
 
@@ -65,7 +71,8 @@ def compile(
         return step_fn
 
     elif target == "cpu":
-        # Native LLVM CPU Backend with AVX2 SIMD and Contiguous Arena Execution
+        # Hand-written AVX2 LLVM IR kernels for a fixed MLP: relu(x @ W1 + b1) @ W2 + b2, cross-entropy, Adam.
+        # The traced graph is not compiled; the C++ compiler is not connected to execution yet (v2, phase P4).
         engine = LLVMCPUEngine.get()
 
         # Find model parameters and placeholders
@@ -351,13 +358,8 @@ def compile(
         return step_fn
 
     elif target == "cuda":
-        from .cuda_engine import CUDAEngine
-        if not CUDAEngine.is_available():
-            raise RuntimeError(
-                "CUDA GPU device or driver library (libcuda.so / libnvrtc.so) not found on this system. "
-                "CUDA kernel generation is verified via 'dlc-opt --emit-cuda' and tests/lit/cuda_*.dlc. "
-                "To execute CUDA training, run on an NVIDIA GPU machine or inside docker/Dockerfile.cuda."
-            )
-        raise NotImplementedError("CUDA GPU execution active on device.")
+        raise NotImplementedError(
+            "target='cuda' is not implemented yet (v2, phase P5); use target='reference' or target='cpu'."
+        )
     else:
         raise ValueError(f"Unknown target: {target}")

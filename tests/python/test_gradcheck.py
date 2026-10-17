@@ -34,6 +34,15 @@ def gradcheck_finite_diff(loss_node, param, feed_dict, eps=1e-5, rtol=1e-4, atol
 
     np.testing.assert_allclose(analytic_grad, num_grad, rtol=rtol, atol=atol)
 
+def mixed_sign(rng, shape):
+    """Random values of both signs, kept away from 0 so ReLU's kink is never crossed by the finite difference."""
+    return np.sign(rng.randn(*shape)) * (np.abs(rng.randn(*shape)) + 0.1)
+
+def weighted_sum(node, rng):
+    """sum(node * r) for a fixed random r, so every output element gets a different upstream gradient."""
+    r = dl.Tensor(shape=node.shape, dtype="f32", op="constant", data=rng.randn(*node.shape))
+    return dl.sum(dl.mul(node, r))
+
 def test_matmul_gradcheck():
     x = dl.placeholder((4, 8), name="x")
     w = dl.placeholder((8, 4), name="w")
@@ -46,11 +55,20 @@ def test_matmul_gradcheck():
     gradcheck_finite_diff(loss, w, {x: x_val, w: w_val})
     gradcheck_finite_diff(loss, x, {x: x_val, w: w_val})
 
+def test_batched_matmul_gradcheck():
+    rng = np.random.RandomState(7)
+    for a_shape, b_shape in [((2, 3, 4), (2, 4, 5)), ((2, 3, 4), (4, 5)), ((2, 2, 3, 4), (2, 2, 4, 5))]:
+        a = dl.placeholder(a_shape, name="a")
+        b = dl.placeholder(b_shape, name="b")
+        loss = weighted_sum(a @ b, rng)
+        feed = {a: rng.randn(*a_shape), b: rng.randn(*b_shape)}
+        gradcheck_finite_diff(loss, a, feed)
+        gradcheck_finite_diff(loss, b, feed)
+
 def test_binary_broadcasting_gradcheck():
     np.random.seed(42)
     x = dl.placeholder((3, 5), name="x")
     b = dl.placeholder((5,), name="b")
-    target = np.random.randn(3, 5).astype(np.float64)
 
     # Add
     loss_add = dl.sum(dl.add(x, b))
@@ -72,21 +90,18 @@ def test_binary_broadcasting_gradcheck():
     gradcheck_finite_diff(loss_div, b, {x: x_val, b: b_val_nz})
 
 def test_unary_ops_gradcheck():
-    np.random.seed(42)
+    rng = np.random.RandomState(42)
     x = dl.placeholder((4, 6), name="x")
-    x_pos = np.abs(np.random.randn(4, 6).astype(np.float64)) + 0.1
+    x_mixed = mixed_sign(rng, (4, 6))
+    x_pos = np.abs(x_mixed)
 
-    # ReLU
-    loss_relu = dl.sum(dl.relu(x))
-    gradcheck_finite_diff(loss_relu, x, {x: x_pos})
-
-    # GeLU
-    loss_gelu = dl.sum(dl.gelu(x))
-    gradcheck_finite_diff(loss_gelu, x, {x: x_pos})
+    # ReLU and GELU on both signs, so the ReLU mask is exercised
+    gradcheck_finite_diff(weighted_sum(dl.relu(x), rng), x, {x: x_mixed.copy()})
+    gradcheck_finite_diff(weighted_sum(dl.gelu(x), rng), x, {x: x_mixed.copy()})
 
     # Exp
     loss_exp = dl.sum(dl.exp(x))
-    gradcheck_finite_diff(loss_exp, x, {x: x_pos * 0.1})
+    gradcheck_finite_diff(loss_exp, x, {x: x_mixed * 0.1})
 
     # Log
     loss_log = dl.sum(dl.log(x))
@@ -112,6 +127,13 @@ def test_softmax_and_cross_entropy_gradcheck():
     loss_ce = dl.cross_entropy(logits, targets)
     gradcheck_finite_diff(loss_ce, logits, {logits: logits_val, targets: targets_val})
 
+def test_sequence_cross_entropy_gradcheck():
+    rng = np.random.RandomState(3)
+    logits = dl.placeholder((2, 3, 5), name="logits")
+    targets = dl.placeholder((2, 3), dtype="i32", name="targets")
+    feed = {logits: rng.randn(2, 3, 5), targets: rng.randint(0, 5, size=(2, 3)).astype(np.int32)}
+    gradcheck_finite_diff(dl.cross_entropy(logits, targets), logits, feed)
+
 def test_layernorm_gradcheck():
     np.random.seed(42)
     x = dl.placeholder((3, 4), name="x")
@@ -127,6 +149,31 @@ def test_layernorm_gradcheck():
     gradcheck_finite_diff(loss_ln, gamma, {x: x_val, gamma: gamma_val, beta: beta_val})
     gradcheck_finite_diff(loss_ln, beta, {x: x_val, gamma: gamma_val, beta: beta_val})
 
+def test_reductions_gradcheck():
+    rng = np.random.RandomState(5)
+    x = dl.placeholder((3, 4, 5), name="x")
+    x_val = rng.randn(3, 4, 5)
+    gradcheck_finite_diff(weighted_sum(dl.sum(x, axis=1, keepdims=True), rng), x, {x: x_val.copy()})
+    gradcheck_finite_diff(weighted_sum(dl.sum(x, axis=-1), rng), x, {x: x_val.copy()})
+    gradcheck_finite_diff(weighted_sum(dl.mean(x, axis=0), rng), x, {x: x_val.copy()})
+    gradcheck_finite_diff(weighted_sum(dl.mean(x, axis=-2, keepdims=True), rng), x, {x: x_val.copy()})
+    gradcheck_finite_diff(dl.mean(x), x, {x: x_val.copy()})
+
+def test_transpose_and_reshape_gradcheck():
+    rng = np.random.RandomState(11)
+    x = dl.placeholder((2, 3, 4), name="x")
+    x_val = rng.randn(2, 3, 4)
+    gradcheck_finite_diff(weighted_sum(dl.transpose(x, perm=[2, 0, 1]), rng), x, {x: x_val.copy()})
+    gradcheck_finite_diff(weighted_sum(dl.reshape(x, (6, 4)), rng), x, {x: x_val.copy()})
+
+def test_embedding_gradcheck():
+    rng = np.random.RandomState(13)
+    table = dl.placeholder((6, 4), name="table")
+    idx = dl.placeholder((2, 5), dtype="i32", name="idx")
+    idx_val = np.array([[0, 2, 2, 5, 1], [3, 3, 3, 0, 4]], dtype=np.int32)  # repeated rows exercise scatter-add
+    loss = weighted_sum(dl.embedding(table, idx), rng)
+    gradcheck_finite_diff(loss, table, {table: rng.randn(6, 4), idx: idx_val})
+
 def test_fanout_accumulation_gradcheck():
     np.random.seed(42)
     x = dl.placeholder((4, 4), name="x")
@@ -135,14 +182,19 @@ def test_fanout_accumulation_gradcheck():
     x_val = np.random.randn(4, 4).astype(np.float64)
     gradcheck_finite_diff(loss, x, {x: x_val})
 
-def test_all_ops_gradcheck():
+def run_all():
     test_matmul_gradcheck()
+    test_batched_matmul_gradcheck()
     test_binary_broadcasting_gradcheck()
     test_unary_ops_gradcheck()
     test_softmax_and_cross_entropy_gradcheck()
+    test_sequence_cross_entropy_gradcheck()
     test_layernorm_gradcheck()
+    test_reductions_gradcheck()
+    test_transpose_and_reshape_gradcheck()
+    test_embedding_gradcheck()
     test_fanout_accumulation_gradcheck()
     print("[PASS] All Op VJP Gradient Checks Passed Successfully!")
 
 if __name__ == "__main__":
-    test_all_ops_gradcheck()
+    run_all()

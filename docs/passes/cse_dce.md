@@ -1,13 +1,15 @@
-# Common Subexpression Elimination (CSE) & Dead Code Elimination (DCE)
+# Common Subexpression Elimination and Dead Code Elimination
 
-## Common Subexpression Elimination (CSE)
-- **Algorithm**: Global value numbering across basic blocks.
-- Uses a hash of `(OpCode, Operands, Attributes)` to identify duplicate computations.
-- Replaces duplicate operation results with existing SSA value references.
-- **Course Link**: CS6843 Available Expressions analysis.
+## CSE
+- **Algorithm:** value numbering over the function's single block. Each op is keyed by (op name, operand value ids,
+  attributes); an op whose key was seen before is replaced by the earlier result.
+- **Status (v1):** the key ignores result types, so `constant 1.0 : f32[]` and `constant 1.0 : f32[4,4]` merge; doubles
+  are written into the key with 6 significant digits, so nearby constants merge; attributes are read from an unordered
+  map. All three are recorded as disabled tests in `tests/unit/test_known_bugs.cpp` (P2).
+- **Course link:** available expressions and value numbering (CS6843).
 
-## Dead Code Elimination (DCE)
-- **Algorithm**: Reverse reachability liveness analysis starting from graph outputs (return values and mutated weights).
-- Marks live operations backward through use-def chains.
-- Drops all unreached/dead operations with no side effects.
-- **Course Link**: CS6843 Liveness analysis and backwards dataflow.
+## DCE
+- **Algorithm:** mark ops live backwards from the return through use-def chains, then erase every unmarked op.
+- **Status (v1):** erased ops stay in their operands' use lists as dangling pointers, so a later pass that walks those
+  lists reads freed memory (P1).
+- **Course link:** liveness and backward dataflow (CS6843).

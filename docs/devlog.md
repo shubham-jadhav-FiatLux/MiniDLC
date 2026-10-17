@@ -1,5 +1,10 @@
 # MiniDLC Development Log
 
+> **Note:** the M0–M5 entries were written before the 2026-10-17 audit, and several of their claims are incorrect —
+> among them "MNIST training through LLVM-compiled code", the fusion and memory-planning numbers, and the CUDA
+> milestone. The **Audit** entry at the end lists the corrections; `docs/architecture.md` (Part 2) has the status of
+> every component.
+
 ## Milestone M0 — Foundations (Completed 2026-10-11)
 
 - **Goals**: Repository skeleton, CMake build system, C++20 Graph IR core, Python frontend tracing, NumPy reference interpreter, test harness, lit configuration.
@@ -155,4 +160,42 @@
     - Analytic reverse-mode gradients compared against float64 central differences ($\epsilon = 10^{-5}$) with 100% pass rate ($25/25$ trials passed).
   - **Full Regression**: Zero regressions across 18 C++ unit tests, 11 Lit golden tests, MNIST training (96.88%), and Char-GPT training (loss 4.29 -> 3.27 in 0.59s).
 
+---
+
+## Audit (2026-10-17)
+
+A systematic review — a Debug build with AddressSanitizer and UndefinedBehaviorSanitizer, small programs aimed at each
+pass, and re-measurement — found that v1 was not the integrated compiler the entries above describe.
+
+- **Verified:** the Python reference interpreter and its VJPs; MNIST at 96.88% through hand-written LLVM IR kernels;
+  the C++ IR infrastructure and `dlc-opt`; interval range analysis with remainder peeling.
+- **Corrections to the entries above:**
+  - The MNIST `cpu` target runs hand-written kernels for a fixed two-layer ReLU MLP; it ignores the traced graph, and
+    the C++ compiler is not involved. Running the C++ pipeline end to end produces wrong results.
+  - The LLVM and CUDA backends pick text templates by kernel name; tiling, unrolling and vectorization only set
+    attributes. No CUDA code has been compiled or run.
+  - Several C++ autodiff VJPs are wrong (ReLU, GELU, mean, LayerNorm); constant folding is a use-after-free; CSE merges
+    different constants; memory planning ignores fusion and reuses parameter buffers.
+  - The "2.27× faster" and "2.77× fusion speedup" figures were measured against a NumPy linked to the netlib reference
+    BLAS; same-kernel fusion gives 1.00×. The 26.2% memory figure is not reproducible.
+  - The unit tests were built with `-DNDEBUG`, so their assertions never ran.
+  - Char-GPT attention is single-head, and the 40-step loss trace was neither monotonic nor reproducible.
+- **Outcome:** a v2 architecture (`docs/architecture.md`) and phases P0–P7.
+
+## P0 — Truthful docs and real tests (2026-10-17)
+
+- **Tests:** unit tests moved to GoogleTest, so assertions run in every build; 21 tests check outcomes rather than
+  "the pass reported a change"; 13 known bugs recorded as `DISABLED_` tests in `tests/unit/test_known_bugs.cpp`.
+  Lit tests run with LLVM's FileCheck (the regex runner is gone); `autodiff.dlc` is an expected failure until P2, and
+  the shape-inference tests now start from wrong types. Finite-difference gradient checks cover all 18 ops, with
+  mixed-sign inputs for ReLU and GELU. `pytest` runs from the repository root.
+- **CI:** `.github/workflows/ci.yml` builds Debug with ASan/UBSan and Release with clang, runs `ctest` (GoogleTest and
+  lit) and runs `pytest` on Python 3.11 and 3.13.
+- **Docs:** README, architecture, perf report, IR spec, course map, pass pages, blog and resume entry rewritten to
+  describe only what exists; the GPU roofline is labelled as ceilings.
+- **Reproducibility:** `examples/char_gpt.py` seeds before building the model; `benchmarks/fusion_ablation.py`
+  (same-kernel fusion ablation) and `benchmarks/chargpt_heldout.py` (held-out loss with unigram/bigram baselines) back
+  the numbers in the perf report.
+- **Toolchain:** LLVM 23 development package (headers, `LLVMConfig.cmake`, `FileCheck`); the X86 and NVPTX targets
+  are available for P4–P5.
 

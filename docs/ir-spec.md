@@ -1,5 +1,8 @@
 # MiniDLC Graph IR Specification
 
+This describes the v1 graph IR and loop IR as implemented. The v2 changes — an op registry, backward primitives,
+explicit guards, thread binding and memory scopes in the loop IR — are described in [`architecture.md`](architecture.md).
+
 ## 1. Syntax and Grammar
 
 The Graph IR is a textual, SSA-based language representing dataflow graphs of tensor operations.
@@ -37,12 +40,28 @@ func @mlp_forward(%x: f32[128,784], %w1: f32[784,256], %b1: f32[256]) -> f32[128
 | Manipulation | `transpose`, `reshape` | Tensor transposition and dimension reshapes |
 | Indexing & Memory | `embedding`, `constant`, `onehot` | Table gather, constant literals, one-hot encoding |
 
+Planned for P2 (needed to express backward graphs): `cmp_gt`, `select`, `broadcast_to`, `reduce_sum(axes)`,
+`reduce_max(axes)`, `scatter_add`, `cast`, `tanh`, `rsqrt`, and `transpose_a`/`transpose_b` flags on `matmul`.
+
 ## 4. Verification Rules
 
-1. **SSA Dominance**: Every operand SSA value `%v` must be defined before its use in execution order.
-2. **Type Consistency**: Binary elementwise operations require operand shapes compatible under broadcasting.
-3. **Static Shapes**: Tensor dimensions must be strictly non-negative integers.
-4. **Single Return**: A function must terminate with a valid `return` operation matching the declared signature.
+Checked by the v1 verifier (`lib/ir/Verifier.cpp`):
+
+1. **Def before use:** every operand is a function argument or the result of an earlier op.
+2. **Terminator:** a non-empty function contains a `return`.
+
+Not yet checked (P1): per-op type and shape rules (broadcast compatibility, matmul inner dimensions, non-negative
+dimensions), the returned values against the declared signature, and that `return` is the last op.
+
+### Parser limitations (v1)
+
+- Attribute dictionaries such as `{axis = 0}` are skipped. Ops get default attributes (`axis = -1`, `eps = 1e-5`), and
+  ops without a dedicated builder (`transpose`, `reshape`, `constant`, `onehot`) are created with no attributes.
+- An operand name that was never defined is dropped silently.
+- `return` takes a single value written as `return %v`. The printer's `return(%v)` form does not re-parse, and
+  `return %a, %b` makes the parser loop forever.
+
+These are fixed in P1, together with a print → parse → print round-trip test.
 
 ## 5. Loop IR Specification
 
@@ -69,13 +88,20 @@ kernel @fused_matmul_bias_relu {
 }
 ```
 
+> **Two v1 defects are visible in this dump.** The output buffer `%2` (bytes 131072–262143) lies inside the weight
+> buffer `%arg1` (bytes 0–802815) that the same kernel reads, because memory planning runs on the unfused op
+> schedule; executing this kernel gives wrong results. And `vectorize(8)` is placed on the reduction loop `k`, whose
+> accesses to `arg1` have stride 256, so it is not a legal contiguous vectorization (the LLVM template ignores the
+> annotation and vectorizes over `j`). The v2 loop IR addresses both.
+
 ### Loop IR AST Constructs
 
 1. **KernelNest**: Container containing:
    - `name`: Kernel symbol name.
    - `buffers`: List of memory buffers allocated in the contiguous arena with byte offsets and shapes.
    - `rootStmts`: Root statement sequence.
-   - `boundsCheckEliminated`: Boolean attribute indicating static range-analysis verification.
+   - `boundsCheckEliminated`: Boolean attribute indicating static range-analysis verification. v1 emits no guards,
+     so the flag does not change generated code.
 
 2. **Statements (`LoopStmt`)**:
    - `ForLoop(var, start, end, step)`: Iteration construct with attributes:

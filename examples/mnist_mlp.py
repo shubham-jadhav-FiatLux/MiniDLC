@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Example: MLP training on MNIST using MiniDLC.
-Compiles forward + backward (autodiff) + optimizer update into a unified training step
-and evaluates test accuracy on MNIST test set.
+Trains with target "cpu" (hand-written LLVM IR kernels for this fixed MLP, the default) or "reference" (the NumPy
+interpreter with reverse-mode autodiff), then evaluates test accuracy on the MNIST test set.
 """
 
 import sys

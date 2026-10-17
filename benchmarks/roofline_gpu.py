@@ -4,6 +4,9 @@ GPU Roofline Model Analysis for MiniDLC CUDA Execution.
 Calculates arithmetic intensities, data traffic, and hardware execution bounds
 for training graph kernels on NVIDIA GPU architectures (NVIDIA T4 and A100).
 Generates an SVG roofline diagram in docs/roofline_gpu.svg.
+
+These are theoretical ceilings only: no MiniDLC kernel has run on a GPU yet, so the chart marks where each kernel's
+arithmetic intensity caps its attainable performance, not measured performance.
 """
 
 import os
@@ -153,7 +156,7 @@ def generate_svg_roofline_gpu(output_path: str = "docs/roofline_gpu.svg"):
     kernels = get_kernel_specs()
 
     width, height = 860, 560
-    margin_l, margin_r, margin_t, margin_b = 90, 50, 70, 70
+    margin_l, margin_r, margin_t, margin_b = 90, 50, 86, 70
     plot_w = width - margin_l - margin_r
     plot_h = height - margin_t - margin_b
 
@@ -175,8 +178,9 @@ def generate_svg_roofline_gpu(output_path: str = "docs/roofline_gpu.svg"):
     svg.append('<rect width="100%" height="100%" fill="#1a1b26"/>')
 
     # Header
-    svg.append(f'<text x="{width//2}" y="30" fill="#c0caf5" font-family="sans-serif" font-size="18" font-weight="bold" text-anchor="middle">Theoretical &amp; Attainable GPU Roofline Model (MiniDLC)</text>')
+    svg.append(f'<text x="{width//2}" y="30" fill="#c0caf5" font-family="sans-serif" font-size="18" font-weight="bold" text-anchor="middle">Theoretical GPU Roofline Ceilings (MiniDLC kernels not measured yet)</text>')
     svg.append(f'<text x="{width//2}" y="50" fill="#7aa2f7" font-family="sans-serif" font-size="12" text-anchor="middle">NVIDIA T4: 8.1 TFLOP/s FP32, 320 GB/s (Ridge: 25.3 FLOP/B) | A100: 19.5 TFLOP/s FP32, 1,555 GB/s (Ridge: 12.5 FLOP/B)</text>')
+    svg.append(f'<text x="{width//2}" y="68" fill="#e0af68" font-family="sans-serif" font-size="11" text-anchor="middle">Hollow markers: the T4 ceiling at each kernel\'s arithmetic intensity. No MiniDLC kernel has been run on a GPU.</text>')
 
     # Grid lines & ticks - X Axis
     for exp in [-1, 0, 1, 2]:
@@ -242,11 +246,11 @@ def generate_svg_roofline_gpu(output_path: str = "docs/roofline_gpu.svg"):
         ky = y_to_px(attainable_perf)
         col = k["color"]
 
-        svg.append(f'<circle cx="{kx}" cy="{ky}" r="5.5" fill="{col}" stroke="#ffffff" stroke-width="1.5"/>')
+        svg.append(f'<circle cx="{kx}" cy="{ky}" r="5.5" fill="none" stroke="{col}" stroke-width="2"/>')
         dx, dy = label_offsets[i % len(label_offsets)]
         
         perf_str = f"{attainable_perf/1000.0:.2f} TF/s" if attainable_perf >= 1000 else f"{attainable_perf:.0f} GF/s"
-        svg.append(f'<text x="{kx + dx}" y="{ky + dy}" fill="{col}" font-family="sans-serif" font-size="10.5" font-weight="bold">{k["name"]} ({perf_str})</text>')
+        svg.append(f'<text x="{kx + dx}" y="{ky + dy}" fill="{col}" font-family="sans-serif" font-size="10.5" font-weight="bold">{k["name"]} (ceiling {perf_str})</text>')
 
     svg.append("</svg>")
 

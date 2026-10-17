@@ -1,7 +1,7 @@
 """
-CUDA Engine & Dynamic Driver API Runtime for MiniDLC.
-Provides dynamic loading of libcuda / libnvrtc, device arena allocation,
-host-device memory transfers, and kernel dispatching.
+CUDA driver API and NVRTC wrappers loaded through ctypes: device allocation, host-device copies, NVRTC compilation
+and kernel launch. Untested: nothing has run on a GPU, and it never calls cuInit or creates a context, which the
+driver API requires. Replaced by the v2 CUDA device runtime (phase P5).
 """
 
 import os
