@@ -60,7 +60,7 @@ mini-dlc/
 ├── tests/                  # Test suites
 │   ├── lit/                # 11 Lit golden IR tests with FileCheck
 │   ├── unit/               # 18 C++ unit tests
-│   └── python/             # Gradient checks, reference tests, transformer tests
+│   └── python/             # Gradient checks, reference tests, transformer tests, contract suite, DAG fuzzer
 ├── examples/               # End-to-end models (MNIST MLP, Char-GPT)
 └── benchmarks/             # Peak FMA compute, STREAM memory bandwidth, rooflines
 ```
@@ -123,6 +123,12 @@ PYTHONPATH=python python3 tests/python/test_gradcheck.py
 
 # 4. Transformer & Char-GPT Test Suite (7/7 passing)
 PYTHONPATH=python python3 tests/python/test_transformer.py
+
+# 5. Rigorous Contract & Corner-Case Stress Tests (9/9 passing)
+PYTHONPATH=python python3 tests/python/test_contracts.py
+
+# 6. Randomized Computational DAG Fuzzer vs Float64 Finite Differences (25/25 passing)
+PYTHONPATH=python python3 tests/python/test_fuzzer.py
 ```
 
 ---

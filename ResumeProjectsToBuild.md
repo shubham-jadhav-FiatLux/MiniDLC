@@ -613,6 +613,7 @@ Each milestone ends with a tagged commit, passing tests, and a short devlog entr
 | Date | Update |
 |---|---|
 | 2026-10-09 | Project decided and re-scoped to a learning-focused, complete, course-driven compiler. Own Python frontend chosen. Spec written. Not started. Brainstorm history: `Phase3_Project_Ideas.md` §12.1–§12.5. |
+| 2026-10-17 | Milestones M0–M5 complete. Full heterogeneous compiler pipeline operational. Verified 18 C++ unit tests, 11 Lit golden tests, MNIST training (96.88% in 28.3s), Char-GPT training (loss 4.29 -> 3.27 in 0.59s), 9/9 contract stress tests (NaN/Inf, numerical extremes, 4D matmuls), and 25/25 randomized DAG fuzzer trials vs float64 finite differences. Marked Done & Polished. |
 
 ---
 

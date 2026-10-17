@@ -75,3 +75,20 @@ MiniDLC supports complete sequence modeling pipelines:
    - Fuses multi-tensor Adam updates into a single register pass, eliminating redundant DRAM round-trips.
    - Compiles kernels dynamically via NVRTC and launches asynchronously through the CUDA Driver API.
 
+## 6. Verification Engine, Contract Testing & Randomized Fuzzing
+
+MiniDLC uses a multi-tier testing strategy to ensure mathematical correctness, numerical stability, and robustness:
+1. **Contract Testing Suite (`tests/python/test_contracts.py`)**:
+   - Explicitly validates compiler and runtime invariant contracts:
+     - IEEE-754 semantics: NaN and Inf propagation, with PyTorch NaN safety (`grad = 0.0` for `relu(NaN)`).
+     - Log-Sum-Exp row-maximum shifting preventing float32 overflow under extreme logit magnitudes ($\pm 10,000$).
+     - Multi-axis reductions and shape preservation under `keepdims=True`.
+     - 4D batched tensor contractions and non-tile-multiple matrix shapes.
+     - Multi-branch consumer fanout gradient accumulation ($\sum_i \frac{\partial L}{\partial y_i} \frac{\partial y_i}{\partial x}$).
+2. **Randomized DAG Fuzzer (`tests/python/test_fuzzer.py`)**:
+   - An automated graph synthesizer that builds randomized computational DAGs from the operator set.
+   - Evaluates graphs in double precision (`float64`) and asserts analytic reverse-mode autograd gradients against two-sided numerical central finite differences:
+     $$\frac{f(x + \epsilon) - f(x - \epsilon)}{2\epsilon}, \quad \epsilon = 10^{-5}$$
+   - Fuzzes across random seeds to catch corner-case interactions between elementwise ops, reductions, normalizations, and matrix products.
+
+

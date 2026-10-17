@@ -118,4 +118,41 @@
     - 7/7 Transformer unit tests passing in `tests/python/test_transformer.py`.
     - End-to-end training in `examples/char_gpt.py`: 30,656 parameters compiled via `dl.compile(loss, optimizer, target="reference")` with Adam ($lr = 0.008$), empirical cross-entropy loss dropping from **4.3277** to **3.1475** in 40 iterations (0.78s), producing autoregressive text continuations.
 
+---
+
+## Milestone M5 — Documentation, Academic Mapping & Polish (Completed 2026-10-17)
+
+- **Goals**:
+  - Per-pass documentation pages with algorithms, complexity, and course links (`docs/passes/`);
+  - Core architecture and IR specifications (`docs/architecture.md`, `docs/ir-spec.md`);
+  - Academic course-concept map (`docs/course-map.md`) mapping to CS6843, CS6023, CS6600/CS6400, and ID5130;
+  - Empirical performance report (`docs/perf-report.md`) with hardware baseline and roofline models;
+  - Deep-dive technical blog post (`docs/blog-post.md`) and recruiter-legible resume entry (`docs/resume-entry.md`);
+  - 10-minute quickstart guide in `README.md`.
+- **Completed & Verified**:
+  - Created per-pass specs for all 8 passes (`canonicalize.md`, `loop_passes.md`, `bounds_check_elim.md`, `autodiff.md`, `cse_dce.md`, `fusion.md`, `mem_plan.md`, `shape_infer.md`).
+  - Generated complete course-concept map connecting compiler passes directly to IIT Madras coursework.
+  - Authored deep retrospective blog post and verified all resume claims against empirically measured figures.
+  - Clean git state synchronized to `origin/main`.
+
+---
+
+## Stress-Testing, Corner Cases & Random-Graph Fuzzing (Completed 2026-10-17)
+
+- **Goals**:
+  - Stress test implementation against contract edge cases: NaN/Inf propagation, numerical extremes, high-rank tensors, broadcasting corner cases, prime non-tile shapes, and zero-size dimensions;
+  - Audit and fix discovered implementation bugs in reference interpreter and frontend ops;
+  - Implement randomized computational DAG fuzzer comparing analytic autograd against double-precision numerical finite differences.
+- **Completed & Verified**:
+  - **Bug Fixes Uncovered**:
+    - `python/minidlc/reference.py`: Forward pass for `softmax` and `log_softmax` hardcoded `axis=-1`, ignoring `node.attrs.get("axis", -1)`. Updated forward pass to respect the attribute.
+    - `python/minidlc/ops.py`: `sum` and `mean` with `axis=None` and `keepdims=True` hardcoded `out_shape = (1,)` instead of $(1, 1, \dots, 1)$ matching tensor rank. Updated to `tuple([1] * len(x.shape))`.
+    - `python/minidlc/reference.py`: `_unbroadcast` now coerces scalar inputs via `np.asarray(grad)` and strictly reshapes to `target_shape`.
+  - **Contract Test Suite (`tests/python/test_contracts.py`)**:
+    - 9/9 rigorous contract tests passing covering NaN/Inf semantics, logits up to $\pm 10,000$, non-default softmax axes, 4D batched matmuls, broadcasting corner cases, negative-axis reductions, prime dimensions ($17 \times 33 \times 19$), multi-consumer fanout gradient accumulation, and zero-size dimensions.
+  - **Randomized DAG Fuzzer (`tests/python/test_fuzzer.py`)**:
+    - Generated 25 complex randomized computational graphs combining `matmul`, `add`, `sub`, `mul`, `relu`, `gelu`, `layernorm`, and `softmax`.
+    - Analytic reverse-mode gradients compared against float64 central differences ($\epsilon = 10^{-5}$) with 100% pass rate ($25/25$ trials passed).
+  - **Full Regression**: Zero regressions across 18 C++ unit tests, 11 Lit golden tests, MNIST training (96.88%), and Char-GPT training (loss 4.29 -> 3.27 in 0.59s).
+
 

@@ -168,4 +168,33 @@ Training was executed via the compiled `dl.compile(loss, optimizer, target="refe
 2. **Throughput**: End-to-end forward pass, adjoint backward pass, and Adam optimizer updates process $5,120$ tokens in **0.78 seconds** ($\sim 6,564\text{ tokens/sec}$).
 3. **Autoregressive Generation**: After training, temperature-scaled sampling generates Shakespearean character sequences matching token transition distributions.
 
+---
+
+## 8. Contract Stress-Testing & Randomized DAG Fuzzer Benchmark
+
+To guarantee numerical safety across pathological edge cases and complex DAG topologies, MiniDLC includes automated contract testing and differential finite-difference fuzzing.
+
+### Empirical Contract Verification Scorecard (`tests/python/test_contracts.py`)
+
+| Contract Invariant | Test Parameters / Values | Empirical Result | Status |
+|---|---|:---:|:---:|
+| **IEEE-754 NaN/Inf Handling** | `relu([NaN, -inf, +inf, -2.0])` | `[NaN, 0.0, +inf, 0.0]` (fwd); `grad=0.0` at NaN | **PASS** |
+| **Log-Sum-Exp Stability** | Softmax & LogSoftmax at logits $\pm 10,000.0$ | No NaN/Inf; $\sum p = 1.00000$ | **PASS** |
+| **Cross-Entropy Extremes** | Logits $\pm 10,000.0$, targets $y \in \{0, 1\}$ | Finite loss & bounded gradients | **PASS** |
+| **Non-Default Softmax Axes** | Axes $0, 1, 2, -1, -2$ on $(3, 4, 5)$ tensors | Normalization $\sum_{axis} p = 1.0$ | **PASS** |
+| **4D Batched Matmuls** | $[2, 4, 8, 16] \times [2, 4, 16, 6] \to [2, 4, 8, 6]$ | Forward & adjoint backward match math | **PASS** |
+| **Broadcasting Corner Cases** | Scalar $\times$ 2D, $(1, 4) \times (3, 4)$, $(5,) + (2, 3, 5)$ | Adjoints accurately unbroadcast | **PASS** |
+| **Keepdims Shape Invariance** | `sum` / `mean` with `axis=None`, `keepdims=True` | Output shape $(1, 1, 1)$ on 3D input | **PASS** |
+| **Non-Tile Multiple Shapes** | Prime matrix dimensions: $17 \times 33 \times 19$ | Correct GEMM forward & adjoints | **PASS** |
+| **Multi-Consumer Fanout** | $Y = X + \text{relu}(X) + X^2$ (3 consumers) | Gradient accumulates $\sum_i \frac{\partial L}{\partial y_i} \frac{\partial y_i}{\partial x}$ | **PASS** |
+| **Zero-Size Dimensions** | Empty tensors $(0, 8)$ | Graceful reduction & zero gradients | **PASS** |
+
+### Randomized Computational DAG Fuzzing (`tests/python/test_fuzzer.py`)
+
+- **Total Randomized Trials**: 25 distinct seeded DAGs (seeds `42000` to `42024`).
+- **Graph Complexity**: 6 to 10 randomly selected operations (`matmul`, `add`, `sub`, `mul`, `relu`, `gelu`, `layernorm`, `softmax`) with multi-head accumulation.
+- **Verification Criterion**: Analytic reverse-mode gradient compared elementwise against float64 two-sided central differences:
+  $$\max_{i} \left| \frac{g_{\text{analytic}}[i] - g_{\text{num}}[i]}{g_{\text{num}}[i] + 10^{-5}} \right| < 2 \times 10^{-3}$$
+- **Measured Accuracy**: **25 / 25 trials passed** (100% agreement, zero numerical divergences or gradient leaks).
+
 
