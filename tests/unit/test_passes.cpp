@@ -3,7 +3,9 @@
 #include "dlc/ir/Parser.h"
 #include "dlc/ir/Verifier.h"
 #include "dlc/loopir/Lowering.h"
+#include "dlc/passes/Activity.h"
 #include "dlc/passes/Autodiff.h"
+#include "dlc/passes/Optimizer.h"
 #include "dlc/passes/CSE.h"
 #include "dlc/passes/Canonicalize.h"
 #include "dlc/passes/DCE.h"
@@ -25,6 +27,11 @@ std::vector<std::string> opNames(Function& func) {
     std::vector<std::string> names;
     for (const auto& op : func.getEntryBlock()->getOperations()) names.push_back(op->getOpName());
     return names;
+}
+
+bool hasOp(const Function& func, const std::string& name) {
+    const auto& ops = func.getEntryBlock()->getOperations();
+    return std::any_of(ops.begin(), ops.end(), [&](const OperationPtr& op) { return op->getOpName() == name; });
 }
 
 std::string allErrors(const VerificationResult& res) {
@@ -120,6 +127,32 @@ TEST(DCE, UnlinksErasedOpsFromTheirOperands) {
     EXPECT_FALSE(DCEPass().runOnFunction(*func));
 }
 
+// The CSE key includes the result type (v1 merged 1.0 : f32[] with 1.0 : f32[4,4]).
+TEST(CSE, KeepsConstantsWithDifferentTypes) {
+    IRBuilder builder;
+    auto func = builder.createFunction("cse_types", {f32({4, 4})}, {f32({4, 4})});
+    auto scalarOne = builder.createConstant(1.0, f32({}));
+    auto tensorOne = builder.createConstant(1.0, f32({4, 4}));
+    auto product = builder.createMul(builder.createAdd(func->getArguments()[0], scalarOne), tensorOne);
+    builder.createReturn({product});
+
+    CSEPass().runOnFunction(*func);
+    EXPECT_EQ(product->getDefiningOp()->getOperand(1), tensorOne);
+}
+
+// Doubles are keyed by their bits (v1 printed 6 significant digits, so nearby constants merged).
+TEST(CSE, KeepsNearbyConstantsApart) {
+    IRBuilder builder;
+    auto func = builder.createFunction("cse_values", {f32({4})}, {f32({4})});
+    auto c1 = builder.createConstant(0.1000001, f32({4}));
+    auto c2 = builder.createConstant(0.1000002, f32({4}));
+    auto diff = builder.createSub(builder.createAdd(func->getArguments()[0], c1), c2);
+    builder.createReturn({diff});
+
+    CSEPass().runOnFunction(*func);
+    EXPECT_EQ(diff->getDefiningOp()->getOperand(1), c2);
+}
+
 TEST(CSE, ErasedDuplicatesLeaveConsistentUseLists) {
     auto mod = IRParser::parseModule(R"(
 func @f(%x: f32[8], %y: f32[8]) -> f32[8] {
@@ -150,6 +183,105 @@ TEST(Canonicalize, ReplacesAddOfZeroWithItsOperand) {
 
     EXPECT_TRUE(CanonicalizePass().runOnFunction(*func));
     EXPECT_EQ(func->getEntryBlock()->getOperations().back()->getOperand(0), x);
+}
+
+// Identity rewrites keep the result type (v1 rewrote x[4,4] * 0 into the scalar constant).
+TEST(Canonicalize, PreservesResultTypes) {
+    IRBuilder builder;
+    auto func = builder.createFunction("mul1", {f32({4})}, {f32({4, 4})});
+    auto product = builder.createMul(func->getArguments()[0], builder.createConstant(1.0, f32({4, 4})));
+    builder.createReturn({product});
+
+    EXPECT_TRUE(CanonicalizePass().runOnFunction(*func));
+    const Operation* out = func->getEntryBlock()->getOperations().back()->getOperand(0)->getDefiningOp();
+    ASSERT_NE(out, nullptr);
+    EXPECT_EQ(out->getOpName(), "broadcast_to");
+    EXPECT_EQ(out->getResult(0)->getType()->toString(), "f32[4,4]");
+    EXPECT_TRUE(Verifier::verify(*func).success);
+}
+
+// x * 0 is NaN for x = NaN or Inf, so it is not rewritten to 0.
+TEST(Canonicalize, LeavesMultiplicationByZeroAlone) {
+    IRBuilder builder;
+    auto func = builder.createFunction("mul0", {f32({4})}, {f32({4})});
+    builder.createReturn({builder.createMul(func->getArguments()[0], builder.createScalar(0.0))});
+    CanonicalizePass().runOnFunction(*func);
+    EXPECT_TRUE(hasOp(*func, "mul"));
+}
+
+TEST(Canonicalize, ReachesAFixpoint) {
+    auto mod = IRParser::parseModule(R"(
+func @f(%x: f32[4]) -> f32[4] {
+  %one = constant() : f32[] {value = 1.0}
+  %zero = constant() : f32[] {value = 0.0}
+  %two = constant() : f32[] {value = 2.0}
+  %half = constant() : f32[] {value = 0.5}
+  %c = mul(%two, %half) : f32[]
+  %0 = mul(%x, %c) : f32[4]
+  %1 = add(%0, %zero) : f32[4]
+  %2 = div(%1, %one) : f32[4]
+  return %2
+}
+)");
+    auto& func = *mod->getFunctions()[0];
+    EXPECT_TRUE(CanonicalizePass().runOnFunction(func));
+    EXPECT_EQ(func.getEntryBlock()->getOperations().back()->getOperand(0), func.getArguments()[0]);
+    EXPECT_FALSE(CanonicalizePass().runOnFunction(func));
+}
+
+TEST(Canonicalize, FoldsTransposesIntoMatmulFlags) {
+    auto mod = IRParser::parseModule(R"(
+func @f(%a: f32[8,4], %b: f32[3,8], %q: f32[2,3,5,4]) -> (f32[4,3], f32[2,3,5,5]) {
+  %0 = transpose(%a) : f32[4,8] {perm = [1, 0]}
+  %1 = transpose(%b) : f32[8,3] {perm = [1, 0]}
+  %2 = matmul(%0, %1) : f32[4,3]
+  %3 = transpose(%q) : f32[2,3,4,5] {perm = [0, 1, 3, 2]}
+  %4 = matmul(%q, %3) : f32[2,3,5,5]
+  return %2, %4
+}
+)");
+    PassManager pm;
+    pm.setVerifyEach(true);
+    pm.addPass(std::make_unique<CanonicalizePass>());
+    pm.addPass(std::make_unique<DCEPass>());
+    pm.run(*mod);
+    std::string text = mod->toString();
+    EXPECT_NE(text.find("matmul(%a, %b) : f32[4,3] {transpose_a = 1, transpose_b = 1}"), std::string::npos) << text;
+    EXPECT_NE(text.find("matmul(%q, %q) : f32[2,3,5,5] {transpose_b = 1}"), std::string::npos) << text;
+    EXPECT_EQ(text.find("transpose("), std::string::npos) << text;
+}
+
+TEST(Canonicalize, CollapsesShapeOpChains) {
+    auto mod = IRParser::parseModule(R"(
+func @f(%x: f32[2,3,4]) -> (f32[2,3,4], f32[24]) {
+  %0 = transpose(%x) : f32[4,3,2] {perm = [2, 1, 0]}
+  %1 = transpose(%0) : f32[2,3,4] {perm = [2, 1, 0]}
+  %2 = reshape(%x) : f32[6,4] {shape = [6, 4]}
+  %3 = reshape(%2) : f32[24] {shape = [24]}
+  return %1, %3
+}
+)");
+    auto& func = *mod->getFunctions()[0];
+    CanonicalizePass().runOnFunction(func);
+    DCEPass().runOnFunction(func);
+    EXPECT_EQ(func.toString(), "func @f(%x: f32[2,3,4]) -> (f32[2,3,4], f32[24]) {\n"
+                               "  %0 = reshape(%x) : f32[24] {shape = [24]}\n"
+                               "  return %x, %0\n}\n");
+}
+
+TEST(Canonicalize, OrdersCommutativeOperandsForCSE) {
+    auto mod = IRParser::parseModule(R"(
+func @f(%x: f32[4], %y: f32[4]) -> f32[4] {
+  %0 = add(%x, %y) : f32[4]
+  %1 = add(%y, %x) : f32[4]
+  %2 = mul(%0, %1) : f32[4]
+  return %2
+}
+)");
+    auto& func = *mod->getFunctions()[0];
+    CanonicalizePass().runOnFunction(func);
+    EXPECT_TRUE(CSEPass().runOnFunction(func));
+    EXPECT_EQ(func.getEntryBlock()->getOperations().size(), 3u); // add, mul, return
 }
 
 // Folding inserts ops into the block it is walking; it must not invalidate that walk (it was a use-after-free).
@@ -185,10 +317,12 @@ func @f() -> f32[2] {
     EXPECT_EQ(func.toString(), "func @f() -> f32[2] {\n  %0 = constant() : f32[2] {value = 2.5}\n  return %0\n}\n");
 }
 
-// Structure only: the v1 VJPs for relu/gelu/mean/layernorm are numerically wrong; see test_known_bugs.cpp (P2).
-TEST(Autodiff, ReturnsLossAndArgumentGradients) {
+// The numerical checks of every VJP are in tests/python/test_cpp_gradients.py; these check the structure.
+TEST(Autodiff, ReturnsLossAndParameterGradients) {
     IRBuilder builder;
     auto func = builder.createFunction("test_ad", {f32({128, 784}), f32({784, 256})}, {f32({})});
+    func->setArgRole(0, ArgRole::Param);
+    func->setArgRole(1, ArgRole::Param);
     const auto& args = func->getArguments();
 
     auto mm = builder.createMatmul(args[0], args[1]);
@@ -204,8 +338,139 @@ TEST(Autodiff, ReturnsLossAndArgumentGradients) {
     EXPECT_EQ(ret->getOperand(1)->getType()->toString(), "f32[128,784]");
     EXPECT_EQ(ret->getOperand(2)->getType()->toString(), "f32[784,256]");
     EXPECT_EQ(func->getResultTypes().size(), 3u);
+    EXPECT_EQ(func->getResultInfo()[1].kind, ResultKind::Grad);
+    EXPECT_EQ(func->getResultInfo()[2].arg, 1u);
     auto res = Verifier::verify(*func);
     EXPECT_TRUE(res.success) << allErrors(res);
+}
+
+// The ReLU VJP masks the upstream gradient (v1 multiplied it by the input).
+TEST(Autodiff, ReluBackwardMasksTheGradient) {
+    IRBuilder builder;
+    auto func = builder.createFunction("ad", {f32({4, 8}), f32({8, 3})}, {f32({})});
+    func->setArgRole(1, ArgRole::Param);
+    const auto& args = func->getArguments();
+    auto relu = builder.createRelu(builder.createMatmul(args[0], args[1]));
+    builder.createReturn({builder.createSum(relu)});
+
+    AutodiffPass().runOnFunction(*func);
+    EXPECT_TRUE(hasOp(*func, "select"));
+    EXPECT_TRUE(hasOp(*func, "cmp_gt"));
+}
+
+// Activity analysis: only params get gradients, and nothing is built for the input batch.
+TEST(Autodiff, BuildsGradientsOnlyForParameters) {
+    IRBuilder builder;
+    auto func = builder.createFunction("ad", {f32({4, 8}), f32({8, 3})}, {f32({})});
+    func->setArgRole(1, ArgRole::Param); // arg0 is the input batch, arg1 the weight
+    const auto& args = func->getArguments();
+    builder.createReturn({builder.createSum(builder.createMatmul(args[0], args[1]))});
+
+    AutodiffPass().runOnFunction(*func);
+    const auto& ret = func->getEntryBlock()->getOperations().back();
+    ASSERT_EQ(ret->getNumOperands(), 2u); // loss, dW
+    EXPECT_EQ(ret->getOperand(1)->getType()->toString(), "f32[8,3]");
+    for (const auto& op : func->getEntryBlock()->getOperations()) {
+        for (const auto& result : op->getResults()) {
+            EXPECT_NE(result->getType()->toString(), "f32[4,8]") << "a gradient for the input was built";
+        }
+    }
+}
+
+TEST(Autodiff, ParameterThatDoesNotReachTheLossGetsAZeroGradient) {
+    auto mod = IRParser::parseModule(R"(
+func @f(%x: f32[3] {param}, %unused: f32[2] {param}) -> f32[] {
+  %0 = sum(%x) : f32[] {axes = [0], keepdims = 0}
+  return %0
+}
+)");
+    auto& func = *mod->getFunctions()[0];
+    AutodiffPass().runOnFunction(func);
+    const Operation* zero = func.getEntryBlock()->getOperations().back()->getOperand(2)->getDefiningOp();
+    ASSERT_NE(zero, nullptr);
+    EXPECT_EQ(zero->getOpName(), "constant");
+    EXPECT_EQ(zero->getDoubleAttr("value"), 0.0);
+    EXPECT_TRUE(Verifier::verify(func).success);
+}
+
+TEST(Autodiff, RejectsANonScalarLoss) {
+    auto mod = IRParser::parseModule("func @f(%x: f32[3] {param}) -> f32[3] {\n  %0 = exp(%x)\n  return %0\n}\n");
+    EXPECT_THROW(AutodiffPass().runOnFunction(*mod->getFunctions()[0]), IRError);
+}
+
+TEST(Activity, ActiveValuesDependOnAParameterAndReachTheLoss) {
+    auto mod = IRParser::parseModule(R"(
+func @f(%x: f32[4], %w: f32[4] {param}, %ids: i32[2], %table: f32[5,4] {param}) -> f32[] {
+  %0 = exp(%x) : f32[4]
+  %1 = mul(%0, %w) : f32[4]
+  %2 = embedding(%table, %ids) : f32[2,4]
+  %3 = cmp_gt(%1, %0) : f32[4]
+  %4 = mul(%1, %3) : f32[4]
+  %5 = sum(%4) : f32[] {axes = [0], keepdims = 0}
+  %6 = relu(%w) : f32[4]
+  return %5
+}
+)");
+    const auto& func = *mod->getFunctions()[0];
+    const auto& ops = func.getEntryBlock()->getOperations();
+    ActivityAnalysis activity(func, ops[5]->getResult(0).get());
+    EXPECT_FALSE(activity.isActive(ops[0]->getResult(0).get())); // exp(x): no parameter
+    EXPECT_TRUE(activity.isActive(ops[1]->getResult(0).get()));
+    EXPECT_FALSE(activity.isActive(ops[2]->getResult(0).get())); // embedding: never reaches the loss
+    EXPECT_FALSE(activity.isActive(ops[3]->getResult(0).get())); // a comparison carries no derivative
+    EXPECT_TRUE(activity.isActive(ops[4]->getResult(0).get()));
+    EXPECT_FALSE(activity.isActive(ops[6]->getResult(0).get())); // relu(w): varied but not useful
+    EXPECT_FALSE(activity.isActive(func.getArguments()[3].get()));
+}
+
+TEST(Optimizer, AdamAddsStateAndDonatesTheUpdates) {
+    auto mod = IRParser::parseModule(R"(
+func @f(%x: f32[4], %w: f32[4] {param}) -> f32[] {
+  %0 = mul(%x, %w) : f32[4]
+  %1 = sum(%0) : f32[] {axes = [0], keepdims = 0}
+  return %1
+}
+)");
+    auto& func = *mod->getFunctions()[0];
+    PassManager pm;
+    pm.setVerifyEach(true);
+    pm.addPass(std::make_unique<AutodiffPass>());
+    OptimizerConfig adam;
+    adam.lr = 0.01;
+    pm.addPass(std::make_unique<OptimizerPass>(adam));
+    ASSERT_NO_THROW(pm.run(*mod));
+    std::string text = func.toString();
+    for (const char* fragment : {"%adam.beta1_pow: f32[] {state, init = 1.0}", "%w.m: f32[4] {state, init = 0.0}",
+                                 "%w.v: f32[4] {state, init = 0.0}", "f32[4] {donates = %w}",
+                                 "f32[] {donates = %adam.beta2_pow}", "sqrt("}) {
+        EXPECT_NE(text.find(fragment), std::string::npos) << fragment << "\n" << text;
+    }
+    EXPECT_EQ(text.find("grad ="), std::string::npos) << "gradients are consumed by the update";
+    EXPECT_EQ(IRParser::parseModule(mod->toString())->toString(), mod->toString());
+}
+
+TEST(Optimizer, SGDWithMomentumKeepsAVelocity) {
+    auto mod = IRParser::parseModule(R"(
+func @f(%w: f32[3] {param}) -> f32[] {
+  %0 = sum(%w) : f32[] {axes = [0], keepdims = 0}
+  return %0
+}
+)");
+    auto& func = *mod->getFunctions()[0];
+    AutodiffPass().runOnFunction(func);
+    OptimizerConfig sgd;
+    sgd.kind = OptimizerConfig::Kind::SGD;
+    sgd.momentum = 0.9;
+    OptimizerPass(sgd).runOnFunction(func);
+    auto res = Verifier::verify(func);
+    EXPECT_TRUE(res.success) << allErrors(res);
+    EXPECT_NE(func.toString().find("%w.velocity: f32[3] {state, init = 0.0}"), std::string::npos) << func.toString();
+    EXPECT_EQ(func.getResultInfo().size(), 3u); // loss, w, velocity
+}
+
+TEST(Optimizer, NeedsGradients) {
+    auto mod = IRParser::parseModule("func @f(%w: f32[3] {param}) -> f32[3] {\n  return %w\n}\n");
+    EXPECT_THROW(OptimizerPass(OptimizerConfig{}).runOnFunction(*mod->getFunctions()[0]), IRError);
 }
 
 TEST(Autodiff, OutputOfATrainingGraphVerifies) {

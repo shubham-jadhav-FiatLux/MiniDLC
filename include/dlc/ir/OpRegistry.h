@@ -12,7 +12,7 @@ namespace dlc {
 enum class AttrKind { Int, Double, IntList, String };
 
 // The kind of kernel an op lowers to.
-enum class OpClass { Elementwise, Matmul, Reduction, RowReduction, Loss, Shape, Gather, Constant, Terminator };
+enum class OpClass { Elementwise, Matmul, Reduction, RowReduction, Loss, Shape, Gather, Scatter, Constant, Terminator };
 
 struct AttrSpec {
     std::string name;

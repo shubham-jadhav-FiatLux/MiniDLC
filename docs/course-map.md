@@ -10,12 +10,13 @@ planned (phase given). The defects are detailed in [`architecture.md`](architect
 | Concept | Where | Course | Status |
 |---|---|---|---|
 | SSA form, IR design, verifier, textual IR | `include/dlc/ir/`, `lib/ir/` | CS6843 Program Analysis | ✓ op registry; verifier with per-op type rules, dominance and use-list checks; parser that round-trips |
-| Value numbering (CSE) | `lib/passes/CSE.cpp` | CS6843 (available expressions) | ◐ key ignores result types; doubles keyed to 6 digits (P2) |
+| Value numbering (CSE) | `lib/passes/CSE.cpp` | CS6843 (available expressions) | ✓ keyed on operand identity, result type and exact attribute bits |
 | Reverse reachability (DCE) | `lib/passes/DCE.cpp` | CS6843 (liveness) | ✓ erased ops are unlinked from their operands' use lists |
 | Abstract interpretation over shapes | `lib/passes/ShapeInference.cpp`, `lib/ir/OpRegistry.cpp` | CS6843 | ✓ registry type rules; invalid programs rejected |
 | Translation validation of passes | `tests/python/test_translation_validation.py` | CS6843 (semantics preservation) | ✓ every graph pass on 16 exported graphs; known miscompiles are strict expected failures |
-| Reverse-mode autodiff (VJPs) | `python/minidlc/reference.py`, `lib/passes/Autodiff.cpp` | Chain rule / adjoint method | ✓ Python, all 18 ops gradient-checked; ◐ C++ VJPs wrong for ReLU, GELU, mean, LayerNorm (P2) |
-| Activity analysis | — | CS6843 (dataflow) | ○ P2 |
+| Reverse-mode autodiff (VJPs) | `python/minidlc/reference.py`, `lib/passes/Autodiff.cpp` | Chain rule / adjoint method | ✓ Python and C++; every C++ VJP checked against float64 finite differences |
+| Activity analysis | `lib/passes/Activity.cpp` | CS6843 (dataflow) | ✓ varied ∩ useful; no gradient for the input batch |
+| Optimizer lowering, buffer donation | `lib/passes/Optimizer.cpp` | — | ✓ Adam/SGD in the graph; step graph matches eager training |
 | Dependences and fusion legality | `lib/passes/Fusion.cpp` | CS6843 (dependence analysis) | ◐ groups ops without legality checks (P3) |
 | Liveness-based memory planning | `lib/passes/MemoryPlanning.cpp` | CS6843; register-allocation analogy | ◐ greedy interval offset assignment; unsafe with fusion (P3) |
 | Interval range analysis, bounds-check elimination | `lib/loopir/LoopPasses.cpp` | CS6843 A2 (range analysis), A4 (bounds checks) | ◐ analysis and remainder peeling work; no guards to remove yet (P4) |
@@ -41,8 +42,9 @@ planned (phase given). The defects are detailed in [`architecture.md`](architect
   exported graphs, and the optimized function must compute the same outputs as the original in the reference
   interpreter. Two miscompiles the suite catches (CSE merging nearby constants, `x * 0` changing a result type) are
   scheduled for P2.
-- **Dataflow.** CSE numbers values by hashing (op, operands, attributes) within the single block; DCE marks values live
-  backwards from the return. Activity analysis for autodiff (forward "varied" × backward "useful") comes in P2.
+- **Dataflow.** CSE numbers values by hashing (op, operand values, result type, exact attributes) within the single
+  block; DCE marks values live backwards from the return. Activity analysis for autodiff intersects a forward problem
+  ("varied": depends on a parameter) with a backward one ("useful": reaches the loss).
 - **Memory planning.** Live intervals over the schedule, then greedy offset assignment (largest first) with an
   interference check — the interval-colouring analogy to register allocation. v2 moves it to kernel granularity, after
   fusion, with parameters in a persistent region (P3).

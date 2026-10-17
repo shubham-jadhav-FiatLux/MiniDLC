@@ -6,49 +6,34 @@ set DLC_OPT or build into build/ (ctest runs this file with DLC_OPT set). Withou
 """
 from __future__ import annotations
 
+import dataclasses
 import functools
-import os
-import pathlib
-import subprocess
 from dataclasses import dataclass, field
 from typing import Dict, List
 
 import numpy as np
 import pytest
 
+import dlcopt
 import minidlc as dl
 from minidlc import ir, nn
 from minidlc.reference import ReferenceInterpreter
 from minidlc.tensor import Tensor
 from test_fuzzer import generate_random_dag
 
-ROOT = pathlib.Path(__file__).resolve().parents[2]
-DLC_OPT = os.environ.get("DLC_OPT") or str(ROOT / "build" / "dlc-opt")
-if not os.access(DLC_OPT, os.X_OK):
-    pytest.skip(f"dlc-opt not found at {DLC_OPT}: build it or set DLC_OPT", allow_module_level=True)
+if not dlcopt.available():
+    pytest.skip(f"dlc-opt not found at {dlcopt.DLC_OPT}: build it or set DLC_OPT", allow_module_level=True)
 
 PIPELINE = "shape-infer,canonicalize,cse,dce,fusion,mem-plan"
 PASSES = ["shape-infer", "canonicalize", "cse", "dce", "fusion", "mem-plan", PIPELINE]
 FUZZ_SEEDS = range(42000, 42010)
 
-# Miscompiles that translation validation catches today; each is fixed in the phase named. Strict: a fix makes the
-# test pass, which fails it until the entry is removed.
-KNOWN_FAILURES = {
-    ("nearby_constants", "cse"): "P2: CSE keys constants by 6 significant digits and merges 0.1000001 with 0.1000002",
-    ("nearby_constants", PIPELINE): "P2: CSE keys constants by 6 significant digits",
-    ("mul_by_zero", "canonicalize"): "P2: x * 0 is rewritten to the scalar constant, changing the result type",
-    ("mul_by_zero", PIPELINE): "P2: x * 0 is rewritten to the scalar constant, changing the result type",
-}
-KNOWN_AUTODIFF_FAILURES = {
-    "fuzz_42001": "P2: the v1 sum VJP hands the scalar gradient on without broadcasting it to the input's shape",
-}
+# Miscompiles that translation validation catches; each entry names the phase that fixes it. Strict: a fix makes the
+# test pass, which fails it until the entry is removed. (P2 fixed the two it started with: CSE merging nearby
+# constants, and `x * 0` changing a result type; their graphs below stay as regression cases.)
+KNOWN_FAILURES: Dict[tuple, str] = {}
 
-
-def dlc_opt(text: str, *flags: str) -> str:
-    proc = subprocess.run([DLC_OPT, *flags, "-"], input=text, capture_output=True, text=True, timeout=300)
-    if proc.returncode != 0:
-        raise AssertionError(f"dlc-opt {' '.join(flags)} failed:\n{proc.stderr}")
-    return proc.stdout
+dlc_opt = dlcopt.run
 
 
 @dataclass
@@ -123,6 +108,7 @@ def _misc() -> Case:
     return _traced("misc", [total, s, att], feeds)
 
 
+# Regression cases for two v1 miscompiles: CSE merged these constants, and canonicalize rewrote x * 0 to a scalar.
 def _nearby_constants() -> Case:
     x = dl.placeholder((4,), name="x")
     return _traced("nearby", [dl.sub(dl.mul(x, 0.1000001), dl.mul(x, 0.1000002))], {x: np.arange(1.0, 5.0)})
@@ -222,43 +208,45 @@ def test_python_op_table_matches_the_cpp_registry():
     assert list(listed) == list(ir.OPS)
 
 
+def _inputs_as_params(func: ir.IRFunction, feeds: Dict[str, np.ndarray]) -> ir.IRFunction:
+    """The function with every f32 input turned into a param, so autodiff differentiates it."""
+    args = [dataclasses.replace(a, role="param") if a.role == "input" and a.type.dtype == "f32" else a
+            for a in func.args]
+    bindings = {**func.bindings, **{a.name: feeds[a.name] for a in func.args if a.role == "input"
+                                    and a.type.dtype == "f32"}}
+    return dataclasses.replace(func, args=args, bindings=bindings)
+
+
 def _gradients(name: str):
-    """Runs the autodiff pass; returns (the function's outputs, the reference loss and gradients by argument)."""
+    """Runs the autodiff pass. Returns the differentiated function, its outputs, and the reference interpreter's
+    gradients (Python VJPs on the same graph) by argument name."""
     c = case(name)
-    differentiated = ir.parse_function(dlc_opt(c.func.to_text(), "--passes=autodiff"))
-    outputs = ir.execute(differentiated, c.all_feeds())
-    args, (loss,) = ir.to_graph(ir.IRFunction(c.func.name, c.func.args, c.func.result_types[:1],
-                                              c.func.ops[:-1] + [ir.IROp("return", c.func.returns[:1])]))
-    feeds = {t: np.asarray(c.all_feeds()[n], dtype=np.float64) for n, t in args.items()}
+    func = c.func if any(a.role == "param" for a in c.func.args) else _inputs_as_params(c.func, c.feeds)
+    differentiated = ir.parse_function(dlc_opt(func.to_text(), "--passes=autodiff"))
+    feeds = {**func.bindings, **c.feeds}
+    outputs = ir.execute(differentiated, feeds)
+    args, (loss,) = ir.to_graph(ir.IRFunction(func.name, func.args, func.result_types[:1],
+                                              func.ops[:-1] + [ir.IROp("return", func.returns[:1])]))
+    tensor_feeds = {t: np.asarray(feeds[n], dtype=np.float64) for n, t in args.items()}
     interp = ReferenceInterpreter(dtype=np.float64)
-    grads = interp.backward(loss, interp.forward(loss, feeds))
+    grads = interp.backward(loss, interp.forward(loss, tensor_feeds))
     return differentiated, outputs, {n: grads.get(t) for n, t in args.items()}
 
 
-def _check_gradients(name: str):
-    c = case(name)
+LOSS_CASES = [n for n in CASES if str(case(n).func.result_types[0]) == "f32[]"]
+
+
+@pytest.mark.parametrize("name", LOSS_CASES)
+def test_autodiff_matches_the_reference_gradients(name: str):
     func, outputs, reference = _gradients(name)
-    np.testing.assert_allclose(outputs[0], reference_outputs(name)[0], rtol=1e-12)
-    # v1 differentiates every f32 argument; activity analysis (P2) keeps only the parameters.
-    params = [a.name for a in c.func.args if a.role == "param"]
-    floats = [a.name for a in c.func.args if a.type.dtype == "f32"]
-    names = params if len(outputs) - 1 == len(params) else floats
-    assert len(outputs) - 1 == len(names), [str(t) for t in func.result_types]
-    for arg, grad in zip(names, outputs[1:]):
-        np.testing.assert_allclose(grad, reference[arg], rtol=1e-9, atol=1e-12, err_msg=f"d loss / d %{arg}")
-
-
-def test_autodiff_matches_the_reference_gradients_of_a_linear_model():
-    _check_gradients("linear")
-
-
-@pytest.mark.xfail(strict=True, reason="P2: the v1 ReLU VJP multiplies by the input instead of masking the gradient")
-def test_autodiff_matches_the_reference_gradients_of_an_mlp():
-    _check_gradients("mlp")
-
-
-@pytest.mark.parametrize("name", [pytest.param(n, marks=_known(KNOWN_AUTODIFF_FAILURES.get(n))) for n in CASES])
-def test_autodiff_keeps_the_loss(name: str):
-    func, outputs, _ = _gradients(name)
     np.testing.assert_allclose(outputs[0], reference_outputs(name)[0], rtol=1e-12, atol=1e-12)
-    assert str(func.result_types[0]) == str(case(name).func.result_types[0])
+    grads = {arg: out for out, (kind, arg) in zip(outputs, func.result_kinds()) if kind == "grad"}
+    assert set(grads) == {a.name for a in func.args if a.role == "param"}
+    for arg, grad in grads.items():
+        want = reference[arg] if reference[arg] is not None else np.zeros_like(grad)
+        np.testing.assert_allclose(grad, want, rtol=1e-9, atol=1e-12, err_msg=f"d loss / d %{arg}")
+
+
+def test_non_scalar_losses_are_rejected():
+    with pytest.raises(AssertionError, match="the loss \\(the first result\\) must be f32"):
+        dlc_opt(case("mul_by_zero").func.to_text(), "--passes=autodiff")

@@ -16,6 +16,15 @@ std::string argRoleName(ArgRole role) {
     return "input";
 }
 
+std::string resultKindName(ResultKind kind) {
+    switch (kind) {
+        case ResultKind::Value: return "value";
+        case ResultKind::Grad: return "grad";
+        case ResultKind::Donates: return "donates";
+    }
+    return "value";
+}
+
 bool parseArgRole(std::string_view text, ArgRole& role) {
     for (ArgRole candidate : {ArgRole::Input, ArgRole::Param, ArgRole::Const, ArgRole::State}) {
         if (text == argRoleName(candidate)) {
@@ -58,6 +67,27 @@ void Block::eraseOperation(Operation* op) {
     operations_.erase(it);
 }
 
+ValuePtr Function::addArgument(TypePtr type, const std::string& name, ArgRole role, std::optional<double> init) {
+    auto value = std::make_shared<Value>(Value::nextId(), std::move(type), nullptr, name);
+    arguments_.push_back(value);
+    argRoles_.push_back(role);
+    argInits_.push_back(init);
+    return value;
+}
+
+int64_t Function::getArgIndex(const Value* value) const {
+    for (size_t i = 0; i < arguments_.size(); ++i) {
+        if (arguments_[i].get() == value) return static_cast<int64_t>(i);
+    }
+    return -1;
+}
+
+void Function::setResults(std::vector<TypePtr> resultTypes, std::vector<ResultInfo> resultInfo) {
+    if (resultTypes.size() != resultInfo.size()) throw IRError("setResults: one ResultInfo per result type");
+    resultTypes_ = std::move(resultTypes);
+    resultInfo_ = std::move(resultInfo);
+}
+
 std::string Function::toString() const {
     SlotTracker names(*this);
     std::ostringstream oss;
@@ -65,16 +95,29 @@ std::string Function::toString() const {
     for (size_t i = 0; i < arguments_.size(); ++i) {
         if (i > 0) oss << ", ";
         oss << "%" << names.name(arguments_[i].get()) << ": " << arguments_[i]->getType()->toString();
-        if (argRoles_[i] != ArgRole::Input) oss << " {" << argRoleName(argRoles_[i]) << "}";
+        if (argRoles_[i] != ArgRole::Input || argInits_[i]) {
+            oss << " {" << argRoleName(argRoles_[i]);
+            if (argInits_[i]) {
+                oss << ", init = ";
+                printAttributeValue(oss, *argInits_[i]);
+            }
+            oss << "}";
+        }
     }
     oss << ") -> ";
-    if (resultTypes_.size() == 1) {
+    bool annotated = false;
+    for (const auto& info : resultInfo_) annotated = annotated || info.kind != ResultKind::Value;
+    if (resultTypes_.size() == 1 && !annotated) {
         oss << resultTypes_[0]->toString();
     } else {
         oss << "(";
         for (size_t i = 0; i < resultTypes_.size(); ++i) {
             if (i > 0) oss << ", ";
             oss << resultTypes_[i]->toString();
+            const ResultInfo& info = resultInfo_[i];
+            if (info.kind != ResultKind::Value) {
+                oss << " {" << resultKindName(info.kind) << " = %" << names.name(arguments_.at(info.arg).get()) << "}";
+            }
         }
         oss << ")";
     }

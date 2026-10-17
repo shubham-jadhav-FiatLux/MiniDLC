@@ -43,7 +43,7 @@ std::string allErrors(const VerificationResult& res) {
 constexpr const char* kEveryOp = R"(
 func @everything(%x: f32[2,3,4], %w: f32[4,5] {param}, %gamma: f32[5] {param}, %beta: f32[5] {param},
                  %table: f32[10,5] {param}, %ids: i32[2,3], %targets: i32[2,3], %mask: f32[3,5] {const},
-                 %q: f32[2,2,3,4] {state}, %k: f32[2,2,4,3], %bw: f32[2,5,6]) -> (f32[], f32[2,3,5], f32[2,2,3,3]) {
+                 %q: f32[2,2,3,4] {state}, %k: f32[2,2,4,3], %bw: f32[2,5,6], %wt: f32[5,4]) -> (f32[], f32[2,3,5], f32[2,2,3,3]) {
   %mm = matmul(%x, %w) : f32[2,3,5]
   %emb = embedding(%table, %ids) : f32[2,3,5]
   %sum = add(%mm, %emb) : f32[2,3,5] {fusion.group = 0}
@@ -69,6 +69,16 @@ func @everything(%x: f32[2,3,4], %w: f32[4,5] {param}, %gamma: f32[5] {param}, %
   %bmm = matmul(%d, %bw) : f32[2,3,6]
   %att = matmul(%q, %k) : f32[2,2,3,3] {mem.offset = 128}
   %loss = cross_entropy(%d, %targets) : f32[]
+  %th = tanh(%d) : f32[2,3,5]
+  %sq = sqrt(%e) : f32[2,3,5]
+  %rs2 = rsqrt(%e) : f32[2,3,5]
+  %gt = cmp_gt(%d, %half) : f32[2,3,5]
+  %sel = select(%gt, %th, %half) : f32[2,3,5]
+  %bc = broadcast_to(%mask) : f32[2,3,5] {shape = [2, 3, 5]}
+  %mx = reduce_max(%d) : f32[2,5] {axes = [1]}
+  %sc = scatter_add(%ids, %d) : f32[10,5] {num_rows = 10}
+  %ci = cast(%ids) : f32[2,3] {to = "f32"}
+  %mt = matmul(%x, %wt) : f32[2,3,5] {transpose_b = 1}
   return %loss, %mm, %att
 }
 )";
@@ -157,6 +167,42 @@ TEST(IRParser, EveryOpRoundTrips) {
                                  "-> (f32[], f32[2,3,5], f32[2,2,3,3])"}) {
         EXPECT_NE(once.find(fragment), std::string::npos) << fragment << "\n" << once;
     }
+}
+
+TEST(IRParser, RoundTripsTrainingStepAnnotations) {
+    const char* text = R"(func @step(%x: f32[4], %w: f32[4] {param}, %w.m: f32[4] {state, init = 0.0}, %t: f32[] {state, init = 1.0}) -> (f32[], f32[4] {grad = %w}, f32[4] {donates = %w}, f32[4] {donates = %w.m}, f32[] {donates = %t}) {
+  %0 = mul(%x, %w) : f32[4]
+  %1 = sum(%0) : f32[] {axes = [0], keepdims = 0}
+  return %1, %x, %w, %w.m, %t
+}
+)";
+    auto func = IRParser::parseFunction(text);
+    auto res = Verifier::verify(*func);
+    EXPECT_TRUE(res.success) << allErrors(res);
+    EXPECT_EQ(func->toString(), text);
+    EXPECT_EQ(func->getArgInit(3), std::optional<double>(1.0));
+    EXPECT_EQ(func->getResultInfo()[1].kind, ResultKind::Grad);
+    EXPECT_EQ(func->getResultInfo()[2].arg, 1u);
+    // One annotated result still prints in parentheses, so it is never mistaken for the body.
+    func->setResults({func->getResultTypes()[2]}, {func->getResultInfo()[2]});
+    EXPECT_NE(func->toString().find("-> (f32[4] {donates = %w}) {"), std::string::npos) << func->toString();
+}
+
+TEST(Verifier, ChecksResultAnnotationsAndStateInit) {
+    auto mod = IRParser::parseModule(R"(
+func @f(%x: f32[4], %w: f32[4] {param}, %s: f32[2] {state}) -> (f32[4] {grad = %x}, f32[4] {donates = %x}, f32[4] {donates = %s}, f32[4] {donates = %w}, f32[4] {donates = %w}) {
+  return %x, %x, %x, %x, %x
+}
+func @g(%w: f32[4] {param, init = 1.0}) -> f32[4] {
+  return %w
+}
+)");
+    auto res = Verifier::verify(*mod);
+    EXPECT_TRUE(hasError(res, "result 0 (grad): '%x' is not a param argument")) << allErrors(res);
+    EXPECT_TRUE(hasError(res, "only param and state arguments can be donated, not '%x'")) << allErrors(res);
+    EXPECT_TRUE(hasError(res, "result 2 (donates) has type f32[4] but '%s' is f32[2]")) << allErrors(res);
+    EXPECT_TRUE(hasError(res, "result 4 (donates): '%w' is donated twice")) << allErrors(res);
+    EXPECT_TRUE(hasError(res, "[@g] argument '%w': only state arguments have an initial value")) << allErrors(res);
 }
 
 TEST(IRParser, AcceptsBothReturnForms) {
@@ -265,6 +311,9 @@ TEST(IRParser, RejectsMalformedInputWithALocation) {
         {"func @f(%a: f32[4]) -> f32[4] {\n  %0 = relu(%a) : f32[4] {fusion.tag = [1, x]}\n  return %0\n}",
          "expected a number in the list"},
         {"module {}", "1:1: expected 'func'"},
+        {"func @f(%a: f32[4]) -> (f32[4] {grad = %b}) {\n  return %a\n}", "'%b' is not an argument"},
+        {"func @f(%a: f32[4]) -> (f32[4] {alias = %a}) {\n  return %a\n}", "unknown result annotation 'alias'"},
+        {"func @f(%a: f32[4] {state, start = 0}) -> f32[4] {\n  return %a\n}", "expected 'init', got 'start'"},
         {"func f(%a: f32[4]) -> f32[4] {\n  return %a\n}", "expected a function name such as '@main'"},
         {"func @f(%a: f32[4]) -> f32[4] {\n  %0 = relu(%a) : f32[4] {value = 1e}\n  return %0\n}",
          "malformed exponent"},
@@ -418,6 +467,18 @@ TEST(OpRegistry, InfersResultTypes) {
         {"reshape", {f32({2, 3, 4})}, {{"shape", std::vector<int64_t>{6, 4}}}, "f32[6,4]"},
         {"embedding", {f32({10, 4}), i32({2, 3})}, {}, "f32[2,3,4]"},
         {"onehot", {i32({5})}, {{"num_classes", int64_t{3}}}, "f32[5,3]"},
+        {"matmul", {f32({8, 4}), f32({8, 3})}, {{"transpose_a", int64_t{1}}}, "f32[4,3]"},
+        {"matmul", {f32({2, 4, 8}), f32({3, 8})}, {{"transpose_b", int64_t{1}}}, "f32[2,4,3]"},
+        {"matmul", {f32({2, 8, 4}), f32({2, 3, 8})}, {{"transpose_a", int64_t{1}}, {"transpose_b", int64_t{1}}},
+         "f32[2,4,3]"},
+        {"tanh", {f32({2, 3})}, {}, "f32[2,3]"},
+        {"cmp_gt", {f32({2, 1}), f32({3})}, {}, "f32[2,3]"},
+        {"select", {f32({2, 1}), f32({3}), f32({})}, {}, "f32[2,3]"},
+        {"broadcast_to", {f32({3, 1})}, {{"shape", std::vector<int64_t>{2, 3, 4}}}, "f32[2,3,4]"},
+        {"reduce_max", {f32({2, 3, 4})}, {{"axes", std::vector<int64_t>{-1}}, {"keepdims", int64_t{1}}}, "f32[2,3,1]"},
+        {"scatter_add", {i32({2, 3}), f32({2, 3, 4})}, {{"num_rows", int64_t{7}}}, "f32[7,4]"},
+        {"cast", {i32({2, 3})}, {{"to", std::string("f32")}}, "f32[2,3]"},
+        {"cast", {f32({2})}, {{"to", std::string("i32")}}, "i32[2]"},
     };
     for (const auto& c : cases) {
         IRBuilder builder;
@@ -457,6 +518,12 @@ TEST(OpRegistry, RejectsInvalidOperandsAndAttributes) {
         {"bogus", {f32({2})}, {}, "unknown op 'bogus'"},
         {"onehot", {i32({int64_t{1} << 30})}, {{"num_classes", int64_t{1} << 30}}, "has too many elements"},
         {"matmul", {f32({int64_t{1} << 24, 1}), f32({1, int64_t{1} << 25})}, {}, "has too many elements"},
+        {"matmul", {f32({8, 4}), f32({8, 3})}, {{"transpose_b", int64_t{1}}}, "matmul operand shapes don't match"},
+        {"matmul", {f32({8, 4}), f32({4, 3})}, {{"transpose_a", int64_t{2}}}, "transpose_a of 'matmul' must be 0 or 1"},
+        {"select", {f32({2}), f32({3}), f32({})}, {}, "not broadcast-compatible"},
+        {"broadcast_to", {f32({3, 2})}, {{"shape", std::vector<int64_t>{3, 4}}}, "cannot broadcast f32[3,2]"},
+        {"scatter_add", {i32({2, 3}), f32({2, 4})}, {{"num_rows", int64_t{7}}}, "must have the indices' shape"},
+        {"cast", {f32({2})}, {{"to", std::string("f64")}}, "cast 'to' must be"},
     };
     for (const auto& c : cases) {
         IRBuilder builder;
@@ -468,6 +535,16 @@ TEST(OpRegistry, RejectsInvalidOperandsAndAttributes) {
             EXPECT_NE(std::string(e.what()).find(c.error), std::string::npos) << "got: " << e.what();
         }
     }
+}
+
+TEST(OpRegistry, WritesMatmulFlagsOnlyWhenSet) {
+    auto func = IRParser::parseFunction(R"(
+func @f(%a: f32[4,8], %b: f32[8,3]) -> f32[4,3] {
+  %0 = matmul(%a, %b) : f32[4,3] {transpose_a = 0, transpose_b = 0}
+  return %0
+}
+)");
+    EXPECT_NE(func->toString().find("%0 = matmul(%a, %b) : f32[4,3]\n"), std::string::npos) << func->toString();
 }
 
 TEST(OpRegistry, MaterializesDefaultAttributes) {
@@ -495,8 +572,8 @@ TEST(OpRegistry, DescribesEveryOp) {
         EXPECT_EQ(def.hasResult, def.name != "return") << def.name;
         EXPECT_EQ(static_cast<bool>(def.inferType), def.hasResult) << def.name;
     }
-    EXPECT_EQ(names.size(), 21u);
-    EXPECT_EQ(registry.lookup("select"), nullptr);
+    EXPECT_EQ(names.size(), 30u);
+    EXPECT_EQ(registry.lookup("frobnicate"), nullptr);
     EXPECT_EQ(registry.lookup("matmul")->opClass, OpClass::Matmul);
     EXPECT_TRUE(registry.lookup("reshape")->findAttr("shape")->required);
     EXPECT_EQ(registry.lookup("return")->numOperands, -1);

@@ -62,6 +62,35 @@ TypePtr inferBinary(const Operation& op) {
 
 TypePtr inferUnary(const Operation& op) { return tensorType(DataType::Float32, floatOperand(op, 0).getShape()); }
 
+// Broadcast of any number of f32 operands (cmp_gt, select).
+TypePtr inferBroadcastAll(const Operation& op) {
+    Shape out;
+    for (size_t i = 0; i < op.getNumOperands(); ++i) {
+        const TensorType& t = floatOperand(op, i);
+        Shape next;
+        if (!computeBroadcastShape(out, t.getShape(), next)) {
+            throw IRError("operands of '" + op.getOpName() + "' are not broadcast-compatible: operand " +
+                          std::to_string(i) + " is " + t.toString());
+        }
+        out = std::move(next);
+    }
+    return tensorType(DataType::Float32, out);
+}
+
+bool flag(const Operation& op, const char* name) {
+    if (!op.hasAttribute(name)) return false;
+    int64_t value = op.getIntAttr(name);
+    if (value != 0 && value != 1) throw IRError(std::string(name) + " of '" + op.getOpName() + "' must be 0 or 1");
+    return value == 1;
+}
+
+// The shape of a matmul operand after its transpose flag (swaps the last two dimensions).
+Shape matmulOperandShape(const TensorType& t, bool transposed) {
+    Shape s = t.getShape();
+    if (transposed && s.size() >= 2) std::swap(s[s.size() - 1], s[s.size() - 2]);
+    return s;
+}
+
 TypePtr inferAxisNormalization(const Operation& op) {
     const TensorType& x = floatOperand(op, 0);
     if (x.getRank() == 0) throw IRError("'" + op.getOpName() + "' needs an operand of rank >= 1");
@@ -72,9 +101,15 @@ TypePtr inferAxisNormalization(const Operation& op) {
 TypePtr inferMatmul(const Operation& op) {
     const TensorType& a = floatOperand(op, 0);
     const TensorType& b = floatOperand(op, 1);
-    const Shape& sa = a.getShape();
-    const Shape& sb = b.getShape();
-    auto mismatch = [&] { return IRError("matmul operand shapes don't match: " + a.toString() + " x " + b.toString()); };
+    bool ta = flag(op, "transpose_a");
+    bool tb = flag(op, "transpose_b");
+    if ((ta && a.getRank() < 2) || (tb && b.getRank() < 2)) throw IRError("matmul transpose flags need rank >= 2");
+    const Shape sa = matmulOperandShape(a, ta);
+    const Shape sb = matmulOperandShape(b, tb);
+    auto mismatch = [&] {
+        return IRError("matmul operand shapes don't match: " + a.toString() + (ta ? "^T" : "") + " x " + b.toString() +
+                       (tb ? "^T" : ""));
+    };
 
     if (sa.size() == 2 && sb.size() == 2) {
         if (sa[1] != sb[0]) throw mismatch();
@@ -196,6 +231,38 @@ TypePtr inferConstant(const Operation& op) {
     return op.getResult(0)->getType();
 }
 
+TypePtr inferBroadcastTo(const Operation& op) {
+    const TensorType& x = operandType(op, 0);
+    Shape shape = op.getIntListAttr("shape");
+    Shape out;
+    if (!computeBroadcastShape(x.getShape(), shape, out) || out != shape) {
+        throw IRError("broadcast_to cannot broadcast " + x.toString() + " to " + shapeString(shape));
+    }
+    return tensorType(x.getElementType(), shape);
+}
+
+TypePtr inferScatterAdd(const Operation& op) {
+    const TensorType& indices = intOperand(op, 0);
+    const TensorType& updates = floatOperand(op, 1);
+    int64_t rows = op.getIntAttr("num_rows");
+    if (rows <= 0) throw IRError("scatter_add num_rows must be positive");
+    Shape expected = indices.getShape();
+    if (updates.getRank() != indices.getRank() + 1 ||
+        !std::equal(expected.begin(), expected.end(), updates.getShape().begin())) {
+        throw IRError("scatter_add updates " + updates.toString() + " must have the indices' shape " +
+                      indices.toString() + " plus one dimension");
+    }
+    return tensorType(DataType::Float32, {rows, updates.getShape().back()});
+}
+
+TypePtr inferCast(const Operation& op) {
+    const TensorType& x = operandType(op, 0);
+    const std::string& to = op.getStringAttr("to");
+    if (to == "f32") return tensorType(DataType::Float32, x.getShape());
+    if (to == "i32") return tensorType(DataType::Int32, x.getShape());
+    throw IRError("cast 'to' must be \"f32\" or \"i32\", got \"" + to + "\"");
+}
+
 TypePtr inferOneHot(const Operation& op) {
     const TensorType& indices = intOperand(op, 0);
     int64_t numClasses = op.getIntAttr("num_classes");
@@ -229,6 +296,15 @@ void defaultReduction(Operation& op) {
         op.setAttribute("axes", axes);
     }
     if (!op.hasAttribute("keepdims")) op.setAttribute("keepdims", int64_t{0});
+}
+
+// Transpose flags are written only when set, so each matmul has one textual form.
+void canonicalMatmulFlags(Operation& op) {
+    for (const char* name : {"transpose_a", "transpose_b"}) {
+        if (op.hasAttribute(name) && attrHasKind(op.getAttribute(name), AttrKind::Int) && op.getIntAttr(name) == 0) {
+            op.removeAttribute(name);
+        }
+    }
 }
 
 void defaultPerm(Operation& op) {
@@ -269,7 +345,9 @@ OpRegistry::OpRegistry() {
     for (const char* name : {"relu", "gelu", "exp", "log"}) {
         ops_.push_back(makeOp(name, 1, OpClass::Elementwise, {}, nullptr, inferUnary));
     }
-    ops_.push_back(makeOp("matmul", 2, OpClass::Matmul, {}, nullptr, inferMatmul));
+    ops_.push_back(makeOp("matmul", 2, OpClass::Matmul,
+                          {{"transpose_a", AttrKind::Int, false}, {"transpose_b", AttrKind::Int, false}},
+                          canonicalMatmulFlags, inferMatmul));
     for (const char* name : {"softmax", "log_softmax"}) {
         ops_.push_back(makeOp(name, 1, OpClass::RowReduction, {{"axis", AttrKind::Int, false}}, defaultAxis,
                               inferAxisNormalization));
@@ -290,6 +368,20 @@ OpRegistry::OpRegistry() {
                           inferConstant));
     ops_.push_back(makeOp("onehot", 1, OpClass::Gather, {{"num_classes", AttrKind::Int, true}}, nullptr,
                           inferOneHot));
+    // Backward primitives.
+    for (const char* name : {"tanh", "sqrt", "rsqrt"}) {
+        ops_.push_back(makeOp(name, 1, OpClass::Elementwise, {}, nullptr, inferUnary));
+    }
+    ops_.push_back(makeOp("cmp_gt", 2, OpClass::Elementwise, {}, nullptr, inferBroadcastAll));
+    ops_.push_back(makeOp("select", 3, OpClass::Elementwise, {}, nullptr, inferBroadcastAll));
+    ops_.push_back(makeOp("broadcast_to", 1, OpClass::Shape, {{"shape", AttrKind::IntList, true}}, nullptr,
+                          inferBroadcastTo));
+    ops_.push_back(makeOp("reduce_max", 1, OpClass::Reduction,
+                          {{"axes", AttrKind::IntList, false}, {"keepdims", AttrKind::Int, false}},
+                          defaultReduction, inferReduction));
+    ops_.push_back(makeOp("scatter_add", 2, OpClass::Scatter, {{"num_rows", AttrKind::Int, true}}, nullptr,
+                          inferScatterAdd));
+    ops_.push_back(makeOp("cast", 1, OpClass::Elementwise, {{"to", AttrKind::String, true}}, nullptr, inferCast));
     ops_.push_back(makeOp("return", -1, OpClass::Terminator, {}, nullptr, nullptr));
 
     for (size_t i = 0; i < ops_.size(); ++i) index_[ops_[i].name] = i;
@@ -314,6 +406,7 @@ std::string opClassName(OpClass opClass) {
         case OpClass::Loss: return "loss";
         case OpClass::Shape: return "shape";
         case OpClass::Gather: return "gather";
+        case OpClass::Scatter: return "scatter";
         case OpClass::Constant: return "constant";
         case OpClass::Terminator: return "terminator";
     }

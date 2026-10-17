@@ -8,13 +8,22 @@
 
 namespace dlc {
 
-// Creates ops at the end of a block. Result types come from the op registry unless one is passed explicitly.
+// Creates ops at the end of a block, or before a given op. Result types come from the op registry unless one is
+// passed explicitly.
 class IRBuilder {
 public:
     IRBuilder() = default;
     explicit IRBuilder(Block* block) : insertBlock_(block) {}
 
-    void setInsertBlock(Block* block) { insertBlock_ = block; }
+    void setInsertBlock(Block* block) {
+        insertBlock_ = block;
+        insertBefore_ = nullptr;
+    }
+    // New ops go right before `op`, in creation order.
+    void setInsertPointBefore(Operation* op) {
+        insertBlock_ = op->getParentBlock();
+        insertBefore_ = op;
+    }
     Block* getInsertBlock() const { return insertBlock_; }
 
     ValuePtr createValue(TypePtr type, std::string name = "");
@@ -57,14 +66,26 @@ public:
     ValuePtr createConstant(double value, TypePtr resultType);
     ValuePtr createOneHot(ValuePtr indices, int64_t numClasses, TypePtr resultType = nullptr);
 
+    // Ops of the backward and optimizer graphs.
+    ValuePtr createMatmul(ValuePtr lhs, ValuePtr rhs, bool transposeA, bool transposeB);
+    ValuePtr createUnary(const std::string& opName, ValuePtr operand);
+    ValuePtr createBinary(const std::string& opName, ValuePtr lhs, ValuePtr rhs);
+    ValuePtr createSelect(ValuePtr cond, ValuePtr ifTrue, ValuePtr ifFalse);
+    ValuePtr createBroadcastTo(ValuePtr operand, Shape shape);
+    ValuePtr createReduce(const std::string& opName, ValuePtr operand, std::vector<int64_t> axes, bool keepdims);
+    ValuePtr createScatterAdd(ValuePtr indices, ValuePtr updates, int64_t numRows);
+    // An f32 scalar constant.
+    ValuePtr createScalar(double value);
+
     void createReturn(const std::vector<ValuePtr>& values);
 
 private:
-    // Fills default attributes, infers the result type unless `explicitType` is given, and appends the op.
+    // Fills default attributes, infers the result type unless `explicitType` is given, and inserts the op.
     ValuePtr insert(OperationPtr op, const TypePtr& explicitType);
+    void place(OperationPtr op);
 
     Block* insertBlock_{nullptr};
-    uint32_t nextValueId_{0};
+    Operation* insertBefore_{nullptr};
 };
 
 } // namespace dlc

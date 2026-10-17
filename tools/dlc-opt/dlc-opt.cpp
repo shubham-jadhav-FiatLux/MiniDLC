@@ -8,7 +8,9 @@
 #include "dlc/passes/Canonicalize.h"
 #include "dlc/passes/CSE.h"
 #include "dlc/passes/DCE.h"
+#include "dlc/passes/Activity.h"
 #include "dlc/passes/Autodiff.h"
+#include "dlc/passes/Optimizer.h"
 #include "dlc/passes/Fusion.h"
 #include "dlc/passes/MemoryPlanning.h"
 #include "dlc/loopir/Lowering.h"
@@ -16,8 +18,9 @@
 #include "dlc/backends/llvm/LLVMCodeGen.h"
 #include "dlc/backends/cuda/CUDACodeGen.h"
 
-#include <iostream>
 #include <fstream>
+#include <iostream>
+#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -29,7 +32,8 @@ void printUsage(const char* prog) {
               << "Reads textual graph IR from a file, or from stdin when no file (or '-') is given.\n"
               << "Options:\n"
               << "  --passes=<p1,p2,...>   Comma-separated list of passes to run\n"
-              << "                         Available: shape-infer, canonicalize, cse, dce, autodiff, fusion, mem-plan\n"
+              << "                         Available: shape-infer, canonicalize, cse, dce, activity, autodiff,\n"
+              << "                         sgd{lr=,momentum=}, adam{lr=,beta1=,beta2=,eps=}, fusion, mem-plan\n"
               << "  --emit-loopir          Lower optimized graph to Loop IR and print\n"
               << "  --emit-llvm            Generate and print LLVM IR (CPU)\n"
               << "  --emit-cuda            Generate and print CUDA C++ kernels (GPU)\n"
@@ -42,14 +46,61 @@ void printUsage(const char* prog) {
               << "  --help                 Show this help message\n";
 }
 
+// Splits at the delimiter, except inside braces (pass options such as adam{lr=0.001,beta1=0.9}).
 std::vector<std::string> split(const std::string& s, char delimiter) {
     std::vector<std::string> tokens;
     std::string token;
-    std::istringstream tokenStream(s);
-    while (std::getline(tokenStream, token, delimiter)) {
-        if (!token.empty()) tokens.push_back(token);
+    int depth = 0;
+    for (char c : s) {
+        if (c == '{') ++depth;
+        if (c == '}') --depth;
+        if (c == delimiter && depth == 0) {
+            if (!token.empty()) tokens.push_back(token);
+            token.clear();
+        } else {
+            token += c;
+        }
     }
+    if (!token.empty()) tokens.push_back(token);
     return tokens;
+}
+
+// "adam{lr=0.001}" → name "adam", options {lr: 0.001}.
+struct PassSpec {
+    std::string name;
+    std::map<std::string, double> options;
+};
+
+PassSpec parsePassSpec(const std::string& text) {
+    PassSpec spec;
+    size_t brace = text.find('{');
+    spec.name = text.substr(0, brace);
+    if (brace == std::string::npos) return spec;
+    if (text.back() != '}') throw dlc::IRError("malformed pass options in '" + text + "'");
+    for (const auto& item : split(text.substr(brace + 1, text.size() - brace - 2), ',')) {
+        size_t eq = item.find('=');
+        if (eq == std::string::npos) throw dlc::IRError("pass option '" + item + "' needs a value");
+        try {
+            spec.options[item.substr(0, eq)] = std::stod(item.substr(eq + 1));
+        } catch (const std::exception&) {
+            throw dlc::IRError("pass option '" + item + "' needs a number");
+        }
+    }
+    return spec;
+}
+
+dlc::OptimizerConfig optimizerConfig(const PassSpec& spec) {
+    dlc::OptimizerConfig config;
+    config.kind = spec.name == "adam" ? dlc::OptimizerConfig::Kind::Adam : dlc::OptimizerConfig::Kind::SGD;
+    for (const auto& [key, value] : spec.options) {
+        if (key == "lr") config.lr = value;
+        else if (key == "momentum" && spec.name == "sgd") config.momentum = value;
+        else if (key == "beta1" && spec.name == "adam") config.beta1 = value;
+        else if (key == "beta2" && spec.name == "adam") config.beta2 = value;
+        else if (key == "eps" && spec.name == "adam") config.eps = value;
+        else throw dlc::IRError("unknown option '" + key + "' for pass '" + spec.name + "'");
+    }
+    return config;
 }
 
 void printOpRegistry() {
@@ -150,7 +201,12 @@ int main(int argc, char* argv[]) {
         dlc::PassManager pm;
         pm.setPrintAfterAll(printAfterAll);
         pm.setVerifyEach(verifyEach);
-        for (const auto& p : split(passesArg, ',')) {
+        for (const auto& text : split(passesArg, ',')) {
+            PassSpec spec = parsePassSpec(text);
+            const std::string& p = spec.name;
+            if (!spec.options.empty() && p != "adam" && p != "sgd") {
+                throw dlc::IRError("pass '" + p + "' takes no options");
+            }
             if (p == "shape-infer") {
                 pm.addPass(std::make_unique<dlc::ShapeInferencePass>());
             } else if (p == "canonicalize") {
@@ -159,8 +215,12 @@ int main(int argc, char* argv[]) {
                 pm.addPass(std::make_unique<dlc::CSEPass>());
             } else if (p == "dce") {
                 pm.addPass(std::make_unique<dlc::DCEPass>());
+            } else if (p == "activity") {
+                pm.addPass(std::make_unique<dlc::ActivityPass>());
             } else if (p == "autodiff") {
                 pm.addPass(std::make_unique<dlc::AutodiffPass>());
+            } else if (p == "adam" || p == "sgd") {
+                pm.addPass(std::make_unique<dlc::OptimizerPass>(optimizerConfig(spec)));
             } else if (p == "fusion") {
                 pm.addPass(std::make_unique<dlc::FusionPass>());
             } else if (p == "mem-plan") {

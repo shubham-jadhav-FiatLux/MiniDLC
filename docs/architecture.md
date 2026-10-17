@@ -299,13 +299,16 @@ The C++ compiler is exercised by `dlc-opt` (IR dumps after each pass, loop IR, L
 |---|---|---|
 | **P0** | 2026-10-17 | Docs and resume claim only what exists. GoogleTest with assertions in every build; 13 known bugs recorded as disabled tests; lit with LLVM's FileCheck; CI builds Debug with ASan/UBSan and Release |
 | **P1** | 2026-10-18 | Op registry; parser and verifier rewritten; use-list hygiene; Python exporter, IR parser and executor; translation validation of the graph passes. Five known bugs fixed (parser round trip, undefined operands, DCE use lists, matmul shape checks, constant-folding use-after-free); 8 remain |
+| **P2** | 2026-10-18 | Backward primitives (`cmp_gt`, `select`, `broadcast_to`, `reduce_max`, `scatter_add`, `cast`, `tanh`, `sqrt`, `rsqrt`, matmul transpose flags); activity analysis; autodiff rewritten (every VJP checked against finite differences); Adam/SGD lowering with donated results and initialized state; canonicalize to a fixpoint (type-preserving, NaN-safe, transpose folding); exact CSE keys. Five more known bugs fixed; 3 remain (P3, P4) |
 
-Audit rows that P1 changed:
+Audit rows that P1 and P2 changed:
 
 | Spec item | Status | Notes |
 |---|---|---|
 | Python ↔ C++ link | ◐ | IR text both ways: `minidlc.ir.export` writes canonical IR that `dlc-opt` reads; `minidlc.ir.parse_function` and `execute` run its output. No in-process binding yet (P4) |
 | Verifier (types, shapes, dominance) | ✓ | Registry type rules, attributes, dominance, signature, single trailing return, use lists; runs on `dlc-opt`'s input and after every pass |
 | Printer/parser round-trip | ✓ | Fixpoint for every op and for the MLP and Char-GPT graphs; errors carry `line:col`. A fuzzer runs 2,000 mutated modules through the parser, verifier and passes: each either raises `IRError` or, if it verifies, prints back to a fixpoint |
-| Shape inference, canonicalize, CSE, DCE | ◐ | Translation-validated on 16 graphs. Shape errors reported, folding memory-safe, use lists kept consistent. Still wrong (P2): CSE merges constants of different types or nearby values; `x * 0` changes the result type |
+| Shape inference, canonicalize, CSE, DCE | ✓ | Translation-validated on 16 graphs. Shape errors reported; canonicalization type-preserving and NaN-safe, to a fixpoint; CSE keys exact; use lists consistent |
+| Autodiff pass | ✓ | Activity analysis; every VJP checked against float64 finite differences; gradients of whole models match the reference VJPs |
+| Optimizer as ops in the graph; buffer donation | ◐ | Adam and SGD lowered into the graph with donated results; the step graph matches eager training. Executing it with in-place buffers comes with P3/P4 |
 | Tests | ◐ | Unit tests with assertions, ASan/UBSan CI, a parser fuzzer, translation validation of the graph passes. Generated code has no differential tests yet (P4) |

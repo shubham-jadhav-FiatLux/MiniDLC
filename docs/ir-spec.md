@@ -2,7 +2,7 @@
 
 The textual graph IR is the contract between the Python frontend and the C++ compiler: `minidlc.ir.export` writes it,
 `dlc-opt` reads, optimizes and prints it, and `minidlc.ir.execute` runs it in the NumPy reference interpreter. This
-document describes the graph IR as of phase P1 and the v1 loop IR (section 5); the v2 changes to the loop IR are in
+document describes the graph IR as of phase P2 and the v1 loop IR (section 5); the v2 changes to the loop IR are in
 [`architecture.md`](architecture.md).
 
 ## 1. Example
@@ -27,9 +27,10 @@ This is `examples/export_ir.py mlp` (the printer writes the signature on one lin
 ```
 module     ::= function*
 function   ::= 'func' '@' name '(' [arg (',' arg)*] ')' '->' results '{' statement* '}'
-arg        ::= '%' name ':' type ['{' role '}']
+arg        ::= '%' name ':' type ['{' role [',' 'init' '=' number] '}']
 role       ::= 'input' | 'param' | 'const' | 'state'
-results    ::= type | '(' [type (',' type)*] ')'
+results    ::= type | '(' [result (',' result)*] ')'
+result     ::= type ['{' ('grad' | 'donates') '=' '%' name '}']
 type       ::= ('f32' | 'i32') '[' [dim (',' dim)*] ']'
 statement  ::= '%' name '=' op '(' [value (',' value)*] ')' [':' type] [attributes]
              | 'return' [value (',' value)* | '(' [value (',' value)*] ')']
@@ -54,10 +55,27 @@ attr       ::= integer | float | string | 'true' | 'false' | '[' [number (',' nu
 | `input` (default, not printed) | data fed on every step | images, labels, token ids |
 | `param` | trainable weights | `%fc1.weight` |
 | `const` | data fixed when the graph is built | `%causal_mask`, `%positions` |
-| `state` | optimizer state that persists across steps (P2) | Adam moments |
+| `state` | optimizer state that persists across steps | Adam moments `%fc1.weight.m`, `%adam.beta1_pow` |
 
-Autodiff with activity analysis (P2) will differentiate only `param` arguments; buffer assignment (P3) will keep
-`param` and `state` arguments out of the reused arena.
+Autodiff differentiates only `param` arguments; buffer assignment (P3) keeps `param` and `state` arguments out of the
+reused arena. A `state` argument may carry an initial value, `{state, init = 0.0}`, which every element starts from.
+
+### Training-step annotations on results
+
+Autodiff and optimizer lowering (P2) annotate results with the argument they belong to:
+
+- `{grad = %w}` — the gradient of the loss (the first result) with respect to the param `%w`, written by `autodiff`;
+- `{donates = %w}` — the new value of the param or state argument `%w`, written by `adam`/`sgd`: the result takes over
+  `%w`'s buffer, so a step function updates its parameters in place.
+
+A function with any annotated result prints its results in parentheses, even if there is only one:
+
+```dlc
+func @step(%x: f32[8,4], %w: f32[4,3] {param}, %adam.beta1_pow: f32[] {state, init = 1.0}, ...)
+    -> (f32[], f32[4,3] {donates = %w}, ..., f32[] {donates = %adam.beta1_pow}, ...) {
+```
+
+`tests/lit/optimizer.dlc` shows a complete one.
 
 ### Types and size limits
 
@@ -85,10 +103,20 @@ type rule. The builder, parser, verifier and shape inference all use it, and `dl
 | `embedding` | table `f32[V,D]`, indices `i32` | — | indices' shape + `[D]` |
 | `onehot` | indices `i32` | `num_classes` int > 0, **required** | `f32`, indices' shape + `[C]` |
 | `constant` | none | `value` float, **required** | the written type (required) |
+| `tanh`, `sqrt`, `rsqrt` | one `f32` | — | the operand's type |
+| `cmp_gt` | two `f32` | — | broadcast shape; 1.0 where a > b, else 0.0 |
+| `select` | condition, true and false values, all `f32` | — | broadcast of the three; `c != 0 ? a : b` |
+| `broadcast_to` | one tensor | `shape` ints, **required**, a broadcast of the operand | `shape` |
+| `reduce_max` | one `f32` | `axes` (all axes); `keepdims` (`0`) | the reduced shape |
+| `scatter_add` | indices `i32`; updates `f32` of the indices' shape + `[D]` | `num_rows` int > 0, **required** | `f32[num_rows, D]`, zero-initialized, `out[idx[i]] += updates[i]` |
+| `cast` | one tensor | `to` = `"f32"` or `"i32"`, **required** | the operand's shape with that element type (truncates toward zero) |
 | `return` | any number | — | none; must be the function's last op |
 
-Negative axes count from the end. Planned for P2, to express backward graphs: `cmp_gt`, `select`, `broadcast_to`,
-`reduce_max`, `scatter_add`, `cast`, `tanh`, `rsqrt`, and `transpose_a`/`transpose_b` flags on `matmul`.
+`matmul` takes optional `transpose_a = 1` / `transpose_b = 1` flags that transpose the last two dimensions of an
+operand; they are written only when set. Negative axes count from the end. The ops after `constant` are the backward
+primitives that autodiff and optimizer lowering emit: `select(cmp_gt(x, 0), dy, 0)` for ReLU, `broadcast_to` and `sum`
+over axes for broadcasting and reductions, `scatter_add` for the embedding gradient, `tanh` for GELU, `rsqrt` for
+LayerNorm and `sqrt` for Adam.
 
 ## 4. Printing, verification and errors
 
@@ -118,7 +146,9 @@ function back unchanged.
    counts, index types);
 4. operands are arguments or results of earlier ops;
 5. there is exactly one `return`, it is the last op, and it matches the declared result count and types;
-6. each value's use list names exactly the ops that use it.
+6. each value's use list names exactly the ops that use it;
+7. a `grad` result has its param's type; a `donates` result has its argument's type, the argument is a param or state,
+   and no argument is donated twice; only state arguments have an `init`.
 
 `dlc-opt` verifies its input (skip with `--no-verify-input`) and, through the pass manager, the module after every pass
 (skip both with `--no-verify`).
@@ -150,16 +180,23 @@ inside a pass is prefixed `pass 'autodiff': ...`.
   arguments is kept in `IRFunction.bindings`.
 - `parse_module(text)` / `parse_function(text)` read IR text such as `dlc-opt` output; `IRFunction.to_text()` prints it
   the way the C++ printer does.
-- `execute(func, feeds)` runs a function in the reference interpreter (`ReferenceInterpreter.forward`).
+- `execute(func, feeds)` runs a function in the reference interpreter (`ReferenceInterpreter.forward`); state
+  arguments that are not fed start from their `init`.
+- `StepRunner(func, bindings)` runs a training-step function repeatedly: it keeps the param, const and state values
+  between steps and writes each donated result back into its argument.
 
 ### Translation validation
 
 `tests/python/test_translation_validation.py` exports 16 graphs (softmax regression, an MLP, a two-layer Char-GPT, a
-graph of the remaining ops and patterns, ten random DAGs, and two graphs that trigger known bugs) and runs each through
-`shape-infer`, `canonicalize`, `cse`, `dce`, `fusion`, `mem-plan` and the full pipeline. The output of `dlc-opt` is parsed
-and executed in float64, and must match the unoptimized function within 1e-12. Autodiff is checked for keeping the loss
-and, on the linear model, against the reference gradients. Known miscompiles are strict expected failures, so fixing
-one fails the test until the marker is removed.
+graph of the remaining ops and patterns, ten random DAGs, and two regression graphs for v1 miscompiles) and runs each
+through `shape-infer`, `canonicalize`, `cse`, `dce`, `fusion`, `mem-plan` and the full pipeline. The output of `dlc-opt`
+is parsed and executed in float64, and must match the unoptimized function within 1e-12. Autodiff's gradients are
+compared with the reference interpreter's VJPs on every graph with a scalar loss. Known miscompiles would be strict
+expected failures, so fixing one fails the test until the marker is removed; none are left after P2.
+
+`tests/python/test_training_graph.py` checks every C++ VJP rule against float64 central finite differences, and runs
+the step function that `autodiff,adam{...}` or `autodiff,sgd{...}` builds for an MLP and a Char-GPT for several steps:
+losses and parameters follow eager training in the reference interpreter.
 
 ## 5. Loop IR Specification
 

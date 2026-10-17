@@ -50,7 +50,9 @@ add_library(dlc_passes
     lib/passes/Canonicalize.cpp
     lib/passes/CSE.cpp
     lib/passes/DCE.cpp
+    lib/passes/Activity.cpp
     lib/passes/Autodiff.cpp
+    lib/passes/Optimizer.cpp
     lib/passes/Fusion.cpp
     lib/passes/MemoryPlanning.cpp
 )
@@ -136,19 +138,20 @@ if(DLC_BUILD_TESTS)
         message(STATUS "lit tests disabled: they need dlc-opt, lit and FileCheck")
     endif()
 
-    # Translation validation: the Python suite runs dlc-opt's passes on exported graphs and compares the results in
-    # the NumPy reference interpreter
+    # The Python suites that drive dlc-opt: translation validation of every graph pass, the C++ VJPs against finite
+    # differences, and the training-step graph against eager training (all in the NumPy reference interpreter)
     find_package(Python3 COMPONENTS Interpreter)
     if(DLC_BUILD_TOOLS AND Python3_Interpreter_FOUND)
         execute_process(COMMAND ${Python3_EXECUTABLE} -c "import numpy, pytest"
                         RESULT_VARIABLE DLC_PYTHON_DEPS_MISSING OUTPUT_QUIET ERROR_QUIET)
     endif()
     if(DLC_BUILD_TOOLS AND Python3_Interpreter_FOUND AND DLC_PYTHON_DEPS_MISSING EQUAL 0)
-        add_test(NAME translation_validation
-            COMMAND ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider tests/python/test_translation_validation.py
+        add_test(NAME python_compiler_tests
+            COMMAND ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
+                    tests/python/test_translation_validation.py tests/python/test_training_graph.py
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-        set_tests_properties(translation_validation PROPERTIES ENVIRONMENT "DLC_OPT=$<TARGET_FILE:dlc-opt>")
+        set_tests_properties(python_compiler_tests PROPERTIES ENVIRONMENT "DLC_OPT=$<TARGET_FILE:dlc-opt>")
     else()
-        message(STATUS "translation validation disabled: it needs dlc-opt and a Python 3 with numpy and pytest")
+        message(STATUS "Python compiler tests disabled: they need dlc-opt and a Python 3 with numpy and pytest")
     endif()
 endif()

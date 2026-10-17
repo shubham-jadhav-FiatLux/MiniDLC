@@ -1,8 +1,14 @@
 #include "dlc/ir/Value.h"
 #include <algorithm>
+#include <atomic>
 #include <sstream>
 
 namespace dlc {
+
+uint32_t Value::nextId() {
+    static std::atomic<uint32_t> next{0};
+    return next++;
+}
 
 void Value::removeUse(Operation* op) {
     auto it = std::find(uses_.begin(), uses_.end(), op);

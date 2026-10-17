@@ -134,6 +134,41 @@ VerificationResult Verifier::verify(const Function& func) {
     if (returnCount == 0) res.addError("function has no 'return'");
     if (returnCount > 1) res.addError("function has " + std::to_string(returnCount) + " 'return' ops");
 
+    const auto& args = func.getArguments();
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (func.getArgInit(i) && func.getArgRole(i) != ArgRole::State) {
+            res.addError("argument '%" + names.name(args[i].get()) + "': only state arguments have an initial value");
+        }
+    }
+    std::vector<bool> donated(args.size(), false);
+    const auto& resultTypes = func.getResultTypes();
+    const auto& resultInfo = func.getResultInfo();
+    for (size_t i = 0; i < resultInfo.size() && i < resultTypes.size(); ++i) {
+        const ResultInfo& info = resultInfo[i];
+        if (info.kind == ResultKind::Value) continue;
+        std::string label = "result " + std::to_string(i) + " (" + resultKindName(info.kind) + ")";
+        if (info.arg >= args.size()) {
+            res.addError(label + " names argument " + std::to_string(info.arg) + ", which does not exist");
+            continue;
+        }
+        const std::string argName = "'%" + names.name(args[info.arg].get()) + "'";
+        if (typeString(resultTypes[i]) != typeString(args[info.arg]->getType())) {
+            res.addError(label + " has type " + typeString(resultTypes[i]) + " but " + argName + " is " +
+                         typeString(args[info.arg]->getType()));
+        }
+        ArgRole role = func.getArgRole(info.arg);
+        if (info.kind == ResultKind::Grad && role != ArgRole::Param) {
+            res.addError(label + ": " + argName + " is not a param argument");
+        }
+        if (info.kind == ResultKind::Donates) {
+            if (role != ArgRole::Param && role != ArgRole::State) {
+                res.addError(label + ": only param and state arguments can be donated, not " + argName);
+            }
+            if (donated[info.arg]) res.addError(label + ": " + argName + " is donated twice");
+            donated[info.arg] = true;
+        }
+    }
+
     // Every value's use list must name exactly the ops of this function that use it.
     std::unordered_map<const Value*, std::unordered_map<const Operation*, int>> expected;
     for (const auto& op : ops) {

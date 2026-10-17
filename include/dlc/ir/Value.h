@@ -14,6 +14,9 @@ public:
     Value(uint32_t id, TypePtr type, Operation* definingOp = nullptr, std::string name = "")
         : id_(id), type_(std::move(type)), definingOp_(definingOp), name_(std::move(name)) {}
 
+    // A fresh id, unique across all values in the process.
+    static uint32_t nextId();
+
     uint32_t getId() const { return id_; }
     TypePtr getType() const { return type_; }
     void setType(TypePtr type) { type_ = std::move(type); }

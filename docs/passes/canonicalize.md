@@ -3,26 +3,31 @@
 ## Purpose
 Simplify algebraic identities and evaluate constant expressions at compile time, so later passes see a normalized graph.
 
-## Rewrites implemented (v1)
-- `x + 0 → x`, `0 + x → x`, `x - 0 → x`
-- `x * 1 → x`, `1 * x → x`, `x / 1 → x`
-- `x * 0 → 0`, `0 * x → 0` (unsafe; see Status)
-- Constant folding of `add`, `sub`, `mul`, `div` when both operands are constants.
+## Rewrites (P2, `lib/passes/Canonicalize.cpp`)
+Applied until none fires (at most 64 sweeps). Every rewrite keeps the result type — when a rewrite would return a
+smaller, broadcast operand, it returns `broadcast_to(operand)` instead — and is exact in IEEE arithmetic up to the sign
+of zero:
 
-The pass makes a single sweep over the block.
+- **Constant folding** of any op whose operands are all `constant` splats and whose result is again a splat:
+  arithmetic, unary functions, `cmp_gt`, `select`, reductions (`sum` of a splat is the value times the count) and
+  shape ops. Folding happens in double precision.
+- **Identities:** `x + 0`, `0 + x`, `x − 0`, `x · 1`, `1 · x`, `x / 1`, `select` on a constant condition; transposes
+  with the identity permutation; reshapes and broadcasts to the same shape.
+- **Chains:** `transpose(transpose(x, p), q) = transpose(x, p∘q)`; `reshape(reshape(x))` and
+  `broadcast_to(broadcast_to(x))` collapse to one op.
+- **Transpose folding:** a transpose that swaps the last two axes of a `matmul` operand becomes a `transpose_a` /
+  `transpose_b` flag, so the transposes autodiff and attention produce cost nothing.
+- **Commutative operand order:** `add` and `mul` put their operands in a canonical order (arguments, then results in
+  program order, constants last), so CSE finds `a + b` and `b + a` equal.
 
-## Status (P1)
-- Folding walks a snapshot of the op list, so inserting the folded constant no longer invalidates the walk (it was a
-  heap-use-after-free; `Canonicalize.FoldsConstantsSafely`).
-- Constants are recognized by op name, so parsed IR folds too (`Canonicalize.FoldsParsedConstants`,
-  `tests/lit/canonicalize.dlc`).
-- Translation-validated on 16 exported graphs. Still wrong (P2): identity rewrites don't check result types, so
-  `x[4] * 0` is replaced by the scalar constant and changes the function's type (the `mul_by_zero` case in
-  `tests/python/test_translation_validation.py` and `KnownBugs.DISABLED_CanonicalizePreservesResultTypes`); `x * 0 → 0`
-  is also wrong for NaN and Inf inputs.
-- No fixpoint iteration and no commutative operand normalization.
+`x · 0 → 0` is deliberately absent: it is wrong for NaN and Inf inputs.
 
-## v2 (P2)
-Type-preserving, NaN-safe rewrites applied to a fixpoint; folding without mutating the op list during iteration;
-transposes folded into matmul `transpose_a`/`transpose_b` flags; reshape/transpose pairs cancelled; operand order
-normalized for commutative ops so CSE finds more matches.
+## Status (P2)
+Unit tests in `tests/unit/test_passes.cpp` (`Canonicalize.*`), the golden test `tests/lit/canonicalize.dlc`, and
+translation validation on 16 exported graphs, including the regression graph for the v1 bug where `x[4] * 0` was
+rewritten to the scalar constant.
+
+
+## Course link
+Peephole rewriting to a fixpoint, as in LLVM's InstCombine; the IEEE caveats are the classic ones that make
+`-ffast-math` an opt-in (ID5130 floating point).

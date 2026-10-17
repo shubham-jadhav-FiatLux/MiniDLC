@@ -48,6 +48,10 @@ class ReferenceInterpreter:
                 values[node] = np.asarray(node.data, dtype=self.dtype)
             elif node.op == "matmul":
                 a, b = values[node.inputs[0]], values[node.inputs[1]]
+                if node.attrs.get("transpose_a"):
+                    a = np.swapaxes(a, -1, -2)
+                if node.attrs.get("transpose_b"):
+                    b = np.swapaxes(b, -1, -2)
                 values[node] = a @ b
             elif node.op == "add":
                 values[node] = values[node.inputs[0]] + values[node.inputs[1]]
@@ -127,6 +131,30 @@ class ReferenceInterpreter:
             elif node.op == "onehot":
                 idx = values[node.inputs[0]].astype(np.int64)
                 values[node] = np.eye(node.attrs["num_classes"], dtype=self.dtype)[idx]
+            elif node.op == "tanh":
+                values[node] = np.tanh(values[node.inputs[0]])
+            elif node.op == "sqrt":
+                values[node] = np.sqrt(values[node.inputs[0]])
+            elif node.op == "rsqrt":
+                values[node] = 1.0 / np.sqrt(values[node.inputs[0]])
+            elif node.op == "cmp_gt":
+                values[node] = (values[node.inputs[0]] > values[node.inputs[1]]).astype(self.dtype)
+            elif node.op == "select":
+                c, a, b = (values[i] for i in node.inputs)
+                values[node] = np.where(c != 0, a, b)
+            elif node.op == "broadcast_to":
+                values[node] = np.broadcast_to(values[node.inputs[0]], node.shape).copy()
+            elif node.op == "reduce_max":
+                axis = node.attrs.get("axis", None)
+                values[node] = np.max(values[node.inputs[0]], axis=axis, keepdims=node.attrs.get("keepdims", False))
+            elif node.op == "scatter_add":
+                idx = values[node.inputs[0]].astype(np.int64)
+                out = np.zeros(node.shape, dtype=self.dtype)
+                np.add.at(out, idx, values[node.inputs[1]])
+                values[node] = out
+            elif node.op == "cast":
+                x = values[node.inputs[0]]
+                values[node] = np.trunc(x) if node.attrs["to"] == "i32" else x
             else:
                 raise NotImplementedError(f"Unsupported op: {node.op}")
 
@@ -159,21 +187,22 @@ class ReferenceInterpreter:
 
             if node.op == "matmul":
                 A, B = node.inputs[0], node.inputs[1]
-                valA, valB = values[A], values[B]
-                if len(A.shape) == 3 and len(B.shape) == 2:
+                ta, tb = node.attrs.get("transpose_a"), node.attrs.get("transpose_b")
+                valA = np.swapaxes(values[A], -1, -2) if ta else values[A]
+                valB = np.swapaxes(values[B], -1, -2) if tb else values[B]
+                if valA.ndim == 3 and valB.ndim == 2:
                     dA = dY @ valB.T
-                    B_sz, T_sz, D_sz = A.shape
-                    H_sz = B.shape[1]
-                    A_flat = valA.reshape(B_sz * T_sz, D_sz)
-                    dY_flat = dY.reshape(B_sz * T_sz, H_sz)
-                    dB = A_flat.T @ dY_flat
-                    grads[A] = grads.get(A, 0.0) + _unbroadcast(dA, A.shape)
-                    grads[B] = grads.get(B, 0.0) + _unbroadcast(dB, B.shape)
+                    B_sz, T_sz, D_sz = valA.shape
+                    dB = valA.reshape(B_sz * T_sz, D_sz).T @ dY.reshape(B_sz * T_sz, valB.shape[1])
                 else:
                     dA = dY @ np.swapaxes(valB, -1, -2)
                     dB = np.swapaxes(valA, -1, -2) @ dY
-                    grads[A] = grads.get(A, 0.0) + _unbroadcast(dA, A.shape)
-                    grads[B] = grads.get(B, 0.0) + _unbroadcast(dB, B.shape)
+                if ta:
+                    dA = np.swapaxes(dA, -1, -2)
+                if tb:
+                    dB = np.swapaxes(dB, -1, -2)
+                grads[A] = grads.get(A, 0.0) + _unbroadcast(dA, A.shape)
+                grads[B] = grads.get(B, 0.0) + _unbroadcast(dB, B.shape)
             elif node.op == "add":
                 A, B = node.inputs[0], node.inputs[1]
                 grads[A] = grads.get(A, 0.0) + _unbroadcast(dY, A.shape)
@@ -310,5 +339,35 @@ class ReferenceInterpreter:
                 dTable = np.zeros(table.shape, dtype=self.dtype)
                 np.add.at(dTable, idx, dY)
                 grads[table] = grads.get(table, 0.0) + dTable
+            elif node.op == "tanh":
+                X = node.inputs[0]
+                grads[X] = grads.get(X, 0.0) + dY * (1.0 - values[node] ** 2)
+            elif node.op == "sqrt":
+                X = node.inputs[0]
+                grads[X] = grads.get(X, 0.0) + dY * 0.5 / values[node]
+            elif node.op == "rsqrt":
+                X = node.inputs[0]
+                grads[X] = grads.get(X, 0.0) + dY * -0.5 * values[node] ** 3
+            elif node.op == "select":
+                C, A, B = node.inputs
+                cond = values[C] != 0
+                grads[A] = grads.get(A, 0.0) + _unbroadcast(np.where(cond, dY, 0.0), A.shape)
+                grads[B] = grads.get(B, 0.0) + _unbroadcast(np.where(cond, 0.0, dY), B.shape)
+            elif node.op == "broadcast_to":
+                X = node.inputs[0]
+                grads[X] = grads.get(X, 0.0) + _unbroadcast(dY, X.shape)
+            elif node.op == "reduce_max":
+                X = node.inputs[0]
+                axis = node.attrs.get("axis", None)
+                keepdims = node.attrs.get("keepdims", False)
+                # Ties share the gradient equally.
+                mask = (values[X] == np.max(values[X], axis=axis, keepdims=True)).astype(self.dtype)
+                if not keepdims and axis is not None:
+                    dY = np.expand_dims(dY, axis=axis)
+                grads[X] = grads.get(X, 0.0) + dY * mask / np.sum(mask, axis=axis, keepdims=True)
+            elif node.op == "scatter_add":
+                U = node.inputs[1]
+                idx = values[node.inputs[0]].astype(np.int64)
+                grads[U] = grads.get(U, 0.0) + dY[idx]
 
         return grads

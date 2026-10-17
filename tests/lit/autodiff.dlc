@@ -1,16 +1,19 @@
-// RUN: %dlc-opt --passes=autodiff %s | FileCheck %s
+// Reverse-mode autodiff with activity analysis: only the parameter %w gets a gradient (nothing is built for the input
+// batch %x), the ReLU backward masks the upstream gradient with cmp_gt/select, and the weight gradient is a matmul
+// with a transpose flag. The gradient is returned as an annotated result.
+// RUN: %dlc-opt --passes=autodiff,canonicalize,cse,dce %s | FileCheck %s
 
-// XFAIL: *
-// Target behaviour for P2: activity analysis gives a gradient only for the parameter %w, and the ReLU backward masks
-// the upstream gradient with a compare/select instead of multiplying by the input. Remove the XFAIL line with P2.
-
-// CHECK: func @test_autodiff(%x: f32[128,784], %w: f32[784,256] {param}) -> (f32[], f32[784,256]) {
-// CHECK:   %0 = matmul(%x, %w) : f32[128,256]
-// CHECK:   %1 = relu(%0) : f32[128,256]
-// CHECK:   %2 = sum(%1) : f32[]
-// CHECK:   cmp_gt(%0
-// CHECK:   select(
-// CHECK:   return %2, %
+// CHECK-LABEL: func @test_autodiff(%x: f32[128,784], %w: f32[784,256] {param}) -> (f32[], f32[784,256] {grad = %w}) {
+// CHECK-NEXT:    %0 = matmul(%x, %w) : f32[128,256]
+// CHECK-NEXT:    %1 = relu(%0) : f32[128,256]
+// CHECK-NEXT:    %2 = sum(%1) : f32[] {axes = [0, 1], keepdims = 0}
+// CHECK-NEXT:    %3 = constant() : f32[128,256] {value = 1.0}
+// CHECK-NEXT:    %4 = constant() : f32[] {value = 0.0}
+// CHECK-NEXT:    %5 = cmp_gt(%0, %4) : f32[128,256]
+// CHECK-NEXT:    %6 = select(%5, %3, %4) : f32[128,256]
+// CHECK-NEXT:    %7 = matmul(%x, %6) : f32[784,256] {transpose_a = 1}
+// CHECK-NEXT:    return %2, %7
+// CHECK-NEXT:  }
 
 func @test_autodiff(%x: f32[128,784], %w: f32[784,256] {param}) -> f32[] {
   %0 = matmul(%x, %w) : f32[128,256]

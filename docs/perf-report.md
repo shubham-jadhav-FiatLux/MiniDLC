@@ -138,9 +138,10 @@ tho".
 
 | Suite | Count | What it checks |
 |---|:---:|---|
-| GoogleTest (`tests/unit`) | 55 enabled, 8 disabled | IR round trips, malformed input, a 2,000-module mutation fuzzer, registry type rules, verifier, passes, loop IR, runtime, CUDA template text. The disabled tests record known bugs |
-| lit + FileCheck (`tests/lit`) | 16 (15 pass, 1 expected failure) | `dlc-opt` output after passes, round trip, error messages |
-| Translation validation (`tests/python`) | 167 (161 pass, 6 strict expected failures) | Each graph pass on 16 exported graphs vs the unoptimized function, in float64; autodiff's loss and gradients |
+| GoogleTest (`tests/unit`) | 74 enabled, 3 disabled | IR round trips, malformed input, a 2,000-module mutation fuzzer, registry type rules, verifier, passes (autodiff, activity, optimizer, canonicalize, CSE), loop IR, runtime, CUDA template text. The disabled tests record known bugs |
+| lit + FileCheck (`tests/lit`) | 17 (16 pass, 1 expected failure) | `dlc-opt` output after passes, round trip, error messages, autodiff and optimizer lowering |
+| Translation validation (`tests/python`) | 164 | Each graph pass on 16 exported graphs vs the unoptimized function, in float64; autodiff's gradients vs the reference VJPs |
+| C++ training graph (`tests/python`) | 41 | Every C++ VJP vs float64 finite differences; the MLP and Char-GPT step graphs vs eager Adam/SGD training |
 | Gradient checks | all 18 ops | Reference-interpreter VJPs vs float64 central differences |
 | Contract tests | 9 | NaN/Inf, overflow, softmax axes, broadcasting, zero-size dims — on the reference interpreter only |
 | Random-DAG fuzzer | 25 seeds | Reference VJPs vs finite differences (11 of the 25 graphs check a single input gradient) |

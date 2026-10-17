@@ -1,10 +1,11 @@
 #include "dlc/ir/Builder.h"
+#include "dlc/ir/Error.h"
 #include "dlc/ir/OpRegistry.h"
 
 namespace dlc {
 
 ValuePtr IRBuilder::createValue(TypePtr type, std::string name) {
-    return std::make_shared<Value>(nextValueId_++, std::move(type), nullptr, std::move(name));
+    return std::make_shared<Value>(Value::nextId(), std::move(type), nullptr, std::move(name));
 }
 
 FunctionPtr IRBuilder::createFunction(const std::string& name,
@@ -20,10 +21,27 @@ FunctionPtr IRBuilder::createFunction(const std::string& name,
     return func;
 }
 
+void IRBuilder::place(OperationPtr op) {
+    if (!insertBlock_) return;
+    if (!insertBefore_) {
+        insertBlock_->addOperation(std::move(op));
+        return;
+    }
+    const auto& ops = insertBlock_->getOperations();
+    for (size_t i = 0; i < ops.size(); ++i) {
+        if (ops[i].get() == insertBefore_) {
+            insertBlock_->insertOperation(i, std::move(op));
+            return;
+        }
+    }
+    throw IRError("IRBuilder: the insertion point is not in its block");
+}
+
 ValuePtr IRBuilder::insert(OperationPtr op, const TypePtr& explicitType) {
     finalizeOp(*op, /*inferResultType=*/explicitType == nullptr);
-    if (insertBlock_) insertBlock_->addOperation(op);
-    return op->getNumResults() > 0 ? op->getResult(0) : nullptr;
+    ValuePtr result = op->getNumResults() > 0 ? op->getResult(0) : nullptr;
+    place(std::move(op));
+    return result;
 }
 
 ValuePtr IRBuilder::createOp(const std::string& opName, std::vector<ValuePtr> operands,
@@ -115,9 +133,45 @@ ValuePtr IRBuilder::createOneHot(ValuePtr indices, int64_t numClasses, TypePtr r
     return insert(std::make_shared<OneHotOp>(indices, numClasses, resultType), resultType);
 }
 
+ValuePtr IRBuilder::createMatmul(ValuePtr lhs, ValuePtr rhs, bool transposeA, bool transposeB) {
+    std::map<std::string, AttributeValue> attrs;
+    if (transposeA) attrs["transpose_a"] = int64_t{1};
+    if (transposeB) attrs["transpose_b"] = int64_t{1};
+    return createOp("matmul", {std::move(lhs), std::move(rhs)}, attrs);
+}
+
+ValuePtr IRBuilder::createUnary(const std::string& opName, ValuePtr operand) {
+    return createOp(opName, {std::move(operand)});
+}
+
+ValuePtr IRBuilder::createBinary(const std::string& opName, ValuePtr lhs, ValuePtr rhs) {
+    return createOp(opName, {std::move(lhs), std::move(rhs)});
+}
+
+ValuePtr IRBuilder::createSelect(ValuePtr cond, ValuePtr ifTrue, ValuePtr ifFalse) {
+    return createOp("select", {std::move(cond), std::move(ifTrue), std::move(ifFalse)});
+}
+
+ValuePtr IRBuilder::createBroadcastTo(ValuePtr operand, Shape shape) {
+    return createOp("broadcast_to", {std::move(operand)}, {{"shape", std::move(shape)}});
+}
+
+ValuePtr IRBuilder::createReduce(const std::string& opName, ValuePtr operand, std::vector<int64_t> axes,
+                                 bool keepdims) {
+    return createOp(opName, {std::move(operand)},
+                    {{"axes", std::move(axes)}, {"keepdims", static_cast<int64_t>(keepdims ? 1 : 0)}});
+}
+
+ValuePtr IRBuilder::createScatterAdd(ValuePtr indices, ValuePtr updates, int64_t numRows) {
+    return createOp("scatter_add", {std::move(indices), std::move(updates)}, {{"num_rows", numRows}});
+}
+
+ValuePtr IRBuilder::createScalar(double value) {
+    return createConstant(value, std::make_shared<TensorType>(DataType::Float32, Shape{}));
+}
+
 void IRBuilder::createReturn(const std::vector<ValuePtr>& values) {
-    auto op = std::make_shared<ReturnOp>(values);
-    if (insertBlock_) insertBlock_->addOperation(op);
+    place(std::make_shared<ReturnOp>(values));
 }
 
 } // namespace dlc

@@ -225,3 +225,28 @@ pass, and re-measurement — found that v1 was not the integrated compiler the e
   tests; the translation-validation suite catches two more miscompiles (CSE merging nearby constants, `x * 0` changing
   a result type), recorded as strict expected failures for P2.
 
+## P2 — The training graph in C++ (2026-10-18)
+
+- **Backward primitives** in the op registry: `cmp_gt`, `select`, `broadcast_to`, `reduce_max`, `scatter_add`, `cast`,
+  `tanh`, `sqrt`, `rsqrt`, and `transpose_a`/`transpose_b` flags on `matmul` (written only when set).
+- **Activity analysis** (`lib/passes/Activity.cpp`): varied (forward from the params) ∩ useful (backward from the loss),
+  along differentiable edges. No gradient is built for the input batch.
+- **Autodiff** rewritten: VJPs for every differentiable op — ReLU as `select(cmp_gt(x, 0), dy, 0)`, GELU with `tanh`,
+  LayerNorm with the full normalization Jacobian, reductions broadcast back with `broadcast_to`, cross-entropy divided
+  by the number of rows, embedding through `scatter_add`, matmul gradients as matmuls with transpose flags (3-D × 2-D
+  flattens the batch). Gradients are appended as `{grad = %param}` results.
+- **Optimizer lowering** (`adam{...}`, `sgd{...}`): the update is part of the graph; moments and bias-correction powers
+  are state arguments with an `init`, and new parameters and state are `{donates = %arg}` results. One graph is one
+  training step.
+- **Canonicalize** to a fixpoint: type-preserving, NaN-safe (no `x * 0 → 0`), constant folding of splats, transposes
+  folded into matmul flags, transpose/reshape/broadcast chains collapsed, commutative operands ordered. **CSE** keys on
+  operand identity, result type and exact attribute bits.
+- **IR:** `{state, init = 0.0}` on arguments, `{grad = %w}` / `{donates = %w}` on results; globally unique value ids;
+  the builder can insert before an op. Python's `ir.py` reads and prints all of it, and `ir.StepRunner` runs a step
+  function repeatedly.
+- **Tests:** 74 GoogleTest tests; 17 lit tests (`autodiff.dlc` now passes, `optimizer.dlc` is new); 41 new Python
+  tests — every C++ VJP rule against float64 central finite differences (37 graphs) and the step graph of an MLP and a
+  Char-GPT under Adam and SGD with momentum against eager training (losses equal to 1e-9 over four steps). The five
+  P2 known bugs are fixed and moved into the regular tests; the two miscompiles translation validation caught are
+  fixed too.
+

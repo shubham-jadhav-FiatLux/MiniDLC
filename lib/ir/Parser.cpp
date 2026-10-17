@@ -2,10 +2,12 @@
 #include "dlc/ir/Builder.h"
 #include "dlc/ir/Error.h"
 #include "dlc/ir/OpRegistry.h"
+#include <algorithm>
 #include <cctype>
 #include <charconv>
 #include <limits>
 #include <map>
+#include <optional>
 #include <unordered_map>
 
 namespace dlc {
@@ -355,16 +357,35 @@ private:
         return values;
     }
 
+    struct ArgDecl {
+        Token tok;
+        TypePtr type;
+        ArgRole role;
+        std::optional<double> init;
+    };
+
+    // `{grad = %w}` or `{donates = %w}` after a result type, naming an argument.
+    ResultInfo parseResultAnnotation(const std::vector<ArgDecl>& args) {
+        ResultInfo info;
+        if (!accept(Tok::LBrace)) return info;
+        Token kind = expect(Tok::Ident, "'grad' or 'donates'");
+        if (kind.text == "grad") info.kind = ResultKind::Grad;
+        else if (kind.text == "donates") info.kind = ResultKind::Donates;
+        else throw errorAt(kind, "unknown result annotation '" + kind.text + "'");
+        expect(Tok::Equal, "'='");
+        Token ref = expect(Tok::ValueId, "an argument such as '%w'");
+        auto it = std::find_if(args.begin(), args.end(), [&](const ArgDecl& a) { return a.tok.text == ref.text; });
+        if (it == args.end()) throw errorAt(ref, "'%" + ref.text + "' is not an argument");
+        info.arg = static_cast<size_t>(it - args.begin());
+        expect(Tok::RBrace, "'}'");
+        return info;
+    }
+
     FunctionPtr parseFunction(const Module& module) {
         consume(); // 'func'
         Token name = expect(Tok::FuncId, "a function name such as '@main'");
         if (module.getFunction(name.text)) throw errorAt(name, "redefinition of function '@" + name.text + "'");
 
-        struct ArgDecl {
-            Token tok;
-            TypePtr type;
-            ArgRole role;
-        };
         std::vector<ArgDecl> args;
         expect(Tok::LParen, "'('");
         if (!accept(Tok::RParen)) {
@@ -373,35 +394,48 @@ private:
                 expect(Tok::Colon, "':'");
                 TypePtr type = parseType();
                 ArgRole role = ArgRole::Input;
+                std::optional<double> init;
                 if (accept(Tok::LBrace)) {
                     Token roleTok = expect(Tok::Ident, "an argument role (input, param, const or state)");
                     if (!parseArgRole(roleTok.text, role)) {
                         throw errorAt(roleTok, "unknown argument role '" + roleTok.text + "'");
                     }
+                    if (accept(Tok::Comma)) {
+                        Token key = expect(Tok::Ident, "'init'");
+                        if (key.text != "init") throw errorAt(key, "expected 'init', got '" + key.text + "'");
+                        expect(Tok::Equal, "'='");
+                        if (tok_.kind == Tok::Int) init = static_cast<double>(toInt(consume()));
+                        else if (tok_.kind == Tok::Float) init = toDouble(consume());
+                        else throw errorAt(tok_, "expected a number, got " + describe(tok_));
+                    }
                     expect(Tok::RBrace, "'}'");
                 }
-                args.push_back({id, type, role});
+                args.push_back({id, type, role, init});
             } while (accept(Tok::Comma));
             expect(Tok::RParen, "')'");
         }
 
         expect(Tok::Arrow, "'->'");
         std::vector<TypePtr> resultTypes;
+        std::vector<ResultInfo> resultInfo;
         if (accept(Tok::LParen)) {
             if (!accept(Tok::RParen)) {
                 do {
                     resultTypes.push_back(parseType());
+                    resultInfo.push_back(parseResultAnnotation(args));
                 } while (accept(Tok::Comma));
                 expect(Tok::RParen, "')'");
             }
         } else {
             resultTypes.push_back(parseType());
+            resultInfo.emplace_back();
         }
 
         std::vector<TypePtr> argTypes;
         for (const auto& arg : args) argTypes.push_back(arg.type);
         IRBuilder builder;
         FunctionPtr func = builder.createFunction(name.text, argTypes, resultTypes);
+        func->setResults(resultTypes, resultInfo);
         SymbolTable symbols;
         for (size_t i = 0; i < args.size(); ++i) {
             const ValuePtr& value = func->getArguments()[i];
@@ -410,6 +444,7 @@ private:
             }
             value->setName(args[i].tok.text);
             func->setArgRole(i, args[i].role);
+            func->setArgInit(i, args[i].init);
         }
 
         expect(Tok::LBrace, "'{'");

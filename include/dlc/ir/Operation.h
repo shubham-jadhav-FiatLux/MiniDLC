@@ -35,6 +35,7 @@ public:
     const std::vector<ValuePtr>& getResults() const { return results_; }
 
     void setAttribute(const std::string& key, AttributeValue val) { attributes_[key] = std::move(val); }
+    void removeAttribute(const std::string& key) { attributes_.erase(key); }
     bool hasAttribute(const std::string& key) const { return attributes_.find(key) != attributes_.end(); }
     const AttributeValue& getAttribute(const std::string& key) const { return attributes_.at(key); }
     const std::unordered_map<std::string, AttributeValue>& getAttributes() const { return attributes_; }

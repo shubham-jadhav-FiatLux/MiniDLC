@@ -27,7 +27,7 @@ OPS: Dict[str, Tuple[int, Dict[str, Tuple[str, bool]]]] = {
     "gelu": (1, {}),
     "exp": (1, {}),
     "log": (1, {}),
-    "matmul": (2, {}),
+    "matmul": (2, {"transpose_a": ("int", False), "transpose_b": ("int", False)}),
     "softmax": (1, {"axis": ("int", False)}),
     "log_softmax": (1, {"axis": ("int", False)}),
     "cross_entropy": (2, {}),
@@ -39,6 +39,15 @@ OPS: Dict[str, Tuple[int, Dict[str, Tuple[str, bool]]]] = {
     "embedding": (2, {}),
     "constant": (0, {"value": ("float", True)}),
     "onehot": (1, {"num_classes": ("int", True)}),
+    "tanh": (1, {}),
+    "sqrt": (1, {}),
+    "rsqrt": (1, {}),
+    "cmp_gt": (2, {}),
+    "select": (3, {}),
+    "broadcast_to": (1, {"shape": ("int-list", True)}),
+    "reduce_max": (1, {"axes": ("int-list", False), "keepdims": ("int", False)}),
+    "scatter_add": (2, {"num_rows": ("int", True)}),
+    "cast": (1, {"to": ("string", True)}),
     "return": (-1, {}),
 }
 
@@ -66,6 +75,10 @@ class IRArg:
     name: str
     type: IRType
     role: str = "input"
+    init: Optional[float] = None  # the value every element of a state argument starts from
+
+
+RESULT_KINDS = ("value", "grad", "donates")
 
 
 @dataclass
@@ -85,6 +98,11 @@ class IRFunction:
     ops: List[IROp]
     # Values of the param and const arguments, as exported; they are not part of the text.
     bindings: Dict[str, np.ndarray] = field(default_factory=dict)
+    # Per result: ("value", None), ("grad", arg name) or ("donates", arg name). Empty means all plain values.
+    result_info: List[Tuple[str, Optional[str]]] = field(default_factory=list)
+
+    def result_kinds(self) -> List[Tuple[str, Optional[str]]]:
+        return self.result_info or [("value", None)] * len(self.result_types)
 
     @property
     def returns(self) -> List[str]:
@@ -107,12 +125,20 @@ class IRFunction:
 
         params = []
         for a in self.args:
-            role = "" if a.role == "input" else f" {{{a.role}}}"
+            role = ""
+            if a.role != "input" or a.init is not None:
+                init = "" if a.init is None else f", init = {_format_float(a.init)}"
+                role = f" {{{a.role}{init}}}"
             params.append(f"{ref(a.name)}: {a.type}{role}")
-        if len(self.result_types) == 1:
+        kinds = self.result_kinds()
+        annotated = any(kind != "value" for kind, _ in kinds)
+        if len(self.result_types) == 1 and not annotated:
             results = str(self.result_types[0])
         else:
-            results = "(" + ", ".join(str(t) for t in self.result_types) + ")"
+            items = []
+            for t, (kind, arg) in zip(self.result_types, kinds):
+                items.append(str(t) if kind == "value" else f"{t} {{{kind} = {ref(arg)}}}")
+            results = "(" + ", ".join(items) + ")"
         lines = [f"func @{self.name}({', '.join(params)}) -> {results} {{"]
         for op in self.ops:
             if op.name == "return":
@@ -430,27 +456,38 @@ class _Parser:
                 self.expect("punct", ":")
                 arg_type = self.type()
                 role = "input"
+                init = None
                 if self.accept("punct", "{"):
                     role_tok = self.expect("ident", what="an argument role")
                     if role_tok.text not in ROLES:
                         raise self.error(role_tok, f"unknown argument role '{role_tok.text}'")
                     role = role_tok.text
+                    if self.accept("punct", ","):
+                        self.expect("ident", "init", "'init'")
+                        self.expect("punct", "=")
+                        number = self.peek()
+                        if not (self.accept("int") or self.accept("float")):
+                            raise self.error(number, f"expected a number, got {number.text!r}")
+                        init = float(number.text)
                     self.expect("punct", "}")
-                args.append(IRArg(tok.text[1:], arg_type, role))
+                args.append(IRArg(tok.text[1:], arg_type, role, init))
                 if not self.accept("punct", ","):
                     break
             self.expect("punct", ")")
         self.expect("arrow", what="'->'")
         results: List[IRType] = []
+        info: List[Tuple[str, Optional[str]]] = []
         if self.accept("punct", "("):
             if not self.accept("punct", ")"):
                 while True:
                     results.append(self.type())
+                    info.append(self.result_annotation(args))
                     if not self.accept("punct", ","):
                         break
                 self.expect("punct", ")")
         else:
             results.append(self.type())
+            info.append(("value", None))
 
         ops: List[IROp] = []
         self.expect("punct", "{")
@@ -458,7 +495,21 @@ class _Parser:
             if self.peek().kind == "eof":
                 raise self.error(self.peek(), f"expected '}}' to close function '@{name}'")
             ops.append(self.statement(defined))
-        return IRFunction(name, args, results, ops)
+        annotated = any(kind != "value" for kind, _ in info)
+        return IRFunction(name, args, results, ops, result_info=info if annotated else [])
+
+    def result_annotation(self, args: List[IRArg]) -> Tuple[str, Optional[str]]:
+        if not self.accept("punct", "{"):
+            return ("value", None)
+        kind = self.expect("ident", what="'grad' or 'donates'")
+        if kind.text not in ("grad", "donates"):
+            raise self.error(kind, f"unknown result annotation '{kind.text}'")
+        self.expect("punct", "=")
+        ref = self.expect("value", what="an argument")
+        if ref.text[1:] not in {a.name for a in args}:
+            raise self.error(ref, f"'{ref.text}' is not an argument")
+        self.expect("punct", "}")
+        return (kind.text, ref.text[1:])
 
     def values(self, defined: set) -> List[str]:
         names: List[str] = []
@@ -583,10 +634,17 @@ def to_graph(func: IRFunction) -> Tuple[Dict[str, Tensor], List[Tensor]]:
             attrs["axis"] = a.get("axis", -1)
         elif op.name == "layernorm":
             attrs["eps"] = a.get("eps", 1e-5)
-        elif op.name in ("sum", "mean"):
+        elif op.name in ("sum", "mean", "reduce_max"):
             axes = a.get("axes")
             attrs["axis"] = None if axes is None else tuple(axes)
             attrs["keepdims"] = bool(a.get("keepdims", 0))
+        elif op.name == "matmul":
+            attrs["transpose_a"] = bool(a.get("transpose_a", 0))
+            attrs["transpose_b"] = bool(a.get("transpose_b", 0))
+        elif op.name == "broadcast_to":
+            shape = tuple(a["shape"])
+        elif op.name in ("scatter_add", "cast"):
+            attrs.update(a)
         elif op.name == "transpose":
             attrs["perm"] = a.get("perm")
         elif op.name == "reshape":
@@ -616,10 +674,13 @@ def execute(func: IRFunction, feeds: Mapping[str, np.ndarray], dtype: Any = np.f
     args, results = to_graph(func)
     feed: Dict[Tensor, np.ndarray] = {}
     for name, t in args.items():
+        arg = func.arg(name)
         if name in feeds:
             value = feeds[name]
         elif name in func.bindings:
             value = func.bindings[name]
+        elif arg.init is not None:
+            value = np.full(arg.type.shape, arg.init)
         else:
             raise KeyError(f"no value for argument %{name} of @{func.name}")
         value = np.asarray(value)
@@ -628,3 +689,35 @@ def execute(func: IRFunction, feeds: Mapping[str, np.ndarray], dtype: Any = np.f
         feed[t] = value
     values = ReferenceInterpreter(dtype=dtype).forward(results, feed)
     return [np.asarray(values[r]) for r in results]
+
+
+class StepRunner:
+    """Runs a training-step function (autodiff + optimizer lowering) repeatedly in the reference interpreter.
+
+    Param, const and state arguments live here between steps: params and consts start from the function's bindings
+    (or `bindings`), states from their `init` value, and each donated result replaces its argument after a step.
+    Calling the runner with the input arguments returns the results that are not donated (the loss first).
+    """
+
+    def __init__(self, func: IRFunction, bindings: Optional[Mapping[str, np.ndarray]] = None, dtype: Any = np.float64):
+        self.func = func
+        self.dtype = dtype
+        self.values: Dict[str, np.ndarray] = {}
+        given = {**func.bindings, **(bindings or {})}
+        for a in func.args:
+            if a.role in ("param", "const"):
+                if a.name not in given:
+                    raise KeyError(f"no value for {a.role} argument %{a.name}")
+                self.values[a.name] = np.array(given[a.name], dtype=dtype)
+            elif a.role == "state":
+                self.values[a.name] = np.full(a.type.shape, 0.0 if a.init is None else a.init, dtype=dtype)
+
+    def __call__(self, feeds: Mapping[str, np.ndarray]) -> List[np.ndarray]:
+        outputs = execute(self.func, {**self.values, **feeds}, self.dtype)
+        plain = []
+        for value, (kind, arg) in zip(outputs, self.func.result_kinds()):
+            if kind == "donates":
+                self.values[arg] = value
+            else:
+                plain.append(value)
+        return plain

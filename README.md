@@ -8,9 +8,9 @@ own Python frontend is traced into an SSA graph IR, differentiated, optimized, l
 LLVM — for x86-64 CPUs and, via LLVM's NVPTX backend, for NVIDIA GPUs.
 
 > **Status (2026-10-18): v1 prototype, being rebuilt as v2.** An audit found that the v1 pieces were not connected end
-> to end. Since then the frontend and the C++ compiler share a textual IR (phase P1): a traced model is exported as IR
-> text, `dlc-opt` optimizes it, and the reference interpreter runs the result, which is how every graph pass is
-> checked. Training still doesn't go through the C++ compiler, and its code generators are text templates. This README
+> to end. Since then the frontend and the C++ compiler share a textual IR (P1), and the C++ compiler builds a complete
+> training step — forward, backward and Adam/SGD update in one graph — whose gradients match finite differences (P2).
+> Training still doesn't run compiled code, and the C++ code generators are text templates. This README
 > describes what exists today; the v2 design and the status of each component are in
 > [`docs/architecture.md`](docs/architecture.md).
 
@@ -29,9 +29,13 @@ LLVM — for x86-64 CPUs and, via LLVM's NVPTX backend, for NVIDIA GPUs.
   ([`docs/perf-report.md`](docs/perf-report.md)).
 - **C++ compiler infrastructure.** An SSA graph IR with an op registry (operand counts, attributes and type rules shared
   by the builder, parser, verifier and shape inference); a printer and parser that round-trip, with `line:col` errors; a
-  verifier that runs after every pass; graph passes (shape inference, canonicalization, CSE, DCE, autodiff, fusion
-  grouping, memory planning); a loop IR with interval range analysis and remainder-loop peeling; and `dlc-opt`, which
-  prints the IR after each pass.
+  verifier that runs after every pass; graph passes (shape inference, canonicalization to a fixpoint, CSE, DCE,
+  activity analysis, reverse-mode autodiff, Adam/SGD lowering, fusion grouping, memory planning); a loop IR with
+  interval range analysis and remainder-loop peeling; and `dlc-opt`, which prints the IR after each pass.
+- **The training step as one C++ graph.** `dlc-opt --passes="autodiff,adam{lr=0.001},canonicalize,cse,dce"` turns an
+  exported model into a single function that returns the loss and the updated parameters and Adam state (donated,
+  i.e. updated in place). Every VJP rule matches float64 finite differences, and run in the reference interpreter the
+  step follows eager training of an MLP and a Char-GPT step by step.
 - **Textual IR between Python and C++.** `minidlc.ir.export` writes a traced model (the MLP, Char-GPT) as canonical IR
   text, which `dlc-opt` prints back byte for byte; `minidlc.ir.parse_function` and `execute` run `dlc-opt`'s output in
   the reference interpreter. Translation validation runs every graph pass on 16 exported graphs and compares the
@@ -42,9 +46,9 @@ LLVM — for x86-64 CPUs and, via LLVM's NVPTX backend, for NVIDIA GPUs.
 - **Training doesn't use the C++ compiler yet.** The frontend and `dlc-opt` exchange IR text, but
   `dl.compile(..., target="cpu")` runs the hand-written kernels for a fixed two-layer ReLU MLP. It does not compile the
   traced graph, and other models get wrong results on that target — use `target="reference"` for anything else.
-- **The C++ passes have known bugs** (several autodiff VJPs, CSE keys, `x * 0` rewriting, memory planning with fusion),
-  and the LLVM/CUDA emitters in `lib/backends/` pick text templates by kernel name instead of translating the loop IR.
-  They run only inside `dlc-opt` and the tests.
+- **Memory planning ignores fusion** (it can place a fused kernel's output on top of its inputs, and reuses parameter
+  buffers), and the LLVM/CUDA emitters in `lib/backends/` pick text templates by kernel name instead of translating the
+  loop IR. They run only inside `dlc-opt` and the tests.
 - **No code has run on a GPU yet**, so the CUDA emitter's output is unverified.
 - Each known bug is recorded as a disabled unit test in [`tests/unit/test_known_bugs.cpp`](tests/unit/test_known_bugs.cpp),
   an expected-failure lit test, or a strict expected failure in the translation-validation suite, to be enabled by the
@@ -85,8 +89,8 @@ MiniDLC/
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j4
-ctest --test-dir build --output-on-failure   # 55 GoogleTest tests, 16 lit/FileCheck tests, translation validation
-pytest                                       # 34 Python tests + 167 translation-validation tests (need build/dlc-opt)
+ctest --test-dir build --output-on-failure   # 74 GoogleTest tests, 17 lit/FileCheck tests, the Python compiler tests
+pytest                                       # 34 Python tests + 205 compiler tests (need build/dlc-opt)
 ```
 
 For a sanitizer build, configure with `-DCMAKE_BUILD_TYPE=Debug -DDLC_SANITIZE=ON` (AddressSanitizer and
@@ -118,7 +122,7 @@ MNIST timings depend heavily on the BLAS library your NumPy links; see [`docs/pe
 v2 keeps the Python frontend, makes the textual graph IR the contract with the C++ compiler, adds a GPU-aware loop IR
 with per-target schedules, and generates code through one LLVM emitter for x86-64 (ORC JIT) and NVIDIA GPUs (NVPTX →
 PTX). Phases: **P0** truthful docs and real tests (done) → **P1** IR and Python↔C++ bridge (done) → **P2** training
-graph in C++ → **P3** fusion and buffer assignment → **P4** CPU backend → **P5** GPU backend → **P6** Transformer on both
+graph in C++ (done) → **P3** fusion and buffer assignment → **P4** CPU backend → **P5** GPU backend → **P6** Transformer on both
 targets → **P7** measurements and write-up. Details: [`docs/architecture.md`](docs/architecture.md).
 
 ## Course mapping

@@ -21,10 +21,8 @@ Operation::Operation(std::string opName,
     }
 
     // Allocate result SSA values
-    static uint32_t sGlobalValId = 1000;
     for (size_t i = 0; i < resultTypes.size(); ++i) {
-        auto val = std::make_shared<Value>(sGlobalValId++, resultTypes[i], this);
-        results_.push_back(val);
+        results_.push_back(std::make_shared<Value>(Value::nextId(), resultTypes[i], this));
     }
 }
 

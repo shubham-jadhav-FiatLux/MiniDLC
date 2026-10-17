@@ -1,0 +1,24 @@
+// Optimizer lowering turns the gradients into an Adam update inside the graph, so one function is one training step:
+// the moments and the bias-correction powers become state arguments with initial values, and every new parameter and
+// state value is a donated result that takes over its argument's buffer.
+// RUN: %dlc-opt "--passes=autodiff,adam{lr=0.01},canonicalize,cse,dce" %s | FileCheck %s
+// RUN: %dlc-opt "--passes=autodiff,sgd{lr=0.1,momentum=0.9}" %s | FileCheck %s --check-prefix=SGD
+// RUN: not %dlc-opt "--passes=adam{lr=0.01}" %s 2>&1 | FileCheck %s --check-prefix=NOGRAD
+// RUN: not %dlc-opt "--passes=autodiff,adam{momentum=0.9}" %s 2>&1 | FileCheck %s --check-prefix=BADOPT
+
+// CHECK-LABEL: func @linear(%x: f32[8,4], %w: f32[4,3] {param}, %adam.beta1_pow: f32[] {state, init = 1.0}, %adam.beta2_pow: f32[] {state, init = 1.0}, %w.m: f32[4,3] {state, init = 0.0}, %w.v: f32[4,3] {state, init = 0.0}) -> (f32[], f32[4,3] {donates = %w}, f32[4,3] {donates = %w.m}, f32[4,3] {donates = %w.v}, f32[] {donates = %adam.beta1_pow}, f32[] {donates = %adam.beta2_pow}) {
+// CHECK:         [[B1P:%[0-9]+]] = mul(%adam.beta1_pow, {{%[0-9]+}}) : f32[]
+// CHECK:         sqrt(
+// CHECK:         [[NEW_W:%[0-9]+]] = sub(%w, {{%[0-9]+}}) : f32[4,3]
+// CHECK:         return {{%[0-9]+}}, [[NEW_W]], {{%[0-9]+}}, {{%[0-9]+}}, [[B1P]], {{%[0-9]+}}
+
+// SGD-LABEL: func @linear(%x: f32[8,4], %w: f32[4,3] {param}, %w.velocity: f32[4,3] {state, init = 0.0}) -> (f32[], f32[4,3] {donates = %w}, f32[4,3] {donates = %w.velocity}) {
+
+// NOGRAD: error: pass 'adam': optimizer: the function returns no gradients; run autodiff first
+// BADOPT: error: unknown option 'momentum' for pass 'adam'
+
+func @linear(%x: f32[8,4], %w: f32[4,3] {param}) -> f32[] {
+  %0 = matmul(%x, %w) : f32[8,3]
+  %1 = mean(%0) : f32[]
+  return %1
+}
