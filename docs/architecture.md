@@ -50,3 +50,28 @@ Instead of dynamic allocations during execution, MiniDLC performs static memory 
 - An interference graph is constructed where an edge connects two values with overlapping lifetimes.
 - A greedy offset assignment assigns non-overlapping memory spans within a single contiguous arena.
 - Parameters and optimizer state buffers remain resident across training iterations with buffer donation semantics.
+- 64-byte alignment guarantees aligned AVX2 vector memory instructions (`vmovaps`).
+
+## 4. Sequence Modeling & Transformer Architecture
+
+MiniDLC supports complete sequence modeling pipelines:
+- **Batched Tensor Contractions**: 3D and 4D tensor matrix products ($[B, T, D] \times [B, D, T] \to [B, T, T]$) and sequence linear projections ($[B, T, D] \times [D, H] \to [B, T, H]$).
+- **Causal Masking**: Additive triangular masking (`ops.triu_mask`) setting upper-triangular elements to $-1\times 10^4$ prior to softmax, strictly preventing future sequence positions from influencing prior representations.
+- **Layer Normalization**: Normalization across feature dimensions with learnable scale ($\gamma$) and shift ($\beta$), backed by analytic backward VJPs in both C++ and Python.
+- **GELU Non-linearity**: Smooth tanh-approximated activation $\frac{1}{2} x (1 + \tanh(\sqrt{2/\pi}(x + 0.044715 x^3)))$.
+- **Autoregressive Generation**: Iterative character decoding with temperature-scaled softmax sampling.
+
+## 5. Heterogeneous Execution Backends
+
+1. **NumPy Reference Interpreter**:
+   - Executes the untransformed or optimized Graph IR directly using double precision (`float64`) for numerical ground-truth and finite-difference gradient verification.
+2. **LLVM CPU JIT Backend**:
+   - Lowers Loop IR into LLVM IR via `IRBuilder`.
+   - Emits 256-bit AVX2 SIMD vector operations (`<8 x float>`), fused multiply-adds (`llvm.fmuladd`), and NaN-propagating activations (`llvm.maximum`).
+   - Dispatches parallel loop tiles across physical CPU cores via an integrated C++ `ThreadPool`.
+3. **CUDA GPU Backend**:
+   - Generates CUDA C++ kernels with 2D shared-memory tiling ($16 \times 16$), on-chip transposition, and register-fused epilogues.
+   - Evaluates intra-warp tree reductions via `__shfl_down_sync` register intrinsics across 5 steps ($16 \to 8 \to 4 \to 2 \to 1$).
+   - Fuses multi-tensor Adam updates into a single register pass, eliminating redundant DRAM round-trips.
+   - Compiles kernels dynamically via NVRTC and launches asynchronously through the CUDA Driver API.
+

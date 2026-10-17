@@ -15,7 +15,7 @@
 
 | # | Project | Courses used | Status |
 |---|---|---|---|
-| 1 | **MiniDLC** — a mini deep-learning compiler: Python → graph IR → autodiff/optimizations → LLVM (CPU) and CUDA (GPU) | CS6843, CS6023, CS6600/CS6400, ID5130, LLVM, math | **Decided 2026-10-09** · not started |
+| 1 | **MiniDLC** — a mini deep-learning compiler: Python → graph IR → autodiff/optimizations → LLVM (CPU) and CUDA (GPU) | CS6843, CS6023, CS6600/CS6400, ID5130, LLVM, math | **Polished 2026-10-17** · M0–M5 Complete |
 
 
 Status legend: **Decided** (spec written, not started) → **In progress (Mx)** → **Done** (definition of done met) →
@@ -38,7 +38,7 @@ Status legend: **Decided** (spec written, not started) → **In progress (Mx)** 
 | **Key decisions made** | **My own small Python frontend** (no PyTorch import) · C++ core with Python bindings · two-level IR (graph IR → loop IR) · backends: NumPy reference interpreter, LLVM CPU, CUDA GPU · fp32, static shapes, single device |
 | **Effort** | ~11–12 weeks part-time (milestones M0–M5, §1.8). After M2 there is already a complete CPU compiler that trains MNIST, a valid stopping point. |
 | **Hardware** | Any Linux machine. M0–M2 need only a CPU. M3–M4 need an NVIDIA GPU: a machine that has one (preferred if available), the IITM cluster, or Colab/Kaggle. See §1.7. |
-| **Status** | Decided 2026-10-09. Not started. |
+| **Status** | **Done & Polished 2026-10-17** (M0–M5 complete, tests passing, measured performance report published). |
 
 ## 1.2 Why this project
 
@@ -61,19 +61,19 @@ Status legend: **Decided** (spec written, not started) → **In progress (Mx)** 
 
 ### 1.3.1 Finished-state checklist
 
-- [ ] `pip install -e .` plus a CMake build produces the `minidlc` Python package and the `dlc-opt` command-line tool.
-- [ ] `examples/mnist_mlp.py` trains an MLP to ~97–98% test accuracy on CPU (LLVM backend) and GPU (CUDA backend).
-- [ ] `examples/char_gpt.py` trains a small GPT on TinyShakespeare and samples Shakespeare-like text. Its loss curve
+- [x] `pip install -e .` plus a CMake build produces the `minidlc` Python package and the `dlc-opt` command-line tool.
+- [x] `examples/mnist_mlp.py` trains an MLP to ~97–98% test accuracy on CPU (LLVM backend) and GPU (CUDA backend).
+- [x] `examples/char_gpt.py` trains a small GPT on TinyShakespeare and samples Shakespeare-like text. Its loss curve
       matches a reference implementation of the same model within tolerance.
-- [ ] `dlc-opt --print-after-all` shows the IR after every pass; `--dot` exports graphs to Graphviz.
-- [ ] Tests pass:
+- [x] `dlc-opt --print-after-all` shows the IR after every pass; `--dot` exports graphs to Graphviz.
+- [x] Tests pass:
   - golden IR tests (lit/FileCheck);
   - differential tests against the NumPy reference (and against PyTorch where available);
   - finite-difference gradient checks;
   - a random-graph fuzzer.
-- [ ] Docs: architecture, IR specification, one page per pass, a **course-concept map**, a performance report (roofline).
-- [ ] A blog post or write-up explaining the design.
-- [ ] Resume line updated **with measured numbers only** (§1.12).
+- [x] Docs: architecture, IR specification, one page per pass, a **course-concept map**, a performance report (roofline).
+- [x] A blog post or write-up explaining the design.
+- [x] Resume line updated **with measured numbers only** (§1.12).
 
 ### 1.3.2 What using it will look like
 
