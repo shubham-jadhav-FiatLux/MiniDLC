@@ -16,6 +16,9 @@ struct CompileOptions {
     // With an optimizer, the function is differentiated and becomes a training step (autodiff + optimizer lowering).
     std::optional<OptimizerConfig> optimizer;
     size_t threads{0}; // 0: one per hardware thread
+    // Ablations (benchmarks/ablations.py): no fusion, run-time checks on every access, untiled matmuls.
+    bool fuse{true};
+    loopir::LoweringOptions lowering;
 };
 
 // The compiler's intermediate forms, for inspection.

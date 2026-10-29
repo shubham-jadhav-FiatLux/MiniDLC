@@ -62,7 +62,7 @@ void collectUsers(const Value* value, std::vector<Operation*>& users) {
 
 class Grouper {
 public:
-    explicit Grouper(const Function& func) : func_(func) {}
+    Grouper(const Function& func, bool fuse) : func_(func), fuse_(fuse) {}
 
     void run(std::vector<Kernel>& kernels) {
         const auto& ops = func_.getEntryBlock()->getOperations();
@@ -79,7 +79,7 @@ public:
         // Grow elementwise groups and matmul epilogues along producer → consumer edges, in program order. Matmul
         // groups go first, so an elementwise op that consumes a matmul result joins its epilogue.
         for (const auto& op : ops) {
-            if (!isElementwiseOp(op->getOpName())) continue;
+            if (!fuse_ || !isElementwiseOp(op->getOpName())) continue;
             const Shape& shape = shapeOf(op->getResult(0).get());
             std::vector<size_t> producers;
             for (const auto& operand : op->getOperands()) {
@@ -281,6 +281,7 @@ private:
     }
 
     const Function& func_;
+    bool fuse_{true};
     std::vector<Group> groups_;
     std::unordered_map<const Operation*, size_t> groupOf_;
     std::unordered_map<const Operation*, size_t> position_;
@@ -293,7 +294,7 @@ bool FusionPass::runOnFunction(Function& func) {
     kernels_.clear();
     kernelOfValue_.clear();
     if (func.getEntryBlock()->getOperations().empty()) return false;
-    Grouper(func).run(kernels_);
+    Grouper(func, fuse_).run(kernels_);
     for (size_t k = 0; k < kernels_.size(); ++k) {
         for (Operation* op : kernels_[k].ops) {
             for (const auto& result : op->getResults()) kernelOfValue_[result.get()] = k;

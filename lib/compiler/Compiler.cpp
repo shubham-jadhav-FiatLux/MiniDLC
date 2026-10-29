@@ -83,12 +83,12 @@ Lowered lowerToPlan(const std::string& irText, const CompileOptions& options, lo
     }
     pm.run(*module);
 
-    FusionPass fusion(/*annotate=*/dumps != nullptr);
+    FusionPass fusion(/*annotate=*/dumps != nullptr, options.fuse);
     fusion.runOnFunction(func);
     const std::vector<Kernel>& kernels = fusion.getKernels();
     BufferAssignment buffers(func, kernels);
     buffers.verify();
-    auto lowered = loopir::lowerFunction(func, kernels, buffers, target);
+    auto lowered = loopir::lowerFunction(func, kernels, buffers, target, options.lowering);
 
     // The plan: arguments and results with their slots, the launches in order, the final copies.
     runtime::Plan plan;

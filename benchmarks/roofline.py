@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Empirical Roofline Model Analysis for MiniDLC CPU Execution.
-Dynamically measures peak hardware compute (AVX2 FMA microbenchmark),
-memory bandwidth (STREAM benchmark), and actual kernel operational points.
-Generates an SVG roofline diagram from empirical measurements.
+Empirical CPU roofline for MiniDLC's generated code.
+Measures the FP32 peak (AVX2 FMA microbenchmark, all cores) and memory bandwidth (STREAM copy), then places the
+slowest kernels of the compiled MNIST training step on the roofline, with times from the runtime's per-kernel timers
+and FLOPs/bytes from the compiler's cost model. Writes docs/roofline_cpu.svg.
 """
 
 import os
@@ -18,7 +18,6 @@ repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(repo_root, "python"))
 sys.path.insert(0, repo_root)
 
-from minidlc.llvm_engine import LLVMCPUEngine
 from benchmarks.stream_bw import run_stream_benchmark
 
 
@@ -48,131 +47,39 @@ def get_empirical_peak_gflops() -> dict:
     }
 
 
-def benchmark_kernels(engine: LLVMCPUEngine) -> list:
-    """Empirically benchmarks the key neural network operations."""
-    kernels = []
+def benchmark_kernels(steps: int = 300, top: int = 6) -> list:
+    """The kernels of the compiled MNIST training step (batch 128, Adam), timed by the runtime's per-kernel timers
+    over `steps` steps; FLOPs and compulsory bytes come from the compiler's cost model. The `top` slowest kernels."""
+    import minidlc as dl
+    from minidlc import nn, optim
+
+    class MLP(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc1 = nn.Linear(784, 256)
+            self.fc2 = nn.Linear(256, 10)
+
+        def forward(self, x):
+            return self.fc2(dl.relu(self.fc1(x)))
+
     np.random.seed(42)
-
-    # 1. MiniDLC Fused Matmul + Bias + ReLU (M=128, K=784, N=256)
-    M, K, N = 128, 784, 256
-    A = np.random.randn(M, K).astype(np.float32)
-    B = np.random.randn(K, N).astype(np.float32)
-    bias = np.random.randn(N).astype(np.float32)
-    C = np.zeros((M, N), dtype=np.float32)
-
-    flops_fused = 2 * M * K * N + 2 * M * N
-    bytes_fused = (M * K + K * N + N + M * N) * 4
-    intensity_fused = flops_fused / bytes_fused
-
-    # Warmup
-    for _ in range(10):
-        engine.matmul_bias_relu(A.ctypes.data, B.ctypes.data, bias.ctypes.data, C.ctypes.data, M, K, N)
-    times_fused = []
-    for _ in range(40):
-        t0 = time.perf_counter()
-        engine.matmul_bias_relu(A.ctypes.data, B.ctypes.data, bias.ctypes.data, C.ctypes.data, M, K, N)
-        t1 = time.perf_counter()
-        times_fused.append(t1 - t0)
-    med_t_fused = float(np.median(times_fused))
-    gflops_fused = (flops_fused / 1e9) / med_t_fused
-    bw_fused = (bytes_fused / 1e9) / med_t_fused
-
-    kernels.append({
-        "name": "Fused Matmul+Bias+ReLU",
-        "intensity": intensity_fused,
-        "gflops": gflops_fused,
-        "bw_gbs": bw_fused,
-        "time_ms": med_t_fused * 1e3,
-    })
-
-    # 2. NumPy Unfused Matmul + Bias + ReLU
-    bytes_unfused = (M * K + K * N + 5 * M * N + N) * 4
-    intensity_unfused = flops_fused / bytes_unfused
-
-    for _ in range(5):
-        tmp = A @ B
-        tmp2 = tmp + bias
-        _ = np.maximum(tmp2, 0.0)
-    times_unfused = []
-    for _ in range(40):
-        t0 = time.perf_counter()
-        tmp = A @ B
-        tmp2 = tmp + bias
-        _ = np.maximum(tmp2, 0.0)
-        t1 = time.perf_counter()
-        times_unfused.append(t1 - t0)
-    med_t_unfused = float(np.median(times_unfused))
-    gflops_unfused = (flops_fused / 1e9) / med_t_unfused
-    bw_unfused = (bytes_unfused / 1e9) / med_t_unfused
-
-    kernels.append({
-        "name": "NumPy Unfused Matmul",
-        "intensity": intensity_unfused,
-        "gflops": gflops_unfused,
-        "bw_gbs": bw_unfused,
-        "time_ms": med_t_unfused * 1e3,
-    })
-
-    # 3. Adam Optimizer Update (AVX2 Vectorized)
-    N_elem = 784 * 256
-    w = np.random.randn(N_elem).astype(np.float32)
-    g = np.random.randn(N_elem).astype(np.float32)
-    m = np.zeros(N_elem, dtype=np.float32)
-    v = np.zeros(N_elem, dtype=np.float32)
-    lr, b1, b2, eps, bc1, bc2 = 0.001, 0.9, 0.999, 1e-8, 0.1, 0.01
-
-    flops_adam = 13 * N_elem
-    bytes_adam = 7 * 4 * N_elem
-    intensity_adam = flops_adam / bytes_adam
-
-    for _ in range(10):
-        engine.adam_update(w.ctypes.data, g.ctypes.data, m.ctypes.data, v.ctypes.data, lr, b1, b2, eps, bc1, bc2, N_elem)
-    times_adam = []
-    for _ in range(50):
-        t0 = time.perf_counter()
-        engine.adam_update(w.ctypes.data, g.ctypes.data, m.ctypes.data, v.ctypes.data, lr, b1, b2, eps, bc1, bc2, N_elem)
-        t1 = time.perf_counter()
-        times_adam.append(t1 - t0)
-    med_t_adam = float(np.median(times_adam))
-    gflops_adam = (flops_adam / 1e9) / med_t_adam
-    bw_adam = (bytes_adam / 1e9) / med_t_adam
-
-    kernels.append({
-        "name": "Adam Update (Memory)",
-        "intensity": intensity_adam,
-        "gflops": gflops_adam,
-        "bw_gbs": bw_adam,
-        "time_ms": med_t_adam * 1e3,
-    })
-
-    # 4. ReLU Activation
-    N_relu = 1_000_000
-    x_relu = np.random.randn(N_relu).astype(np.float32)
-    y_relu = np.empty_like(x_relu)
-    flops_relu = 2 * N_relu
-    bytes_relu = 8 * N_relu
-    intensity_relu = flops_relu / bytes_relu
-
-    for _ in range(10):
-        np.maximum(x_relu, 0.0, out=y_relu)
-    times_relu = []
-    for _ in range(50):
-        t0 = time.perf_counter()
-        np.maximum(x_relu, 0.0, out=y_relu)
-        t1 = time.perf_counter()
-        times_relu.append(t1 - t0)
-    med_t_relu = float(np.median(times_relu))
-    gflops_relu = (flops_relu / 1e9) / med_t_relu
-    bw_relu = (bytes_relu / 1e9) / med_t_relu
-
-    kernels.append({
-        "name": "ReLU Activation (Memory)",
-        "intensity": intensity_relu,
-        "gflops": gflops_relu,
-        "bw_gbs": bw_relu,
-        "time_ms": med_t_relu * 1e3,
-    })
-
+    model = MLP()
+    x = dl.placeholder((128, 784), name="x")
+    y = dl.placeholder((128,), dtype="i32", name="y")
+    step = dl.compile(dl.cross_entropy(model(x), y), optim.Adam(model.parameters(), lr=1e-3), target="cpu",
+                      profile=True)
+    rng = np.random.default_rng(0)
+    xb, yb = rng.standard_normal((128, 784)).astype(np.float32), rng.integers(0, 10, 128).astype(np.int32)
+    for _ in range(20):
+        step(x=xb, y=yb)
+    step.executable.clear_profile()
+    for _ in range(steps):
+        step(x=xb, y=yb)
+    kernels = []
+    for p in sorted(step.get_profile(), key=lambda p: -p["seconds"])[:top]:
+        seconds = p["seconds"] / p["calls"]
+        kernels.append({"name": p["name"], "time_ms": 1e3 * seconds, "gflops": p["flops"] / seconds / 1e9,
+                        "bw_gbs": p["bytes"] / seconds / 1e9, "intensity": p["flops"] / max(p["bytes"], 1)})
     return kernels
 
 
@@ -213,7 +120,7 @@ def generate_svg_roofline(
 
     # Title & Subtitle
     svg.append(f'<text x="{width//2}" y="30" fill="#c0caf5" font-family="sans-serif" font-size="18" font-weight="bold" text-anchor="middle">Empirical CPU Roofline Model (MiniDLC)</text>')
-    svg.append(f'<text x="{width//2}" y="48" fill="#7aa2f7" font-family="sans-serif" font-size="12" text-anchor="middle">Empirical Peak: {peak_gflops:.1f} GFLOP/s | STREAM Copy BW: {peak_bw_gbs:.1f} GB/s | Ridge Point: {ridge_point:.2f} FLOP/B</text>')
+    svg.append(f'<text x="{width//2}" y="48" fill="#7aa2f7" font-family="sans-serif" font-size="12" text-anchor="middle">All-core FMA peak: {peak_gflops:.1f} GFLOP/s | STREAM Copy BW: {peak_bw_gbs:.1f} GB/s | Ridge Point: {ridge_point:.2f} FLOP/B</text>')
 
     # Grid lines & ticks
     for exp in range(int(x_min), int(x_max) + 1):
@@ -279,27 +186,26 @@ def main():
     stream_res = run_stream_benchmark(num_elements=10_000_000, trials=5)
     peak_bw = stream_res["copy_bw_gb_s"]
 
-    # For single-threaded kernels, evaluate against single-core peak compute
-    ridge_single = single_peak / peak_bw
+    # The compiled kernels run on every core, so the roof is the all-core FMA peak.
+    ridge = multi_peak / peak_bw
     print(f"\n3. Empirical Baseline:")
-    print(f"   Single-Core Peak Compute: {single_peak:.2f} GFLOP/s")
+    print(f"   All-Core Peak Compute:    {multi_peak:.2f} GFLOP/s")
     print(f"   Peak Memory Bandwidth:    {peak_bw:.2f} GB/s")
-    print(f"   Hardware Ridge Point:     {ridge_single:.2f} FLOP/byte")
+    print(f"   Hardware Ridge Point:     {ridge:.2f} FLOP/byte")
 
-    print("\n4. Running Kernel Microbenchmarks...")
-    engine = LLVMCPUEngine.get()
-    kernels = benchmark_kernels(engine)
+    print("\n4. Profiling the compiled MNIST training step...")
+    kernels = benchmark_kernels()
 
     print("\n=== Kernel Empirical Results ===")
-    print(f"{'Kernel':<28} | {'Intensity':>9} | {'Time':>9} | {'Attained':>10} | {'Bandwidth':>9} | {'% Roofline':>10} | {'Regime'}")
-    print("-" * 100)
+    print(f"{'Kernel':<34} | {'Intensity':>9} | {'Time':>9} | {'Attained':>10} | {'Bandwidth':>9} | {'% Roofline':>10} | {'Regime'}")
+    print("-" * 106)
     for k in kernels:
-        bound = "Compute-bound" if k["intensity"] >= ridge_single else "Memory-bound"
-        attainable = compute_roofline(single_peak, peak_bw, k["intensity"])
+        bound = "Compute-bound" if k["intensity"] >= ridge else "Memory-bound"
+        attainable = compute_roofline(multi_peak, peak_bw, k["intensity"])
         pct = 100.0 * (k["gflops"] / attainable)
-        print(f"{k['name']:<28} | {k['intensity']:7.2f} F/B | {k['time_ms']:6.3f} ms | {k['gflops']:7.2f} GF/s | {k['bw_gbs']:6.2f} GB/s | {pct:8.1f}%   | {bound}")
+        print(f"{k['name'][:34]:<34} | {k['intensity']:7.2f} F/B | {k['time_ms']:6.3f} ms | {k['gflops']:7.2f} GF/s | {k['bw_gbs']:6.2f} GB/s | {pct:8.1f}%   | {bound}")
 
-    generate_svg_roofline(single_peak, peak_bw, kernels, "docs/roofline_cpu.svg")
+    generate_svg_roofline(multi_peak, peak_bw, kernels, "docs/roofline_cpu.svg")
 
 
 if __name__ == "__main__":

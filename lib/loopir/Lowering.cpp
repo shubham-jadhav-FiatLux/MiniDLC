@@ -354,7 +354,8 @@ MatmulShape matmulShape(const Operation& op) {
     return s;
 }
 
-std::vector<LoweredKernel> lowerMatmul(const dlc::Kernel& k, const BufferAssignment& ba, const SlotTracker& names) {
+std::vector<LoweredKernel> lowerMatmul(const dlc::Kernel& k, const BufferAssignment& ba, const SlotTracker& names,
+                                       bool naive = false) {
     KernelBuilder kb(k.name, ba, names);
     kb.declare(k);
     const Operation* mm = nullptr;
@@ -415,16 +416,16 @@ std::vector<LoweredKernel> lowerMatmul(const dlc::Kernel& k, const BufferAssignm
         StmtPtr inner = forLoop(ii, mr, LoopKind::Unrolled, {forLoop(jj, nr, LoopKind::Unrolled, std::move(update))});
         // The outer-product form streams rows of B (contiguous in j); the dot-product form, for a transposed B,
         // vectorizes the reduction over k, where both A and B are contiguous.
-        LoopKind kKind = dotProduct ? LoopKind::Vectorized : LoopKind::Serial;
-        body.push_back(forLoop(kk, s.k, kKind, {inner}, dotProduct ? kVector : 1));
+        LoopKind kKind = dotProduct && !naive ? LoopKind::Vectorized : LoopKind::Serial;
+        body.push_back(forLoop(kk, s.k, kKind, {inner}, kKind == LoopKind::Vectorized ? kVector : 1));
         Body epi;
         epilogue(epi, b, i, j, load(acc, accIdx(), ScalarType::F32));
         body.push_back(forLoop(ii, mr, LoopKind::Unrolled, {forLoop(jj, nr, LoopKind::Unrolled, std::move(epi))}));
         return body;
     };
 
-    const int64_t mrTile = outerProduct || dotProduct ? kMR : 1;
-    const int64_t nrTile = outerProduct ? kNR : (dotProduct ? 4 : 1);
+    const int64_t mrTile = !naive && (outerProduct || dotProduct) ? kMR : 1;
+    const int64_t nrTile = naive ? 1 : (outerProduct ? kNR : (dotProduct ? 4 : 1));
     const int64_t mTiles = ceilDiv(s.m, mrTile);
     const int64_t mFull = s.m / mrTile;
     const int64_t nFull = s.n / nrTile;
@@ -1183,7 +1184,7 @@ std::vector<LoweredKernel> gpuOther(const dlc::Kernel& k, const BufferAssignment
 } // namespace
 
 std::vector<LoweredKernel> lowerFunction(const Function& func, const std::vector<dlc::Kernel>& kernels,
-                                         const BufferAssignment& buffers, Target target) {
+                                         const BufferAssignment& buffers, Target target, const LoweringOptions& options) {
     SlotTracker names(func);
     std::vector<LoweredKernel> out;
     const bool gpu = target == Target::GPU;
@@ -1191,15 +1192,24 @@ std::vector<LoweredKernel> lowerFunction(const Function& func, const std::vector
         std::vector<LoweredKernel> lowered;
         switch (k.kind) {
             case KernelKind::Elementwise: lowered = gpu ? gpuElementwise(k, buffers, names) : lowerElementwise(k, buffers, names); break;
-            case KernelKind::Matmul: lowered = gpu ? gpuMatmul(k, buffers, names) : lowerMatmul(k, buffers, names); break;
+            case KernelKind::Matmul:
+                lowered = gpu ? gpuMatmul(k, buffers, names) : lowerMatmul(k, buffers, names, options.naiveMatmul);
+                break;
             case KernelKind::Reduction: lowered = gpu ? gpuReduction(k, buffers, names) : lowerReduction(k, buffers, names); break;
             case KernelKind::Row: lowered = gpu ? gpuRow(k, buffers, names) : lowerRow(k, buffers, names); break;
             default: lowered = gpu ? gpuOther(k, buffers, names) : lowerOther(k, buffers, names); break;
         }
         for (auto& l : lowered) {
             // Loop passes: guards for data-dependent indices, bounds-check elimination, then the dependence check.
-            l.bounds = checkBounds(l.kernel);
-            verifySchedule(l.kernel);
+            // (With run-time checks everywhere, the clamped indices would hide the access pattern from the
+            // dependence check, so it runs on the schedule as written.)
+            if (options.checkEveryAccess) {
+                verifySchedule(l.kernel);
+                l.bounds = checkEveryAccess(l.kernel);
+            } else {
+                l.bounds = checkBounds(l.kernel);
+                verifySchedule(l.kernel);
+            }
             out.push_back(std::move(l));
         }
     }

@@ -12,7 +12,8 @@ LLVM — for x86-64 CPUs and, via LLVM's NVPTX backend, for NVIDIA GPUs.
 > ORC JIT — into one native training step. MNIST and a character-level Transformer train through the generated code
 > and match the NumPy reference. The GPU path (GPU schedules, NVPTX → PTX, a CUDA driver runtime) is built and checked
 > on a lockstep GPU interpreter and by ptxas, but **has not yet run on a GPU** ([`docs/gpu.md`](docs/gpu.md)). The v2
-> design and the status of each component are in [`docs/architecture.md`](docs/architecture.md).
+> design and the status of each component are in [`docs/architecture.md`](docs/architecture.md); for a tour of one
+> training step through every stage, read [`docs/walkthrough.md`](docs/walkthrough.md).
 
 ## What works today
 
@@ -57,7 +58,7 @@ MiniDLC/
 ├── CMakeLists.txt        # C++ build: libraries, dlc-opt, tests (GoogleTest + lit)
 ├── pyproject.toml        # Python package; pytest configuration
 ├── .github/workflows/    # CI: sanitizer and release builds, unit and lit tests, pytest
-├── docs/                 # architecture (v2 + status), IR spec, pass pages, perf report, course map, devlog
+├── docs/                 # walkthrough, architecture (v2 + status), IR spec, GPU path, perf report, course map, devlog
 ├── include/dlc/, lib/    # C++: ir/, passes/, loopir/, backends/llvm/, runtime/, compiler/ (some v1 files remain, unbuilt)
 ├── tools/dlc-opt/        # opt-style driver: --passes, --dot, --target=cpu|gpu, --emit-{loopir,llvm,llvm-opt,ptx}, reports
 ├── python/bindings/      # the nanobind module _minidlc: compile(ir_text, target, options) -> Executable
@@ -68,7 +69,7 @@ MiniDLC/
 │   ├── lit/              # golden IR tests run by lit with LLVM's FileCheck
 │   └── python/           # gradient checks, contracts, fuzzer, Transformer tests, translation validation of the passes
 ├── examples/             # mnist_mlp.py, char_gpt.py, export_ir.py, gpu_artifacts.py, colab_gpu.py
-└── benchmarks/           # FMA peak, STREAM, rooflines, fusion ablation, Char-GPT held-out evaluation
+└── benchmarks/           # baselines and ablations, rooflines, Char-GPT held-out evaluation vs PyTorch, memory plans
 ```
 
 ## Quickstart
@@ -99,7 +100,8 @@ For a sanitizer build, configure with `-DCMAKE_BUILD_TYPE=Debug -DDLC_SANITIZE=O
 PYTHONPATH=python python3 examples/mnist_mlp.py 2                     # compiled training step (target cpu)
 PYTHONPATH=python python3 examples/mnist_mlp.py 2 --target=reference  # NumPy interpreter
 PYTHONPATH=python python3 examples/char_gpt.py                        # Char-GPT, compiled
-PYTHONPATH=python python3 benchmarks/chargpt_heldout.py               # 2,000 steps + held-out loss
+PYTHONPATH=python python3 benchmarks/chargpt_heldout.py 2000 --targets=cpu,torch  # held-out loss vs PyTorch
+PYTHONPATH=python python3 benchmarks/ablations.py                     # baselines and ablations, repeated timings
 ```
 
 ### Look inside with `dlc-opt`

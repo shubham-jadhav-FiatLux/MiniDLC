@@ -2,7 +2,7 @@
 """Prints the IR text of an example model's loss graph, for dlc-opt:
 
     PYTHONPATH=python python3 examples/export_ir.py mlp | ./build/dlc-opt --passes=shape-infer,canonicalize,cse,dce
-    PYTHONPATH=python python3 examples/export_ir.py chargpt | ./build/dlc-opt --passes=fusion,mem-plan
+    PYTHONPATH=python python3 examples/export_ir.py chargpt | ./build/dlc-opt --passes=fusion,buffer-assign
 
 The function returns (loss, logits). Its parameters are named after the model's attributes, e.g.
 %block_0.attn.q_proj.weight.

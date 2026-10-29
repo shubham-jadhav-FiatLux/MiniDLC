@@ -26,7 +26,8 @@ planned (phase given). The defects are detailed in [`architecture.md`](architect
 | Cache blocking, register tiling | `lib/loopir/Lowering.cpp` | CS6600 Computer Architecture | ✓ 4×16 register tiles; 65–95 GFLOP/s on the MNIST GEMMs |
 | SIMD vectorization (AVX2) | schedules + `lib/backends/llvm/` | CS6600 / CS6400 | ✓ `vectorize(8)` loops and unrolled tiles become `<8 x float>` FMAs |
 | ILP through unrolling | `lib/backends/llvm/Emitter.cpp` | CS6600 | ✓ the emitter expands unrolled loops; 64 independent accumulators per tile |
-| Roofline model | `benchmarks/`, `docs/perf-report.md` | CS6400 / ID5130 | ✓ CPU, measured; GPU ceilings only (P5) |
+| Roofline model | `benchmarks/roofline.py`, `docs/perf-report.md` | CS6400 / ID5130 | ✓ CPU, measured on the compiled step's kernels; GPU ceilings only until the Colab run |
+| Performance methodology (baselines, ablations, repeated timings) | `benchmarks/ablations.py` | CS6600 / ID5130 | ✓ medians and IQR over repeats; fusion, bounds-proof, tiling and thread ablations; PyTorch and OpenBLAS baselines |
 | Thread-pool runtime | `lib/runtime/ThreadPool.cpp`, `Executable.cpp` | ID5130 (work sharing) | ✓ the outermost parallel loop of each kernel is split across threads |
 | Numerical stability (log-sum-exp, NaN semantics) | `python/minidlc/reference.py`, `python/minidlc/llvm_engine.py` | ID5130 (floating point) | ✓ reference interpreter and hand-written CPU kernels |
 | Shared-memory tiling, coalescing, bank conflicts | `lib/loopir/Lowering.cpp` (GPU schedules) | CS6023 GPU Programming | ◐ 64×64 block tiles staged through shared memory (A padded to 65 columns), 4×4 register tiles, column-interleaved threads for coalesced B reads; checked on the lockstep interpreter and by ptxas, not yet timed on a GPU |

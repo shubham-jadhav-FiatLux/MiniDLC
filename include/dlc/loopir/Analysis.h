@@ -52,6 +52,9 @@ struct BoundsReport {
 // the code is memory-safe for any input. Any other access must be proven in bounds (else IRError: a lowering bug).
 // Then every `if` whose condition range analysis proves always true (or false) is replaced by the branch it takes.
 BoundsReport checkBounds(Kernel& kernel);
+// The ablation of the above: every access is checked at run time (loads read 0 and stores are skipped out of
+// bounds), nothing is proven or eliminated.
+BoundsReport checkEveryAccess(Kernel& kernel);
 
 // Dependence check of the schedule (IRError if it fails). Iterations of a Parallel loop must write disjoint elements of
 // every buffer, and read only elements that no other iteration writes; this enumerates the loop's iterations, with

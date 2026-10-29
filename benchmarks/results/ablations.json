@@ -1,0 +1,174 @@
+{
+ "machine": "Linux-6.18.55-1-lts-x86_64-with-glibc2.44",
+ "threads": 8,
+ "load_before": [
+  2.48095703125,
+  27.92236328125,
+  45.166015625
+ ],
+ "mnist": [
+  {
+   "name": "MiniDLC cpu",
+   "median_ms": 1.883609700598754,
+   "iqr_ms": 0.204897350340616,
+   "min_ms": 1.723556048818864,
+   "note": "(all threads)"
+  },
+  {
+   "name": "MiniDLC cpu, 1 thread",
+   "median_ms": 5.290113150840625,
+   "iqr_ms": 0.2934362768428397,
+   "min_ms": 5.1822667475789785,
+   "note": ""
+  },
+  {
+   "name": "MiniDLC cpu, 2 threads",
+   "median_ms": 3.0797299492405728,
+   "iqr_ms": 0.37967972748447193,
+   "min_ms": 2.9061484994599596,
+   "note": ""
+  },
+  {
+   "name": "MiniDLC cpu, 4 threads",
+   "median_ms": 2.604808349860832,
+   "iqr_ms": 0.05524730077013365,
+   "min_ms": 2.4468942981911823,
+   "note": ""
+  },
+  {
+   "name": "ablation: no fusion (a kernel per op)",
+   "median_ms": 2.9453516501234844,
+   "iqr_ms": 0.9584643004927786,
+   "min_ms": 2.6301656500436366,
+   "note": ""
+  },
+  {
+   "name": "ablation: run-time checks on every access",
+   "median_ms": 3.961156448349356,
+   "iqr_ms": 0.5324299272615463,
+   "min_ms": 3.525043500121683,
+   "note": ""
+  },
+  {
+   "name": "ablation: untiled matmuls",
+   "median_ms": 42.360571850440465,
+   "iqr_ms": 2.370883247931492,
+   "min_ms": 37.488186452537775,
+   "note": ""
+  },
+  {
+   "name": "ablation: untiled matmuls, 1 thread",
+   "median_ms": 148.0805993982358,
+   "iqr_ms": 1.3553122495068015,
+   "min_ms": 146.44138764997479,
+   "note": ""
+  },
+  {
+   "name": "PyTorch CPU, 1 thread",
+   "median_ms": 4.106285498710349,
+   "iqr_ms": 0.2804554998874671,
+   "min_ms": 4.030066248378716,
+   "note": ""
+  },
+  {
+   "name": "PyTorch CPU, 4 threads",
+   "median_ms": 2.227816899539903,
+   "iqr_ms": 0.15274297475116302,
+   "min_ms": 2.1555382991209626,
+   "note": ""
+  },
+  {
+   "name": "NumPy reference interpreter (scipy-openblas)",
+   "median_ms": 6.119026197120547,
+   "iqr_ms": 1.5195379033684735,
+   "min_ms": 5.821317201480269,
+   "note": ""
+  },
+  {
+   "name": "v1 hand-written AVX2 kernels",
+   "median_ms": 64.78650160133839,
+   "iqr_ms": 2.4456451006699407,
+   "min_ms": 62.78554400196298,
+   "note": ""
+  }
+ ],
+ "gemm": [
+  {
+   "name": "MiniDLC untiled, 1 thread",
+   "median_ms": 95.26550202048384,
+   "iqr_ms": 8.517468310019483,
+   "min_ms": 87.68339216010645,
+   "note": "   0.5 GFLOP/s"
+  },
+  {
+   "name": "MiniDLC untiled, all threads",
+   "median_ms": 27.737926499685273,
+   "iqr_ms": 1.22036204498727,
+   "min_ms": 24.89747911982704,
+   "note": "   1.9 GFLOP/s"
+  },
+  {
+   "name": "MiniDLC 4x16 register tiles, 1 thread",
+   "median_ms": 2.5396342598833144,
+   "iqr_ms": 0.07240756996907283,
+   "min_ms": 2.4722530698636547,
+   "note": "  20.2 GFLOP/s"
+  },
+  {
+   "name": "MiniDLC 4x16 register tiles, all threads",
+   "median_ms": 0.9155579900834709,
+   "iqr_ms": 0.055259900109376786,
+   "min_ms": 0.8385429298505187,
+   "note": "  56.1 GFLOP/s"
+  },
+  {
+   "name": "NumPy (OpenBLAS), all threads",
+   "median_ms": 0.5022523400839418,
+   "iqr_ms": 0.05485988018335772,
+   "min_ms": 0.46373643970582634,
+   "note": " 102.3 GFLOP/s"
+  },
+  {
+   "name": "PyTorch, 1 thread",
+   "median_ms": 1.2546323298010975,
+   "iqr_ms": 0.053530195145867765,
+   "min_ms": 1.1866987199755386,
+   "note": "  41.0 GFLOP/s"
+  },
+  {
+   "name": "PyTorch, 4 threads",
+   "median_ms": 0.43555078038480133,
+   "iqr_ms": 0.017822714871726937,
+   "min_ms": 0.40453861001878977,
+   "note": " 118.0 GFLOP/s"
+  }
+ ],
+ "chargpt": [
+  {
+   "name": "MiniDLC cpu",
+   "median_ms": 11.059912701603025,
+   "iqr_ms": 0.23661099985474754,
+   "min_ms": 10.848924150923267,
+   "note": "(171 kernels)"
+  },
+  {
+   "name": "PyTorch CPU, 1 thread",
+   "median_ms": 22.593250451609492,
+   "iqr_ms": 0.08061132393777024,
+   "min_ms": 22.49067439988721,
+   "note": ""
+  },
+  {
+   "name": "PyTorch CPU, 4 threads",
+   "median_ms": 14.307225550874136,
+   "iqr_ms": 0.10140757512999525,
+   "min_ms": 14.075387650518678,
+   "note": ""
+  }
+ ],
+ "load_after": [
+  2.7939453125,
+  18.01220703125,
+  38.845703125
+ ]
+}

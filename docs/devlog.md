@@ -346,3 +346,20 @@ pass, and re-measurement — found that v1 was not the integrated compiler the e
 - **GPU artifacts** for Char-GPT (d_model 128, 4 heads, 4 layers, context 64): a 316-kernel training step and a
   67-kernel evaluation function; evaluation artifacts carry no weights. The GPU run waits for Colab.
 
+## P7 — Measurements and write-up (2026-10-29)
+
+- **Ablation switches** in the compiler, reachable from `dl.compile(..., options=...)`: `fuse=False` (a kernel per
+  op), `check_all=True` (a run-time check on every access instead of range-analysis proofs; the dependence check runs
+  first, since clamped indices hide access patterns), `matmul_schedule="naive"` (a scalar dot product per output).
+- **The no-fusion ablation found a checker bug:** once an update is placed in its parameter's buffer, a later kernel
+  that reads the *updated* value looked, through the alias chain, like a read of the overwritten parameter. The
+  decision code was right; `BufferAssignment::verify` now follows the chain and stops at in-place updates. A unit test
+  covers it.
+- **`benchmarks/ablations.py`**: 7 repeats × 20 steps, median and IQR, load average recorded. MNIST step 1.88 ms
+  (PyTorch CPU 2.23, NumPy interpreter 6.12, v1 kernels 64.8); no fusion 1.6× slower, run-time checks 2.1×, untiled
+  matmuls 22×; 2.8× from 1 to 8 threads; the first-layer GEMM at 56 GFLOP/s against 102–118 for OpenBLAS and PyTorch;
+  Char-GPT step 11.1 ms vs 14.3 ms for PyTorch.
+- **Roofline** now places the compiled step's kernels, timed by the runtime and sized by the cost model.
+- **Docs:** `docs/walkthrough.md` follows one training step through every stage with real output; the perf report is
+  rewritten around these measurements.
+

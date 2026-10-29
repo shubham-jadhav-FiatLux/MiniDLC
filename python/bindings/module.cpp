@@ -72,6 +72,13 @@ dlc::compiler::CompileOptions parseOptions(const std::string& target, nb::dict o
     dlc::compiler::CompileOptions opts;
     opts.target = target;
     if (options.contains("threads")) opts.threads = nb::cast<size_t>(options["threads"]);
+    if (options.contains("fuse")) opts.fuse = nb::cast<bool>(options["fuse"]);
+    if (options.contains("check_all")) opts.lowering.checkEveryAccess = nb::cast<bool>(options["check_all"]);
+    if (options.contains("matmul_schedule")) {
+        std::string schedule = nb::cast<std::string>(options["matmul_schedule"]);
+        if (schedule != "tiled" && schedule != "naive") throw nb::value_error("matmul_schedule must be 'tiled' or 'naive'");
+        opts.lowering.naiveMatmul = schedule == "naive";
+    }
     if (options.contains("optimizer") && !options["optimizer"].is_none()) {
         dlc::OptimizerConfig config;
         std::string kind = nb::cast<std::string>(options["optimizer"]);
@@ -177,7 +184,8 @@ NB_MODULE(_minidlc, m) {
         },
         nb::arg("ir"), nb::arg("target") = "cpu", nb::arg("options") = nb::dict(),
         "Compiles the first function of `ir` for `target` ('cpu', 'interp' or 'gpu-sim'). Options: optimizer ('adam' or 'sgd'), "
-        "lr, momentum, beta1, beta2, eps, threads. Returns (Executable, dumps).");
+        "lr, momentum, beta1, beta2, eps, threads; ablations: fuse (bool), check_all (bool), matmul_schedule "
+        "('tiled' or 'naive'). Returns (Executable, dumps).");
 
     using dlc::compiler::GpuArtifact;
     nb::class_<GpuArtifact>(m, "GpuArtifact")

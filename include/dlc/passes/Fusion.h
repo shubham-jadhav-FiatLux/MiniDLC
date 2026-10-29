@@ -37,8 +37,9 @@ struct Kernel {
 // inlined; constants read from memory get a Fill kernel. Reshapes need no kernel: they alias their operand.
 class FusionPass : public Pass {
 public:
-    // With `annotate`, each member records fusion.group / fusion.kernel attributes for IR dumps.
-    explicit FusionPass(bool annotate = true) : annotate_(annotate) {}
+    // With `annotate`, each member records fusion.group / fusion.kernel attributes for IR dumps. With fuse = false,
+    // every op gets its own kernel (an ablation; splat constants are still inlined).
+    explicit FusionPass(bool annotate = true, bool fuse = true) : annotate_(annotate), fuse_(fuse) {}
 
     std::string getName() const override { return "fusion"; }
     bool runOnFunction(Function& func) override;
@@ -50,6 +51,7 @@ public:
 
 private:
     bool annotate_{true};
+    bool fuse_{true};
     std::vector<Kernel> kernels_;
     std::unordered_map<const Value*, size_t> kernelOfValue_;
 };

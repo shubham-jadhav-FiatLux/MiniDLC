@@ -23,7 +23,14 @@ struct LoweredKernel {
 
 // Lowers the fused kernels of `func` (in schedule order) into loop kernels with the target's schedules. A fused kernel
 // may become several loop kernels (e.g. a reduction over leading axes: an initialization, then an accumulation).
+// Switches for ablations; the defaults are the compiler's normal behaviour.
+struct LoweringOptions {
+    bool checkEveryAccess{false}; // run-time checks on every access instead of proofs (checkEveryAccess)
+    bool naiveMatmul{false};      // CPU: one scalar dot product per output instead of register tiles
+};
+
 std::vector<LoweredKernel> lowerFunction(const Function& func, const std::vector<dlc::Kernel>& kernels,
-                                         const BufferAssignment& buffers, Target target);
+                                         const BufferAssignment& buffers, Target target,
+                                         const LoweringOptions& options = {});
 
 } // namespace dlc::loopir

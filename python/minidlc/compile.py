@@ -27,6 +27,7 @@ def compile(
     target: str = "reference",
     profile: bool = False,
     threads: int = 0,
+    options: Optional[Dict[str, Any]] = None,
 ) -> Callable[..., Any]:
     """Compiles the graph that computes `loss` (or any outputs) for `target`.
 
@@ -44,9 +45,12 @@ def compile(
     - "reference": the NumPy interpreter, with its own reverse-mode autodiff and the eager optimizer — the oracle.
     - "handwritten": the hand-written AVX2 LLVM IR kernels for a fixed two-layer ReLU MLP (a benchmark baseline;
       other models get wrong results).
+
+    `options` passes compiler switches for ablations: {"fuse": False} (a kernel per op), {"check_all": True} (run-time
+    bounds checks on every access instead of proofs), {"matmul_schedule": "naive"} (untiled CPU matmuls).
     """
     if target in ("cpu", "interp", "gpu-sim", "cuda"):
-        return CompiledFunction(loss, optimizer, target, profile=profile, threads=threads)
+        return CompiledFunction(loss, optimizer, target, profile=profile, threads=threads, options=options)
     if target == "reference":
         interp = ReferenceInterpreter(dtype=np.float32)
 
@@ -393,10 +397,11 @@ class CompiledFunction:
     copies them back into the `nn.Parameter`s, e.g. before evaluating or sampling with another function.
     """
 
-    def __init__(self, outputs, optimizer: Optional[Optimizer], target: str, profile: bool = False, threads: int = 0):
+    def __init__(self, outputs, optimizer: Optional[Optimizer], target: str, profile: bool = False, threads: int = 0,
+                 options: Optional[Dict[str, Any]] = None):
         _minidlc = _compiler_module(target)
         self.function, self.training, self._params, self._inputs = _export(outputs, optimizer)
-        options = {**_optimizer_options(optimizer), "threads": threads}
+        options = {**_optimizer_options(optimizer), "threads": threads, **(options or {})}
         if target == "cuda":
             from . import gpu
             artifact, self.dumps = _gpu_artifact(_minidlc, self.function, options, self._inputs, self.training)

@@ -187,9 +187,21 @@ void BufferAssignment::verify() const {
         if (!writesInPlaceSafely(k, arg)) {
             throw IRError("buffer assignment: " + k.name + " cannot update %" + names.name(arg) + " in place");
         }
+        // A read of the old value: the input's alias chain reaches `arg` without passing through an in-place update
+        // of it (reading the updated value, which lives in arg's buffer, after the writer is the point).
+        auto readsOld = [&](const Value* v) {
+            while (v != arg) {
+                auto updated = inPlace_.find(v);
+                if (updated != inPlace_.end() && updated->second == arg) return false;
+                auto next = aliasOf_.find(v);
+                if (next == aliasOf_.end()) return false;
+                v = next->second;
+            }
+            return true;
+        };
         for (size_t kk = 0; kk < kernels_.size(); ++kk) {
             for (const Value* in : kernels_[kk].inputs) {
-                if (root(in) == arg && static_cast<int64_t>(kk) > writer) {
+                if (readsOld(in) && static_cast<int64_t>(kk) > writer) {
                     throw IRError("buffer assignment: %" + names.name(arg) + " is read by " + kernels_[kk].name +
                                   " after " + k.name + " overwrote it");
                 }

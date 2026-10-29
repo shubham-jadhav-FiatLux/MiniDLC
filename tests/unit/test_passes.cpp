@@ -747,6 +747,23 @@ func @f(%w: f32[4] {param}, %x: f32[4]) -> (f32[4] {donates = %w}, f32[]) {
     EXPECT_EQ(a.finalCopies()[0].from, update);
 }
 
+// The sum reads the update after it is written into %w's buffer: that is the new value, so the update stays in place
+// (the checker once mistook it for a read of the overwritten %w; unfused Adam steps hit it).
+TEST(BufferAssignment, LaterReadersOfTheUpdatedValueKeepItInPlace) {
+    auto mod = IRParser::parseModule(R"(
+func @f(%w: f32[4] {param}, %x: f32[4]) -> (f32[4] {donates = %w}, f32[]) {
+  %0 = add(%w, %x) : f32[4]
+  %1 = sum(%0) : f32[] {axes = [0]}
+  return %0, %1
+}
+)");
+    auto& func = *mod->getFunctions()[0];
+    std::vector<Kernel> kernels;
+    BufferAssignment a = assign(func, kernels);
+    EXPECT_TRUE(a.updatesInPlace(func.getEntryBlock()->getOperations()[0]->getResult(0).get()));
+    EXPECT_NO_THROW(a.verify());
+}
+
 TEST(BufferAssignment, ReshapesAliasTheirOperand) {
     auto mod = IRParser::parseModule(R"(
 func @f(%x: f32[4,6]) -> f32[6] {

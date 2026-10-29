@@ -201,7 +201,7 @@ std::string rangesOf(const ExprPtr& e, const RangeEnv& env) {
 
 class BoundsChecker {
 public:
-    BoundsChecker(Kernel& k, BoundsReport& report) : k_(k), report_(report) {}
+    BoundsChecker(Kernel& k, BoundsReport& report, bool all = false) : k_(k), report_(report), all_(all) {}
 
     void run() { body(k_.body); }
 
@@ -218,9 +218,9 @@ private:
             ++report_.accesses;
             int64_t n = k_.buffers[e->buffer].elements();
             Interval r = rangeOf(args[0], env_);
-            if (r.within(0, n - 1)) {
+            if (r.within(0, n - 1) && !all_) {
                 ++report_.proven;
-            } else if (dependsOnData(args[0], dataLocals_)) {
+            } else if (all_ || dependsOnData(args[0], dataLocals_)) {
                 ++report_.guarded;
                 ExprPtr clamped = binary(BinaryOp::Max, binary(BinaryOp::Min, args[0], intConst(n - 1)), intConst(0));
                 return inBounds(args[0], n, load(e->buffer, clamped, e->type), zeroOf(e->type));
@@ -261,9 +261,9 @@ private:
                     ++report_.accesses;
                     int64_t n = k_.buffers[s->buffer].elements();
                     Interval r = rangeOf(s->index, env_);
-                    if (r.within(0, n - 1)) {
+                    if (r.within(0, n - 1) && !all_) {
                         ++report_.proven;
-                    } else if (dependsOnData(s->index, dataLocals_)) {
+                    } else if (all_ || dependsOnData(s->index, dataLocals_)) {
                         ++report_.guarded;
                         StmtPtr guarded = ifThen(compare(CompareOp::GE, s->index, intConst(0)),
                                                  {ifThen(compare(CompareOp::LT, s->index, intConst(n)), {s})});
@@ -292,6 +292,7 @@ private:
 
     Kernel& k_;
     BoundsReport& report_;
+    bool all_{false};
     RangeEnv env_;
     std::unordered_set<std::string> dataLocals_;
 };
@@ -537,6 +538,12 @@ BoundsReport checkBounds(Kernel& kernel) {
     BoundsChecker(kernel, report).run();
     RangeEnv env;
     report.eliminated = eliminate(kernel.body, env);
+    return report;
+}
+
+BoundsReport checkEveryAccess(Kernel& kernel) {
+    BoundsReport report;
+    BoundsChecker(kernel, report, true).run();
     return report;
 }
 
