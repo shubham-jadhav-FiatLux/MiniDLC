@@ -3,7 +3,9 @@
 #include <llvm/Analysis/CGSCCPassManager.h>
 #include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/InlineAsm.h>
 #include <llvm/IR/Intrinsics.h>
+#include <llvm/IR/IntrinsicsNVPTX.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/PassManager.h>
@@ -31,6 +33,48 @@ class KernelEmitter {
 public:
     KernelEmitter(const Kernel& kernel, llvm::Module& module)
         : k_(kernel), module_(module), ctx_(module.getContext()), b_(ctx_) {}
+
+    // A GPU kernel: `ptx_kernel void @name(ptr addrspace(1) noalias ...)`, one parameter per global buffer. Bound
+    // loops become the thread and block indices, shared buffers module globals in addrspace(3), register buffers
+    // allocas (scalars once their indices are constants), barriers bar.sync, shuffles shfl.sync.
+    void emitGpu() {
+        gpu_ = true;
+        llvm::Type* global = llvm::PointerType::get(ctx_, 1);
+        std::vector<int> globals = k_.globalBuffers();
+        std::vector<llvm::Type*> params(globals.size(), global);
+        auto* type = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_), params, false);
+        auto* fn = llvm::Function::Create(type, llvm::Function::ExternalLinkage, k_.name, module_);
+        fn->setCallingConv(llvm::CallingConv::PTX_Kernel);
+        fn->addFnAttr(llvm::Attribute::NoUnwind);
+        for (size_t i = 0; i < globals.size(); ++i) {
+            fn->addParamAttr(static_cast<unsigned>(i), llvm::Attribute::NoAlias);
+            fn->getArg(static_cast<unsigned>(i))->setName(k_.buffers[globals[i]].name.substr(1));
+        }
+        func_ = fn;
+        auto* entry = llvm::BasicBlock::Create(ctx_, "entry", fn);
+        allocaBlock_ = entry;
+        b_.SetInsertPoint(entry);
+        buffers_.assign(k_.buffers.size(), nullptr);
+        for (size_t i = 0; i < globals.size(); ++i) buffers_[globals[i]] = fn->getArg(static_cast<unsigned>(i));
+        for (size_t i = 0; i < k_.buffers.size(); ++i) {
+            const BufferDecl& d = k_.buffers[i];
+            if (d.scope == MemScope::Global) continue;
+            auto* arrayType = llvm::ArrayType::get(elemType(d.type), d.elements());
+            if (d.scope == MemScope::Shared) {
+                auto* g = new llvm::GlobalVariable(module_, arrayType, false, llvm::GlobalValue::InternalLinkage,
+                                                   llvm::UndefValue::get(arrayType), k_.name + "." + d.name, nullptr,
+                                                   llvm::GlobalValue::NotThreadLocal, 3);
+                g->setAlignment(llvm::Align(16));
+                buffers_[i] = g;
+            } else {
+                buffers_[i] = b_.CreateAlloca(arrayType, nullptr, d.name);
+            }
+        }
+        scopes_.emplace_back();
+        emitBody(k_.body);
+        scopes_.pop_back();
+        b_.CreateRetVoid();
+    }
 
     void emit() {
         llvm::Type* ptr = llvm::PointerType::getUnqual(ctx_);
@@ -123,6 +167,19 @@ private:
     }
 
     void loop(const Stmt& s, bool topLevelParallel = false) {
+        if (s.loop == LoopKind::Bound) {
+            if (!gpu_) throw IRError("LLVM emitter: bound loops need the GPU target");
+            static const llvm::Intrinsic::ID ids[] = {
+                llvm::Intrinsic::nvvm_read_ptx_sreg_ctaid_x, llvm::Intrinsic::nvvm_read_ptx_sreg_ctaid_y,
+                llvm::Intrinsic::nvvm_read_ptx_sreg_ctaid_z, llvm::Intrinsic::nvvm_read_ptx_sreg_tid_x,
+                llvm::Intrinsic::nvvm_read_ptx_sreg_tid_y,   llvm::Intrinsic::nvvm_read_ptx_sreg_tid_z};
+            llvm::Value* index = b_.CreateZExt(b_.CreateIntrinsic(ids[static_cast<int>(s.axis)], llvm::ArrayRef<llvm::Type*>{}, llvm::ArrayRef<llvm::Value*>{}), b_.getInt64Ty(), s.var);
+            scopes_.emplace_back();
+            scopes_.back()[s.var] = {nullptr, index, b_.getInt64Ty()};
+            emitBody(s.body);
+            scopes_.pop_back();
+            return;
+        }
         if (s.loop == LoopKind::Unrolled) {
             for (int64_t i = 0; i < s.extent; ++i) {
                 scopes_.emplace_back();
@@ -213,6 +270,15 @@ private:
                 b_.CreateAlignedStore(expr(*s.value), address(s.buffer, expr(*s.index)), llvm::MaybeAlign(4));
                 break;
             case StmtKind::AtomicAdd:
+                if (gpu_ && k_.buffers[s.buffer].type == ScalarType::F32 && k_.buffers[s.buffer].scope == MemScope::Global) {
+                    // LLVM's NVPTX backend expands `atomicrmw fadd` into a compare-and-swap loop; red.global.add.f32
+                    // is the single instruction CUDA's atomicAdd becomes when its result is unused (it flushes
+                    // subnormals to zero).
+                    auto* type = llvm::FunctionType::get(b_.getVoidTy(), {b_.getInt64Ty(), b_.getFloatTy()}, false);
+                    auto* red = llvm::InlineAsm::get(type, "red.global.add.f32 [$0], $1;", "l,f,~{memory}", true);
+                    b_.CreateCall(red, {b_.CreatePtrToInt(address(s.buffer, expr(*s.index)), b_.getInt64Ty()), expr(*s.value)});
+                    break;
+                }
                 b_.CreateAtomicRMW(llvm::AtomicRMWInst::FAdd, address(s.buffer, expr(*s.index)), expr(*s.value),
                                    llvm::MaybeAlign(4), llvm::AtomicOrdering::Monotonic);
                 break;
@@ -231,7 +297,28 @@ private:
                 b_.SetInsertPoint(merge);
                 break;
             }
-            case StmtKind::Barrier: break; // one CPU thread runs a whole iteration space
+            case StmtKind::Barrier: // on the CPU one thread runs a whole iteration space
+                if (gpu_) b_.CreateIntrinsic(llvm::Intrinsic::nvvm_barrier_cta_sync_aligned_all, {}, {b_.getInt32(0)});
+                break;
+        }
+    }
+
+    // NVPTX has no libm: exp and log go through the ex2/lg2 approximations (as CUDA's __expf and __logf do), tanh
+    // through exp(-2|x|).
+    llvm::Value* gpuUnary(UnaryOp op, llvm::Value* a) {
+        llvm::Type* f32 = b_.getFloatTy();
+        auto c = [&](double v) { return llvm::ConstantFP::get(f32, v); };
+        auto ex2 = [&](llvm::Value* x) { return b_.CreateIntrinsic(llvm::Intrinsic::nvvm_ex2_approx, {f32}, {x}); };
+        switch (op) {
+            case UnaryOp::Exp: return ex2(b_.CreateFMul(a, c(1.4426950408889634)));
+            case UnaryOp::Log:
+                return b_.CreateFMul(b_.CreateIntrinsic(llvm::Intrinsic::nvvm_lg2_approx_f, {}, {a}), c(0.6931471805599453));
+            case UnaryOp::Tanh: {
+                llvm::Value* e = ex2(b_.CreateFMul(intrinsic(llvm::Intrinsic::fabs, {a}), c(-2.8853900817779268)));
+                llvm::Value* t = b_.CreateFDiv(b_.CreateFSub(c(1.0), e), b_.CreateFAdd(c(1.0), e));
+                return intrinsic(llvm::Intrinsic::copysign, {t, a});
+            }
+            default: return nullptr;
         }
     }
 
@@ -254,6 +341,9 @@ private:
             case ExprKind::Binary: return binary(e);
             case ExprKind::Unary: {
                 llvm::Value* a = expr(*e.args[0]);
+                if (gpu_ && e.type == ScalarType::F32) {
+                    if (llvm::Value* v = gpuUnary(e.unary, a)) return v;
+                }
                 switch (e.unary) {
                     case UnaryOp::Neg: return e.type == ScalarType::F32 ? b_.CreateFNeg(a) : b_.CreateNeg(a);
                     case UnaryOp::Exp: return intrinsic(llvm::Intrinsic::exp, {a});
@@ -298,7 +388,12 @@ private:
                 if (from == ScalarType::Bool) return b_.CreateZExt(a, to);
                 return b_.CreateSExtOrTrunc(a, to);
             }
-            case ExprKind::Shuffle: throw IRError("LLVM emitter: warp shuffles are GPU-only");
+            case ExprKind::Shuffle: {
+                if (!gpu_) throw IRError("LLVM emitter: warp shuffles are GPU-only");
+                auto id = e.butterfly ? llvm::Intrinsic::nvvm_shfl_sync_bfly_f32 : llvm::Intrinsic::nvvm_shfl_sync_down_f32;
+                llvm::Value* lane = b_.CreateTrunc(expr(*e.args[1]), b_.getInt32Ty());
+                return b_.CreateIntrinsic(id, {}, {b_.getInt32(-1), expr(*e.args[0]), lane, b_.getInt32(31)});
+            }
         }
         throw IRError("LLVM emitter: unknown expression");
     }
@@ -347,6 +442,7 @@ private:
     llvm::Value* end_{nullptr};
     std::vector<std::unordered_map<std::string, Binding>> scopes_;
     int vectorDepth_{0};
+    bool gpu_{false};
 };
 
 } // namespace
@@ -354,6 +450,21 @@ private:
 std::unique_ptr<llvm::Module> emitCpuModule(const std::vector<Kernel>& kernels, llvm::LLVMContext& context) {
     auto module = std::make_unique<llvm::Module>("dlc_cpu", context);
     for (const Kernel& k : kernels) KernelEmitter(k, *module).emit();
+    std::string errors;
+    llvm::raw_string_ostream os(errors);
+    if (llvm::verifyModule(*module, &os)) throw IRError("LLVM emitter produced invalid IR:\n" + errors);
+    return module;
+}
+
+std::unique_ptr<llvm::Module> emitGpuModule(const std::vector<Kernel>& kernels, llvm::LLVMContext& context,
+                                            llvm::TargetMachine& machine) {
+    auto module = std::make_unique<llvm::Module>("dlc_gpu", context);
+    module->setDataLayout(machine.createDataLayout());
+    module->setTargetTriple(machine.getTargetTriple());
+    for (const Kernel& k : kernels) {
+        if (!k.gpu) throw IRError("LLVM emitter: kernel " + k.name + " has no GPU schedule");
+        KernelEmitter(k, *module).emitGpu();
+    }
     std::string errors;
     llvm::raw_string_ostream os(errors);
     if (llvm::verifyModule(*module, &os)) throw IRError("LLVM emitter produced invalid IR:\n" + errors);

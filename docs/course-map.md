@@ -29,10 +29,11 @@ planned (phase given). The defects are detailed in [`architecture.md`](architect
 | Roofline model | `benchmarks/`, `docs/perf-report.md` | CS6400 / ID5130 | ✓ CPU, measured; GPU ceilings only (P5) |
 | Thread-pool runtime | `lib/runtime/ThreadPool.cpp`, `Executable.cpp` | ID5130 (work sharing) | ✓ the outermost parallel loop of each kernel is split across threads |
 | Numerical stability (log-sum-exp, NaN semantics) | `python/minidlc/reference.py`, `python/minidlc/llvm_engine.py` | ID5130 (floating point) | ✓ reference interpreter and hand-written CPU kernels |
-| Shared-memory tiling, coalescing, bank conflicts | GPU schedules (P5) | CS6023 GPU Programming | ○ P5 (the v1 CUDA text templates left the build in P3) |
-| Warp-shuffle reductions | GPU schedules (P5) | CS6023 (warp primitives) | ○ P5 |
-| Atomic scatter (`atomicAdd`) | GPU schedules (P5) | CS6023 (atomics) | ○ P5 |
-| PTX via LLVM NVPTX; CUDA driver API | — | CS6023 + LLVM | ○ P5 |
+| Shared-memory tiling, coalescing, bank conflicts | `lib/loopir/Lowering.cpp` (GPU schedules) | CS6023 GPU Programming | ◐ 64×64 block tiles staged through shared memory (A padded to 65 columns), 4×4 register tiles, column-interleaved threads for coalesced B reads; checked on the lockstep interpreter and by ptxas, not yet timed on a GPU |
+| Warp-shuffle reductions | GPU schedules | CS6023 (warp primitives) | ◐ warp per row, five `shfl.sync.bfly` steps; the interpreter rejects shuffles of inactive lanes |
+| Barrier semantics | `lib/loopir/Interpreter.cpp` | CS6023 (synchronization) | ✓ the lockstep interpreter rejects divergent barriers; shared memory starts as NaN, so a missing barrier shows |
+| Atomic scatter (`atomicAdd`) | GPU schedules | CS6023 (atomics) | ◐ `red.global.add.f32` for scatter_add and the loss |
+| PTX via LLVM NVPTX; CUDA driver API | `lib/backends/llvm/Ptx.cpp`, `python/minidlc/gpu.py` | CS6023 + LLVM | ◐ PTX for sm_75 accepted by ptxas (no spills); the driver runtime runs on the simulated device; a GPU run is pending (docs/gpu.md) |
 
 ## By course
 
@@ -56,11 +57,15 @@ planned (phase given). The defects are detailed in [`architecture.md`](architect
   splits GPU tiles into unguarded interior and guarded boundary blocks (P4–P5).
 
 ### CS6023 GPU Programming
-- The v1 CUDA emitter produces text for shared-memory tiled GEMMs, warp-shuffle reductions and an `atomicAdd` scatter,
-  but none of it has been compiled or run, and the softmax template combines only warp 0's partial results.
-- v2 generates GPU code from the loop IR through LLVM's NVPTX backend: thread-bound loops, shared-memory staging with
-  padding against bank conflicts, warp shuffles plus a shared-memory combine across warps, and atomics, validated on a
-  T4 with `compute-sanitizer` (P5).
+- The v1 CUDA emitter produced text for shared-memory tiled GEMMs, warp-shuffle reductions and an `atomicAdd` scatter
+  that was never compiled or run (its softmax combined only warp 0's partial results).
+- v2 generates GPU code from the loop IR through LLVM's NVPTX backend: loops bound to blocks and threads, shared-memory
+  staging with padding against bank conflicts, warp-per-row kernels with butterfly shuffles (so every lane holds the
+  result and no cross-warp combine is needed), and atomics. A lockstep interpreter executes the same loop IR with
+  SIMT semantics — branches split the active set, barriers must be reached by the whole block, shuffles must read
+  active lanes, shared memory starts as NaN — and every op and both training models are checked on it against the
+  reference. ptxas accepts the PTX with no spills. The run on a T4 (and `compute-sanitizer`) is pending: see
+  `docs/gpu.md`.
 
 ### CS6600 / CS6400 Computer Architecture
 - The MNIST kernels are hand-written AVX2 LLVM IR: `<8 x float>` loads, `llvm.fmuladd`, and `llvm.maximum` for a

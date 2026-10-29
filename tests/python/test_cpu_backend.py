@@ -18,7 +18,7 @@ _minidlc = pytest.importorskip("minidlc._minidlc", reason="the _minidlc module i
 if not dlcopt.available():
     pytest.skip(f"dlc-opt not found at {dlcopt.DLC_OPT}", allow_module_level=True)
 
-TARGETS = ["cpu", "interp"]
+TARGETS = ["cpu", "interp", "gpu-sim"]
 
 
 def compiled(text: str, feeds: dict, target: str, options: dict = None):

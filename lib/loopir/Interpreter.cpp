@@ -1,5 +1,8 @@
 #include "dlc/loopir/Interpreter.h"
 #include "dlc/ir/Error.h"
+#include <algorithm>
+#include <array>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -23,6 +26,107 @@ float maxNaN(float a, float b) {
     if (a == 0.0f && b == 0.0f) return std::signbit(a) ? b : a; // max(-0, +0) = +0
     return a > b ? a : b;
 }
+
+template <class Ctx> Scalar evaluate(const Expr& e, Ctx& ctx);
+
+template <class Ctx> Scalar evalBinary(const Expr& e, Ctx& ctx);
+
+// Evaluates `e`; the context supplies variables, loads and shuffles.
+template <class Ctx> Scalar evaluate(const Expr& e, Ctx& ctx) {
+    switch (e.kind) {
+        case ExprKind::Int: return makeI(ScalarType::I64, e.intValue);
+        case ExprKind::Float: return makeF(static_cast<float>(e.floatValue));
+        case ExprKind::Var: return ctx.variable(e);
+        case ExprKind::Load: return ctx.read(e.buffer, evaluate(*e.args[0], ctx).i);
+        case ExprKind::Binary: return evalBinary(e, ctx);
+        case ExprKind::Unary: {
+            Scalar a = evaluate(*e.args[0], ctx);
+            if (a.type != ScalarType::F32) {
+                if (e.unary == UnaryOp::Neg) return makeI(a.type, -a.i);
+                throw IRError("interpreter: integer " + std::to_string(static_cast<int>(e.unary)));
+            }
+            switch (e.unary) {
+                case UnaryOp::Neg: return makeF(-a.f);
+                case UnaryOp::Exp: return makeF(std::exp(a.f));
+                case UnaryOp::Log: return makeF(std::log(a.f));
+                case UnaryOp::Tanh: return makeF(std::tanh(a.f));
+                case UnaryOp::Sqrt: return makeF(std::sqrt(a.f));
+                case UnaryOp::Rsqrt: return makeF(1.0f / std::sqrt(a.f));
+            }
+            break;
+        }
+        case ExprKind::Select: return evaluate(*e.args[0], ctx).i ? evaluate(*e.args[1], ctx) : evaluate(*e.args[2], ctx);
+        case ExprKind::Compare: {
+            Scalar a = evaluate(*e.args[0], ctx);
+            Scalar b = evaluate(*e.args[1], ctx);
+            bool r = false;
+            if (a.type == ScalarType::F32) {
+                switch (e.compare) {
+                    case CompareOp::LT: r = a.f < b.f; break;
+                    case CompareOp::LE: r = a.f <= b.f; break;
+                    case CompareOp::GT: r = a.f > b.f; break;
+                    case CompareOp::GE: r = a.f >= b.f; break;
+                    case CompareOp::EQ: r = a.f == b.f; break;
+                    case CompareOp::NE: r = a.f != b.f; break;
+                }
+            } else {
+                switch (e.compare) {
+                    case CompareOp::LT: r = a.i < b.i; break;
+                    case CompareOp::LE: r = a.i <= b.i; break;
+                    case CompareOp::GT: r = a.i > b.i; break;
+                    case CompareOp::GE: r = a.i >= b.i; break;
+                    case CompareOp::EQ: r = a.i == b.i; break;
+                    case CompareOp::NE: r = a.i != b.i; break;
+                }
+            }
+            return makeI(ScalarType::Bool, r);
+        }
+        case ExprKind::Cast: {
+            Scalar a = evaluate(*e.args[0], ctx);
+            if (e.type == ScalarType::F32) return makeF(a.type == ScalarType::F32 ? a.f : static_cast<float>(a.i));
+            if (a.type == ScalarType::F32) return makeI(e.type, static_cast<int64_t>(std::trunc(a.f)));
+            return makeI(e.type, e.type == ScalarType::I32 ? static_cast<int32_t>(a.i) : a.i);
+        }
+        case ExprKind::Shuffle: return ctx.shuffle(e);
+    }
+    throw IRError("interpreter: unknown expression");
+}
+
+template <class Ctx> Scalar evalBinary(const Expr& e, Ctx& ctx) {
+    Scalar a = evaluate(*e.args[0], ctx);
+    Scalar b = evaluate(*e.args[1], ctx);
+    if (e.binary == BinaryOp::Fma) return makeF(std::fma(a.f, b.f, evaluate(*e.args[2], ctx).f));
+    if (a.type == ScalarType::F32) {
+        switch (e.binary) {
+            case BinaryOp::Add: return makeF(a.f + b.f);
+            case BinaryOp::Sub: return makeF(a.f - b.f);
+            case BinaryOp::Mul: return makeF(a.f * b.f);
+            case BinaryOp::Div: return makeF(a.f / b.f);
+            case BinaryOp::Min: return makeF(std::fmin(a.f, b.f));
+            case BinaryOp::Max: return makeF(std::fmax(a.f, b.f));
+            case BinaryOp::MaxNaN: return makeF(maxNaN(a.f, b.f));
+            default: break;
+        }
+        throw IRError("interpreter: bad float op");
+    }
+    switch (e.binary) {
+        case BinaryOp::Add: return makeI(a.type, a.i + b.i);
+        case BinaryOp::Sub: return makeI(a.type, a.i - b.i);
+        case BinaryOp::Mul: return makeI(a.type, a.i * b.i);
+        case BinaryOp::Div:
+            if (b.i == 0) throw IRError("interpreter: integer division by zero");
+            return makeI(a.type, a.i / b.i);
+        case BinaryOp::Rem:
+            if (b.i == 0) throw IRError("interpreter: integer remainder by zero");
+            return makeI(a.type, a.i % b.i);
+        case BinaryOp::Min: return makeI(a.type, std::min(a.i, b.i));
+        case BinaryOp::Max:
+        case BinaryOp::MaxNaN: return makeI(a.type, std::max(a.i, b.i));
+        default: break;
+    }
+    throw IRError("interpreter: bad integer op");
+}
+
 
 class Interpreter {
 public:
@@ -81,6 +185,12 @@ private:
         }
     }
 
+public:
+    Scalar variable(const Expr& e) { return lookup(e.name); }
+    Scalar shuffle(const Expr&) { throw IRError("interpreter: warp shuffles run only in GPU kernels"); }
+    Scalar eval(const Expr& e) { return evaluate(e, *this); }
+
+private:
     Scalar& lookup(const std::string& name) {
         for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
             auto found = it->find(name);
@@ -98,6 +208,7 @@ private:
         return memory_[buffer] + index * 4;
     }
 
+public:
     Scalar read(int buffer, int64_t index) {
         char* p = address(buffer, index);
         if (kernel_.buffers[buffer].type == ScalarType::F32) {
@@ -110,6 +221,7 @@ private:
         return makeI(ScalarType::I32, v);
     }
 
+private:
     void write(int buffer, int64_t index, const Scalar& value, bool accumulate) {
         char* p = address(buffer, index);
         if (kernel_.buffers[buffer].type == ScalarType::F32) {
@@ -126,115 +238,229 @@ private:
         }
     }
 
-    Scalar eval(const Expr& e) {
-        switch (e.kind) {
-            case ExprKind::Int: return makeI(ScalarType::I64, e.intValue);
-            case ExprKind::Float: return makeF(static_cast<float>(e.floatValue));
-            case ExprKind::Var: return lookup(e.name);
-            case ExprKind::Load: return read(e.buffer, eval(*e.args[0]).i);
-            case ExprKind::Binary: return binary(e);
-            case ExprKind::Unary: {
-                Scalar a = eval(*e.args[0]);
-                if (a.type != ScalarType::F32) {
-                    if (e.unary == UnaryOp::Neg) return makeI(a.type, -a.i);
-                    throw IRError("interpreter: integer " + std::to_string(static_cast<int>(e.unary)));
-                }
-                switch (e.unary) {
-                    case UnaryOp::Neg: return makeF(-a.f);
-                    case UnaryOp::Exp: return makeF(std::exp(a.f));
-                    case UnaryOp::Log: return makeF(std::log(a.f));
-                    case UnaryOp::Tanh: return makeF(std::tanh(a.f));
-                    case UnaryOp::Sqrt: return makeF(std::sqrt(a.f));
-                    case UnaryOp::Rsqrt: return makeF(1.0f / std::sqrt(a.f));
-                }
-                break;
-            }
-            case ExprKind::Select: return eval(*e.args[0]).i ? eval(*e.args[1]) : eval(*e.args[2]);
-            case ExprKind::Compare: {
-                Scalar a = eval(*e.args[0]);
-                Scalar b = eval(*e.args[1]);
-                bool r = false;
-                if (a.type == ScalarType::F32) {
-                    switch (e.compare) {
-                        case CompareOp::LT: r = a.f < b.f; break;
-                        case CompareOp::LE: r = a.f <= b.f; break;
-                        case CompareOp::GT: r = a.f > b.f; break;
-                        case CompareOp::GE: r = a.f >= b.f; break;
-                        case CompareOp::EQ: r = a.f == b.f; break;
-                        case CompareOp::NE: r = a.f != b.f; break;
-                    }
-                } else {
-                    switch (e.compare) {
-                        case CompareOp::LT: r = a.i < b.i; break;
-                        case CompareOp::LE: r = a.i <= b.i; break;
-                        case CompareOp::GT: r = a.i > b.i; break;
-                        case CompareOp::GE: r = a.i >= b.i; break;
-                        case CompareOp::EQ: r = a.i == b.i; break;
-                        case CompareOp::NE: r = a.i != b.i; break;
-                    }
-                }
-                return makeI(ScalarType::Bool, r);
-            }
-            case ExprKind::Cast: {
-                Scalar a = eval(*e.args[0]);
-                if (e.type == ScalarType::F32) return makeF(a.type == ScalarType::F32 ? a.f : static_cast<float>(a.i));
-                if (a.type == ScalarType::F32) return makeI(e.type, static_cast<int64_t>(std::trunc(a.f)));
-                return makeI(e.type, e.type == ScalarType::I32 ? static_cast<int32_t>(a.i) : a.i);
-            }
-            case ExprKind::Shuffle: throw IRError("interpreter: warp shuffles need the GPU interpreter (P5)");
-        }
-        throw IRError("interpreter: unknown expression");
-    }
-
-    Scalar binary(const Expr& e) {
-        Scalar a = eval(*e.args[0]);
-        Scalar b = eval(*e.args[1]);
-        if (e.binary == BinaryOp::Fma) return makeF(std::fma(a.f, b.f, eval(*e.args[2]).f));
-        if (a.type == ScalarType::F32) {
-            switch (e.binary) {
-                case BinaryOp::Add: return makeF(a.f + b.f);
-                case BinaryOp::Sub: return makeF(a.f - b.f);
-                case BinaryOp::Mul: return makeF(a.f * b.f);
-                case BinaryOp::Div: return makeF(a.f / b.f);
-                case BinaryOp::Min: return makeF(std::fmin(a.f, b.f));
-                case BinaryOp::Max: return makeF(std::fmax(a.f, b.f));
-                case BinaryOp::MaxNaN: return makeF(maxNaN(a.f, b.f));
-                default: break;
-            }
-            throw IRError("interpreter: bad float op");
-        }
-        switch (e.binary) {
-            case BinaryOp::Add: return makeI(a.type, a.i + b.i);
-            case BinaryOp::Sub: return makeI(a.type, a.i - b.i);
-            case BinaryOp::Mul: return makeI(a.type, a.i * b.i);
-            case BinaryOp::Div:
-                if (b.i == 0) throw IRError("interpreter: integer division by zero");
-                return makeI(a.type, a.i / b.i);
-            case BinaryOp::Rem:
-                if (b.i == 0) throw IRError("interpreter: integer remainder by zero");
-                return makeI(a.type, a.i % b.i);
-            case BinaryOp::Min: return makeI(a.type, std::min(a.i, b.i));
-            case BinaryOp::Max:
-            case BinaryOp::MaxNaN: return makeI(a.type, std::max(a.i, b.i));
-            default: break;
-        }
-        throw IRError("interpreter: bad integer op");
-    }
-
     const Kernel& kernel_;
     std::vector<char*> memory_;
     std::vector<std::vector<char>> locals_;
     std::vector<std::unordered_map<std::string, Scalar>> scopes_;
 };
 
+// Runs a GPU kernel block by block. The threads of a block execute in lockstep: every statement runs for all active
+// threads before the next one, an If splits the active set, a barrier must be reached by every thread of the block
+// (anything else is a divergent barrier, an error), and a shuffle reads the source lane's value, which must be active.
+// Shared memory starts as NaN, so a read before the write that should precede it shows up in the results.
+class GpuInterpreter {
+public:
+    GpuInterpreter(const Kernel& kernel, const std::vector<void*>& args) : kernel_(kernel) {
+        auto globals = kernel.globalBuffers();
+        if (globals.size() != args.size()) throw IRError("interpreter: wrong number of buffers");
+        memory_.resize(kernel.buffers.size(), nullptr);
+        for (size_t g = 0; g < globals.size(); ++g) memory_[globals[g]] = static_cast<char*>(args[g]);
+        const Body* b = &kernel.body;
+        while (b->size() == 1 && (*b)[0]->kind == StmtKind::For && (*b)[0]->loop == LoopKind::Bound) {
+            const Stmt& loop = *(*b)[0];
+            int axis = static_cast<int>(loop.axis);
+            boundVars_[axis] = id(loop.var);
+            int64_t expected = axis < 3 ? kernel.grid[axis] : kernel.block[axis - 3];
+            if (loop.extent != expected) throw IRError("interpreter: " + kernel.name + ": bound loop " + loop.var + " disagrees with the launch configuration");
+            b = &loop.body;
+        }
+        threadBody_ = b;
+        threads_ = kernel.block[0] * kernel.block[1] * kernel.block[2];
+        for (size_t i = 0; i < kernel.buffers.size(); ++i) {
+            const BufferDecl& d = kernel.buffers[i];
+            if (d.scope == MemScope::Shared) shared_.emplace_back(i, std::vector<float>(d.elements()));
+            if (d.scope == MemScope::Register) registers_.emplace_back(i, std::vector<float>(d.elements() * threads_));
+        }
+        collect(*threadBody_);
+        env_.assign(threads_ * ids_.size(), Scalar{});
+        active_.assign(threads_, 0);
+    }
+
+    void run(int64_t begin, int64_t end) {
+        if (kernel_.body.empty()) return;
+        const int64_t blocks = kernel_.grid[0] * kernel_.grid[1] * kernel_.grid[2];
+        for (int64_t b = begin; b < std::min(end, blocks); ++b) block(b);
+    }
+
+    Scalar variable(const Expr& e) { return env_[current_ * ids_.size() + id(e.name)]; }
+
+    Scalar read(int buffer, int64_t index) {
+        char* p = address(buffer, index, current_);
+        if (kernel_.buffers[buffer].type == ScalarType::F32) {
+            float v;
+            std::memcpy(&v, p, 4);
+            return makeF(v);
+        }
+        int32_t v;
+        std::memcpy(&v, p, 4);
+        return makeI(ScalarType::I32, v);
+    }
+
+    Scalar shuffle(const Expr& e) {
+        const int64_t lane = current_ % 32;
+        const int64_t m = evaluate(*e.args[1], *this).i;
+        int64_t src = e.butterfly ? (lane ^ m) : lane + m;
+        if (src >= 32 || current_ - lane + src >= threads_) {
+            if (e.butterfly) throw IRError("interpreter: " + kernel_.name + ": butterfly shuffle past the warp");
+            src = lane; // shfl.down keeps the lane's own value past the end
+        }
+        const int64_t thread = current_ - lane + src;
+        if (!active_[thread]) throw IRError("interpreter: " + kernel_.name + ": shuffle reads inactive lane " + std::to_string(src));
+        const int64_t self = current_;
+        current_ = thread;
+        Scalar v = evaluate(*e.args[0], *this);
+        current_ = self;
+        return v;
+    }
+
+private:
+    void collect(const Body& body) {
+        for (const auto& s : body) {
+            if (s->kind == StmtKind::For) id(s->var);
+            if (s->kind == StmtKind::Let) id(s->name);
+            collect(s->body);
+            collect(s->elseBody);
+        }
+    }
+
+    size_t id(const std::string& name) {
+        auto [it, inserted] = ids_.try_emplace(name, ids_.size());
+        if (inserted && !env_.empty()) throw IRError("interpreter: " + kernel_.name + ": undefined variable '" + name + "'");
+        return it->second;
+    }
+
+    void block(int64_t b) {
+        const auto& g = kernel_.grid;
+        const int64_t coords[3] = {b % g[0], (b / g[0]) % g[1], b / (g[0] * g[1])};
+        for (auto& [i, mem] : shared_) {
+            std::fill(mem.begin(), mem.end(), std::numeric_limits<float>::quiet_NaN());
+            memory_[i] = reinterpret_cast<char*>(mem.data());
+        }
+        std::vector<int64_t> all(threads_);
+        const auto& bl = kernel_.block;
+        for (int64_t t = 0; t < threads_; ++t) {
+            all[t] = t;
+            const int64_t tc[3] = {t % bl[0], (t / bl[0]) % bl[1], t / (bl[0] * bl[1])};
+            for (int a = 0; a < 6; ++a) {
+                if (boundVars_[a] < 0) continue;
+                env_[t * ids_.size() + boundVars_[a]] = makeI(ScalarType::I64, a < 3 ? coords[a] : tc[a - 3]);
+            }
+        }
+        body(*threadBody_, all);
+    }
+
+    void body(const Body& stmts, const std::vector<int64_t>& active) {
+        if (active.empty()) return;
+        for (int64_t t : active) active_[t] = 1;
+        for (const auto& s : stmts) stmt(*s, active);
+        for (int64_t t : active) active_[t] = 0;
+    }
+
+    void setAll(size_t var, const std::vector<int64_t>& active, const std::vector<Scalar>& values) {
+        for (size_t k = 0; k < active.size(); ++k) env_[active[k] * ids_.size() + var] = values[k];
+    }
+
+    std::vector<Scalar> evalAll(const Expr& e, const std::vector<int64_t>& active) {
+        std::vector<Scalar> values(active.size());
+        for (size_t k = 0; k < active.size(); ++k) {
+            current_ = active[k];
+            values[k] = evaluate(e, *this);
+        }
+        return values;
+    }
+
+    void stmt(const Stmt& s, const std::vector<int64_t>& active) {
+        switch (s.kind) {
+            case StmtKind::For: {
+                if (s.loop == LoopKind::Bound) throw IRError("interpreter: " + kernel_.name + ": nested bound loop");
+                const size_t v = id(s.var);
+                for (int64_t i = 0; i < s.extent; ++i) {
+                    for (int64_t t : active) env_[t * ids_.size() + v] = makeI(ScalarType::I64, i);
+                    for (const auto& inner : s.body) stmt(*inner, active);
+                }
+                break;
+            }
+            case StmtKind::Let:
+            case StmtKind::Assign: setAll(id(s.name), active, evalAll(*s.value, active)); break;
+            case StmtKind::Store:
+            case StmtKind::AtomicAdd: {
+                auto index = evalAll(*s.index, active);
+                auto value = evalAll(*s.value, active);
+                for (size_t k = 0; k < active.size(); ++k) write(s.buffer, index[k].i, value[k], s.kind == StmtKind::AtomicAdd, active[k]);
+                break;
+            }
+            case StmtKind::If: {
+                auto cond = evalAll(*s.cond, active);
+                std::vector<int64_t> taken, other;
+                for (size_t k = 0; k < active.size(); ++k) (cond[k].i ? taken : other).push_back(active[k]);
+                // The active flags of the enclosing set stay on during a branch only for its own threads.
+                for (int64_t t : active) active_[t] = 0;
+                body(s.body, taken);
+                body(s.elseBody, other);
+                for (int64_t t : active) active_[t] = 1;
+                break;
+            }
+            case StmtKind::Barrier:
+                if (static_cast<int64_t>(active.size()) != threads_) {
+                    throw IRError("interpreter: " + kernel_.name + ": barrier reached by " + std::to_string(active.size()) + " of " +
+                                  std::to_string(threads_) + " threads (divergent barrier)");
+                }
+                break;
+        }
+    }
+
+    char* address(int buffer, int64_t index, int64_t thread) {
+        const BufferDecl& b = kernel_.buffers[buffer];
+        if (index < 0 || index >= b.elements()) {
+            throw IRError("interpreter: " + kernel_.name + " accesses " + b.name + "[" + std::to_string(index) + "], outside its " +
+                          std::to_string(b.elements()) + " elements (thread " + std::to_string(thread) + ")");
+        }
+        if (b.scope == MemScope::Register) {
+            for (auto& [i, mem] : registers_) {
+                if (i == static_cast<size_t>(buffer)) return reinterpret_cast<char*>(mem.data() + thread * b.elements() + index);
+            }
+        }
+        return memory_[buffer] + index * 4;
+    }
+
+    void write(int buffer, int64_t index, const Scalar& value, bool accumulate, int64_t thread) {
+        char* p = address(buffer, index, thread);
+        if (kernel_.buffers[buffer].type == ScalarType::F32) {
+            if (accumulate) {
+                // Blocks may run on several host threads.
+                std::atomic_ref<float>(*reinterpret_cast<float*>(p)).fetch_add(value.f);
+                return;
+            }
+            std::memcpy(p, &value.f, 4);
+        } else {
+            if (accumulate) throw IRError("interpreter: integer atomics are not supported");
+            int32_t v = static_cast<int32_t>(value.i);
+            std::memcpy(p, &v, 4);
+        }
+    }
+
+    const Kernel& kernel_;
+    std::vector<char*> memory_;
+    std::vector<std::pair<size_t, std::vector<float>>> shared_;
+    std::vector<std::pair<size_t, std::vector<float>>> registers_;
+    std::unordered_map<std::string, size_t> ids_;
+    std::array<int64_t, 6> boundVars_{-1, -1, -1, -1, -1, -1};
+    const Body* threadBody_{nullptr};
+    int64_t threads_{1};
+    std::vector<Scalar> env_;
+    std::vector<char> active_;
+    int64_t current_{0};
+};
+
 } // namespace
 
 void interpret(const Kernel& kernel, const std::vector<void*>& args) {
-    Interpreter(kernel, args).run(0, std::numeric_limits<int64_t>::max());
+    interpret(kernel, args, 0, std::numeric_limits<int64_t>::max());
 }
 
 void interpret(const Kernel& kernel, const std::vector<void*>& args, int64_t begin, int64_t end) {
-    Interpreter(kernel, args).run(begin, end);
+    if (kernel.gpu) GpuInterpreter(kernel, args).run(begin, end);
+    else Interpreter(kernel, args).run(begin, end);
 }
 
 } // namespace dlc::loopir

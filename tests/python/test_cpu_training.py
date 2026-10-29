@@ -1,6 +1,7 @@
-"""Training through generated CPU code: dl.compile(loss, optimizer, target="cpu") builds forward, backward and the
+"""Training through generated code: dl.compile(loss, optimizer, target="cpu") builds forward, backward and the
 update as one graph, compiles it, and keeps the parameters in the executable. Its loss trajectory must follow eager
-training in the reference interpreter (float32), and the trained parameters must come back with sync_params().
+training in the reference interpreter (float32), and the trained parameters must come back with sync_params(). The
+same holds for the GPU schedules ("gpu-sim": run by the lockstep GPU interpreter), atomics and shuffles included.
 Needs the compiled _minidlc module; skipped otherwise.
 """
 from __future__ import annotations
@@ -58,9 +59,10 @@ def trajectory(model_name, opt_name, target, steps=6):
 
 @pytest.mark.parametrize("model_name", list(MODELS))
 @pytest.mark.parametrize("opt_name", list(OPTIMIZERS))
-def test_compiled_training_follows_eager_training(model_name, opt_name):
+@pytest.mark.parametrize("target", ["cpu", "gpu-sim"])
+def test_compiled_training_follows_eager_training(model_name, opt_name, target):
     eager, _, _ = trajectory(model_name, opt_name, "reference")
-    compiled, _, _ = trajectory(model_name, opt_name, "cpu")
+    compiled, _, _ = trajectory(model_name, opt_name, target)
     np.testing.assert_allclose(compiled, eager, rtol=2e-4, atol=2e-4)
 
 

@@ -75,6 +75,7 @@ add_library(dlc_runtime
     lib/runtime/Arena.cpp
     lib/runtime/ThreadPool.cpp
     lib/runtime/Executable.cpp
+    lib/runtime/PlanJson.cpp
 )
 target_include_directories(dlc_runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(dlc_runtime PUBLIC dlc_ir Threads::Threads)
@@ -88,6 +89,7 @@ message(STATUS "Using LLVM ${LLVM_PACKAGE_VERSION} from ${LLVM_DIR}")
 add_library(dlc_llvm
     lib/backends/llvm/Emitter.cpp
     lib/backends/llvm/CpuJit.cpp
+    lib/backends/llvm/Ptx.cpp
 )
 target_include_directories(dlc_llvm SYSTEM PUBLIC ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(dlc_llvm PUBLIC ${LLVM_DEFINITIONS})
@@ -181,6 +183,7 @@ if(DLC_BUILD_TESTS)
             COMMAND ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
                     tests/python/test_translation_validation.py tests/python/test_training_graph.py
                     tests/python/test_cpu_backend.py tests/python/test_cpu_training.py
+                    tests/python/test_gpu_backend.py
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
         set_tests_properties(python_compiler_tests PROPERTIES ENVIRONMENT "DLC_OPT=$<TARGET_FILE:dlc-opt>")
     else()

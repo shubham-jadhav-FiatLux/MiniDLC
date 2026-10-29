@@ -755,21 +755,446 @@ std::vector<LoweredKernel> lowerOther(const dlc::Kernel& k, const BufferAssignme
     return out;
 }
 
+// --- GPU schedules -------------------------------------------------------------------------------------------------
+//
+// Bound loops: `for bx in 0..G bind(blockIdx.x)` around `for tx in 0..B bind(threadIdx.x)`, with optional y and z
+// dimensions. Iteration spaces that the grid overshoots are guarded (`if (i < n)`); bounds-check elimination removes
+// the guards that divisible shapes make redundant.
+
+constexpr int64_t kThreads = 256;
+constexpr int64_t kWarp = 32;
+
+bool mentions(const ExprPtr& e, const std::string& name) {
+    if (!e) return false;
+    if (e->kind == ExprKind::Var && e->name == name) return true;
+    return std::any_of(e->args.begin(), e->args.end(), [&](const ExprPtr& a) { return mentions(a, name); });
+}
+
+bool mentions(const Body& body, const std::string& name) {
+    return std::any_of(body.begin(), body.end(), [&](const StmtPtr& s) {
+        return mentions(s->value, name) || mentions(s->index, name) || mentions(s->cond, name) || mentions(s->body, name) ||
+               mentions(s->elseBody, name);
+    });
+}
+
+// Wraps `body` in the bound loops of a launch and records the launch configuration on the kernel.
+Body gpuLaunch(Kernel& k, std::array<int64_t, 3> grid, std::array<int64_t, 3> block, Body body) {
+    k.gpu = true;
+    k.grid = grid;
+    k.block = block;
+    const char* threadVars[] = {"tx", "ty", "tz"};
+    const char* blockVars[] = {"bx", "by", "bz"};
+    const BindAxis threadAxes[] = {BindAxis::ThreadX, BindAxis::ThreadY, BindAxis::ThreadZ};
+    const BindAxis blockAxes[] = {BindAxis::BlockX, BindAxis::BlockY, BindAxis::BlockZ};
+    // Axes of extent 1 get no loop; their index, if the body uses it, is the constant 0.
+    Body inner;
+    for (int d = 1; d < 3; ++d) {
+        if (block[d] == 1 && mentions(body, threadVars[d])) inner.push_back(let(threadVars[d], ScalarType::I64, intConst(0)));
+        if (grid[d] == 1 && mentions(body, blockVars[d])) inner.push_back(let(blockVars[d], ScalarType::I64, intConst(0)));
+    }
+    inner.insert(inner.end(), body.begin(), body.end());
+    body = std::move(inner);
+    StmtPtr loop;
+    for (int d = 0; d < 3; ++d) { // threads: x innermost
+        if (d > 0 && block[d] == 1) continue;
+        loop = boundLoop(threadVars[d], block[d], threadAxes[d], loop ? Body{loop} : std::move(body));
+    }
+    for (int d = 0; d < 3; ++d) {
+        if (d > 0 && grid[d] == 1) continue;
+        loop = boundLoop(blockVars[d], grid[d], blockAxes[d], {loop});
+    }
+    return {loop};
+}
+
+// A guard `if (v < n)` around `body`, unless n is the whole range already (bounds-check elimination would also
+// remove it, but there is no need to emit it).
+Body guarded(const ExprPtr& v, int64_t n, int64_t range, Body body) {
+    if (n >= range) return body;
+    return {ifThen(compare(CompareOp::LT, v, intConst(n)), std::move(body))};
+}
+
+// Every lane ends with the reduction of the warp's values: five butterfly steps.
+void warpAllReduce(Body& body, const std::string& name, const std::function<ExprPtr(ExprPtr, ExprPtr)>& combine) {
+    for (int64_t step = kWarp / 2; step >= 1; step /= 2) {
+        ExprPtr v = var(name, ScalarType::F32);
+        body.push_back(assign(name, combine(v, shuffleXor(v, intConst(step)))));
+    }
+}
+
+int64_t gridFor(int64_t n, int64_t threads) { return std::max<int64_t>(1, ceilDiv(n, threads)); }
+
+std::vector<LoweredKernel> gpuElementwise(const dlc::Kernel& k, const BufferAssignment& ba, const SlotTracker& names) {
+    KernelBuilder kb(k.name, ba, names);
+    kb.declare(k);
+    std::vector<const Value*> accessed(k.inputs.begin(), k.inputs.end());
+    accessed.insert(accessed.end(), k.outputs.begin(), k.outputs.end());
+    Collapsed c = collapse(k.iterationShape, accessed);
+    int64_t n = numel(k.iterationShape);
+    int64_t grid = gridFor(n, kThreads);
+    Body point;
+    point.push_back(let("i", ScalarType::I64, add(mul(var("bx"), intConst(kThreads)), var("tx"))));
+    Body inner;
+    std::vector<ExprPtr> idx = unflatten(var("i"), Shape(c.extents.begin(), c.extents.end()));
+    PointEmitter pe(kb, inner, [&](const Value* v) {
+        ExprPtr index = intConst(0);
+        const auto& st = c.strides.at(v);
+        for (size_t d = 0; d < idx.size(); ++d) {
+            if (st[d] != 0) index = add(index, mul(idx[d], intConst(st[d])));
+        }
+        return index;
+    });
+    for (const Operation* op : k.ops) pe.member(*op);
+    pe.storeOutputs(k.outputs);
+    Body g = guarded(var("i"), n, grid * kThreads, std::move(inner));
+    point.insert(point.end(), g.begin(), g.end());
+    std::vector<LoweredKernel> out;
+    out.push_back(kb.finish({}, k, true));
+    out.back().kernel.body = gpuLaunch(out.back().kernel, {grid, 1, 1}, {kThreads, 1, 1}, std::move(point));
+    return out;
+}
+
+// C = op(A) op(B): 64x64 output tiles per block of 16x16 threads, k in steps of 16 staged in shared memory, a 4x4
+// register tile per thread. Thread (ty, tx) owns rows ty + 16i and columns tx + 16j of its tile, so a warp reads
+// consecutive words of the B tile, and the A tile is padded to 65 columns so its stores don't conflict on banks.
+std::vector<LoweredKernel> gpuMatmul(const dlc::Kernel& k, const BufferAssignment& ba, const SlotTracker& names) {
+    constexpr int64_t BM = 64, BN = 64, BK = 16, T = 16, R = 4, PAD = BM + 1;
+    KernelBuilder kb(k.name, ba, names);
+    kb.declare(k);
+    const Operation* mm = nullptr;
+    for (const Operation* op : k.ops) {
+        if (op->getOpName() == "matmul") mm = op;
+    }
+    const MatmulShape s = matmulShape(*mm);
+    const Value* A = mm->getOperand(0).get();
+    const Value* B = mm->getOperand(1).get();
+    const Value* C = mm->getResult(0).get();
+    int as = kb.local("As", ScalarType::F32, {BK, PAD}, MemScope::Shared);
+    int bs = kb.local("Bs", ScalarType::F32, {BK, BN}, MemScope::Shared);
+    int acc = kb.local("acc", ScalarType::F32, {R, R}, MemScope::Register);
+    const int64_t kTiles = std::max<int64_t>(1, ceilDiv(s.k, BK));
+    const int64_t gx = gridFor(s.n, BN), gy = gridFor(s.m, BM);
+    ExprPtr b = s.batch > 1 ? var("bz") : intConst(0);
+    auto f32v = [](const char* n) { return var(n, ScalarType::F32); };
+
+    Body body;
+    body.push_back(forLoop("i", R, LoopKind::Unrolled,
+                           {forLoop("j", R, LoopKind::Unrolled, {store(acc, add(mul(var("i"), intConst(R)), var("j")), floatConst(0.0))})}));
+    body.push_back(let("lin", ScalarType::I64, add(mul(var("ty"), intConst(T)), var("tx"))));
+    Body tile;
+    // Cooperative loads: 1024 elements of each tile, four per thread; out-of-range elements are zero.
+    Body loadA = {let("e", ScalarType::I64, add(var("lin"), mul(var("l"), intConst(T * T)))),
+                  let("ar", ScalarType::I64, add(mul(var("by"), intConst(BM)), div(var("e"), intConst(BK)))),
+                  let("ak", ScalarType::I64, add(mul(var("kt"), intConst(BK)), rem(var("e"), intConst(BK))))};
+    ExprPtr aIdx = add(mul(b, intConst(s.aBatchStride)), s.ta ? add(mul(var("ak"), intConst(s.m)), var("ar"))
+                                                             : add(mul(var("ar"), intConst(s.k)), var("ak")));
+    ExprPtr asIdx = add(mul(rem(var("e"), intConst(BK)), intConst(PAD)), div(var("e"), intConst(BK)));
+    Body aIn = {store(as, asIdx, kb.loadValue(A, aIdx))};
+    Body aZero = {store(as, asIdx, floatConst(0.0))};
+    loadA.push_back(ifThen(compare(CompareOp::LT, var("ar"), intConst(s.m)),
+                           {ifThen(compare(CompareOp::LT, var("ak"), intConst(s.k)), aIn, aZero)}, aZero));
+    Body loadB = {let("e", ScalarType::I64, add(var("lin"), mul(var("l"), intConst(T * T)))),
+                  let("bk", ScalarType::I64, add(mul(var("kt"), intConst(BK)), div(var("e"), intConst(BN)))),
+                  let("bc", ScalarType::I64, add(mul(var("bx"), intConst(BN)), rem(var("e"), intConst(BN))))};
+    ExprPtr bIdx = add(mul(b, intConst(s.bBatchStride)), s.tb ? add(mul(var("bc"), intConst(s.k)), var("bk"))
+                                                             : add(mul(var("bk"), intConst(s.n)), var("bc")));
+    Body bIn = {store(bs, var("e"), kb.loadValue(B, bIdx))};
+    Body bZero = {store(bs, var("e"), floatConst(0.0))};
+    loadB.push_back(ifThen(compare(CompareOp::LT, var("bk"), intConst(s.k)),
+                           {ifThen(compare(CompareOp::LT, var("bc"), intConst(s.n)), bIn, bZero)}, bZero));
+    tile.push_back(forLoop("l", (BM * BK) / (T * T), LoopKind::Unrolled, std::move(loadA)));
+    tile.push_back(forLoop("l", (BN * BK) / (T * T), LoopKind::Unrolled, std::move(loadB)));
+    tile.push_back(barrier());
+    ExprPtr accIdx = add(mul(var("i"), intConst(R)), var("j"));
+    Body inner = {let("a", ScalarType::F32, load(as, add(mul(var("kk"), intConst(PAD)), add(var("ty"), mul(var("i"), intConst(T)))),
+                                                 ScalarType::F32)),
+                  forLoop("j", R, LoopKind::Unrolled,
+                          {store(acc, accIdx, fma(f32v("a"),
+                                                  load(bs, add(mul(var("kk"), intConst(BN)), add(var("tx"), mul(var("j"), intConst(T)))),
+                                                       ScalarType::F32),
+                                                  load(acc, accIdx, ScalarType::F32)))})};
+    tile.push_back(forLoop("kk", BK, LoopKind::Serial, {forLoop("i", R, LoopKind::Unrolled, std::move(inner))}));
+    tile.push_back(barrier());
+    body.push_back(forLoop("kt", kTiles, LoopKind::Serial, std::move(tile)));
+
+    // The epilogue on each of the thread's outputs, guarded at the edges of the matrix.
+    Shape batchShape(s.outShape.begin(), s.outShape.end() - 2);
+    Body perOutput = {let("row", ScalarType::I64, add(mul(var("by"), intConst(BM)), add(var("ty"), mul(var("i"), intConst(T))))),
+                      let("col", ScalarType::I64, add(mul(var("bx"), intConst(BN)), add(var("tx"), mul(var("j"), intConst(T)))))};
+    Body epi;
+    ExprPtr flat = add(mul(add(mul(b, intConst(s.m)), var("row")), intConst(s.n)), var("col"));
+    std::vector<ExprPtr> idx;
+    if (s.flattened) {
+        int64_t rows = s.outShape[1];
+        idx = {div(var("row"), intConst(rows)), rem(var("row"), intConst(rows)), var("col")};
+    } else {
+        idx = unflatten(b, batchShape);
+        idx.push_back(var("row"));
+        idx.push_back(var("col"));
+    }
+    PointEmitter pe(kb, epi, [&](const Value* v) { return shapeOf(v) == s.outShape ? flat : broadcastIndex(v, s.outShape, idx); });
+    pe.bind(C, bindLocal(kb, epi, "acc", load(acc, accIdx, ScalarType::F32)));
+    for (const Operation* op : k.ops) {
+        if (op != mm) pe.member(*op);
+    }
+    pe.storeOutputs(k.outputs);
+    Body colGuard = guarded(var("col"), s.n, gx * BN, std::move(epi));
+    Body rowGuard = guarded(var("row"), s.m, gy * BM, std::move(colGuard));
+    perOutput.insert(perOutput.end(), rowGuard.begin(), rowGuard.end());
+    body.push_back(forLoop("i", R, LoopKind::Unrolled, {forLoop("j", R, LoopKind::Unrolled, std::move(perOutput))}));
+
+    std::vector<LoweredKernel> out;
+    out.push_back(kb.finish({}, k, true));
+    out.back().kernel.body = gpuLaunch(out.back().kernel, {gx, gy, s.batch}, {T, T, 1}, std::move(body));
+    return out;
+}
+
+// A fill kernel (one thread per element) as part of a lowering that accumulates into its output.
+LoweredKernel gpuZero(const std::string& name, const Value* y, const BufferAssignment& ba, const SlotTracker& names,
+                      const dlc::Kernel& source) {
+    KernelBuilder kb(name, ba, names);
+    int64_t n = numel(shapeOf(y));
+    int64_t grid = gridFor(n, kThreads);
+    Body body = {let("i", ScalarType::I64, add(mul(var("bx"), intConst(kThreads)), var("tx")))};
+    Body g = guarded(var("i"), n, grid * kThreads, {store(kb.param(y), var("i"), floatConst(0.0))});
+    body.insert(body.end(), g.begin(), g.end());
+    LoweredKernel l = kb.finish({}, source, false);
+    l.kernel.body = gpuLaunch(l.kernel, {grid, 1, 1}, {kThreads, 1, 1}, std::move(body));
+    return l;
+}
+
+// One warp per row: each lane strides over the row, then butterfly shuffles combine the lanes.
+std::vector<LoweredKernel> gpuRow(const dlc::Kernel& k, const BufferAssignment& ba, const SlotTracker& names) {
+    const Operation& op = *k.ops[0];
+    const std::string& name = op.getOpName();
+    const Value* x = op.getOperand(0).get();
+    const Value* y = op.getResult(0).get();
+    const Shape& xs = shapeOf(x);
+    const int64_t rank = static_cast<int64_t>(xs.size());
+    auto f32 = [](const std::string& n) { return var(n, ScalarType::F32); };
+    const ExprPtr negInf = floatConst(-std::numeric_limits<double>::infinity());
+    auto maxNaN = [](ExprPtr a, ExprPtr b) { return binary(BinaryOp::MaxNaN, std::move(a), std::move(b)); };
+    auto plus = [](ExprPtr a, ExprPtr b) { return add(std::move(a), std::move(b)); };
+    int64_t axis = rank - 1;
+    if (name == "softmax" || name == "log_softmax") {
+        axis = op.getIntAttr("axis");
+        if (axis < 0) axis += rank;
+    }
+    int64_t outer = 1, L = xs.empty() ? 1 : xs[axis], inner = 1;
+    for (int64_t d = 0; d < axis; ++d) outer *= xs[d];
+    for (int64_t d = axis + 1; d < rank; ++d) inner *= xs[d];
+    const int64_t rows = outer * inner;
+    const int64_t steps = std::max<int64_t>(1, ceilDiv(L, kWarp));
+    auto at = [&](const ExprPtr& l) { return add(mul(add(mul(var("o"), intConst(L)), l), intConst(inner)), var("q")); };
+
+    std::vector<LoweredKernel> out;
+    KernelBuilder kb(name == "cross_entropy" ? k.name + "_rows" : k.name, ba, names);
+    kb.declare(k);
+    Body body = {let("o", ScalarType::I64, div(var("bx"), intConst(inner))),
+                 let("q", ScalarType::I64, rem(var("bx"), intConst(inner)))};
+    // A pass over the row: `update(l)` for each of this lane's elements l = t*32 + lane.
+    auto lanePass = [&](Body update) {
+        Body perStep = {let("l", ScalarType::I64, add(mul(var("t"), intConst(kWarp)), var("tx")))};
+        Body g = guarded(var("l"), L, steps * kWarp, std::move(update));
+        perStep.insert(perStep.end(), g.begin(), g.end());
+        return forLoop("t", steps, LoopKind::Serial, std::move(perStep));
+    };
+    auto reduceRow = [&](const std::string& acc, double init, std::function<ExprPtr(ExprPtr, ExprPtr)> combine,
+                         std::function<ExprPtr()> term) {
+        body.push_back(let(acc, ScalarType::F32, floatConst(init)));
+        body.push_back(lanePass({assign(acc, combine(f32(acc), term()))}));
+        warpAllReduce(body, acc, combine);
+    };
+    if (name == "softmax" || name == "log_softmax" || name == "cross_entropy") {
+        reduceRow("m", -std::numeric_limits<double>::infinity(), maxNaN, [&] { return kb.loadValue(x, at(var("l"))); });
+        reduceRow("s", 0.0, plus, [&] { return unary(UnaryOp::Exp, sub(kb.loadValue(x, at(var("l"))), f32("m"))); });
+        if (name == "softmax") {
+            body.push_back(lanePass({store(kb.param(y), at(var("l")),
+                                           div(unary(UnaryOp::Exp, sub(kb.loadValue(x, at(var("l"))), f32("m"))), f32("s")))}));
+        } else if (name == "log_softmax") {
+            body.push_back(let("lse", ScalarType::F32, unary(UnaryOp::Log, f32("s"))));
+            body.push_back(lanePass({store(kb.param(y), at(var("l")), sub(sub(kb.loadValue(x, at(var("l"))), f32("m")), f32("lse")))}));
+        } else {
+            // Lane 0 adds this row's share of the mean loss; an invalid label makes the loss NaN.
+            const Value* t = op.getOperand(1).get();
+            double invRows = rows == 0 ? 0.0 : 1.0 / static_cast<double>(rows);
+            Body lane0 = {let("target", ScalarType::I64, cast(ScalarType::I64, kb.loadValue(t, var("bx"))))};
+            Body valid = {atomicAdd(kb.param(y), intConst(0),
+                                    mul(sub(add(unary(UnaryOp::Log, f32("s")), f32("m")),
+                                            kb.loadValue(x, add(mul(var("bx"), intConst(L)), var("target")))),
+                                        floatConst(invRows)))};
+            Body invalid = {atomicAdd(kb.param(y), intConst(0), floatConst(std::numeric_limits<double>::quiet_NaN()))};
+            lane0.push_back(guardIndex("target", L, std::move(valid), std::move(invalid)));
+            body.push_back(ifThen(compare(CompareOp::EQ, var("tx"), intConst(0)), std::move(lane0)));
+            out.push_back(gpuZero(k.name + "_zero", y, ba, names, k));
+        }
+    } else if (name == "layernorm") {
+        const Value* gamma = op.getOperand(1).get();
+        const Value* beta = op.getOperand(2).get();
+        double d = static_cast<double>(L);
+        reduceRow("s", 0.0, plus, [&] { return kb.loadValue(x, at(var("l"))); });
+        body.push_back(let("mu", ScalarType::F32, div(f32("s"), floatConst(d))));
+        reduceRow("v", 0.0, plus, [&] {
+            ExprPtr c = sub(kb.loadValue(x, at(var("l"))), f32("mu"));
+            return mul(c, c);
+        });
+        body.push_back(let("rstd", ScalarType::F32, unary(UnaryOp::Rsqrt, add(div(f32("v"), floatConst(d)), floatConst(op.getDoubleAttr("eps"))))));
+        body.push_back(lanePass({store(kb.param(y), at(var("l")),
+                                       add(mul(mul(sub(kb.loadValue(x, at(var("l"))), f32("mu")), f32("rstd")),
+                                               kb.loadValue(gamma, var("l"))),
+                                           kb.loadValue(beta, var("l"))))}));
+    } else {
+        throw IRError("GPU lowering: no row kernel for '" + name + "'");
+    }
+    out.push_back(kb.finish({}, k, true));
+    out.back().kernel.body = gpuLaunch(out.back().kernel, {std::max<int64_t>(rows, 1), 1, 1}, {kWarp, 1, 1}, std::move(body));
+    if (rows == 0) out.back().kernel.body = {};
+    return out;
+}
+
+// Reduced axes at the end: one warp per output. Otherwise one thread per output, looping over the reduced axes.
+std::vector<LoweredKernel> gpuReduction(const dlc::Kernel& k, const BufferAssignment& ba, const SlotTracker& names) {
+    KernelBuilder kb(k.name, ba, names);
+    kb.declare(k);
+    const Operation& op = *k.ops[0];
+    const Value* x = op.getOperand(0).get();
+    const Value* y = op.getResult(0).get();
+    const Shape& xs = shapeOf(x);
+    const int64_t rank = static_cast<int64_t>(xs.size());
+    std::vector<bool> reduced(rank, false);
+    for (int64_t a : op.getIntListAttr("axes")) reduced[a < 0 ? a + rank : a] = true;
+    int64_t count = 1;
+    Shape kept, red;
+    for (int64_t d = 0; d < rank; ++d) {
+        if (reduced[d]) {
+            count *= xs[d];
+            red.push_back(xs[d]);
+        } else {
+            kept.push_back(xs[d]);
+        }
+    }
+    Reduce r = reduceOf(op.getOpName());
+    const bool mean = op.getOpName() == "mean";
+    auto finalize = [&](ExprPtr a) { return mean ? div(std::move(a), floatConst(static_cast<double>(count))) : a; };
+    bool suffix = true;
+    for (int64_t d = 0; d < rank; ++d) suffix = suffix && (reduced[d] == (d >= rank - static_cast<int64_t>(red.size())));
+    const int64_t O = numel(kept);
+    std::vector<LoweredKernel> out;
+    out.push_back(kb.finish({}, k, true));
+    Kernel& kernel = out.back().kernel;
+    int xb = kb.param(x), yb = kb.param(y);
+    (void)xb;
+    if (suffix && count >= kWarp) {
+        int64_t steps = ceilDiv(count, kWarp);
+        Body body = {let("acc", ScalarType::F32, floatConst(r.init))};
+        Body perStep = {let("l", ScalarType::I64, add(mul(var("t"), intConst(kWarp)), var("tx")))};
+        Body g = guarded(var("l"), count, steps * kWarp,
+                         {assign("acc", r.combine(var("acc", ScalarType::F32), kb.loadValue(x, add(mul(var("bx"), intConst(count)), var("l")))))});
+        perStep.insert(perStep.end(), g.begin(), g.end());
+        body.push_back(forLoop("t", steps, LoopKind::Serial, std::move(perStep)));
+        warpAllReduce(body, "acc", r.combine);
+        body.push_back(ifThen(compare(CompareOp::EQ, var("tx"), intConst(0)),
+                              {store(yb, var("bx"), finalize(var("acc", ScalarType::F32)))}));
+        kernel.body = gpuLaunch(kernel, {std::max<int64_t>(O, 1), 1, 1}, {kWarp, 1, 1}, std::move(body));
+        if (O == 0) kernel.body = {};
+    } else {
+        int64_t grid = gridFor(O, kThreads);
+        Body body = {let("o", ScalarType::I64, add(mul(var("bx"), intConst(kThreads)), var("tx")))};
+        std::vector<ExprPtr> keptIdx = unflatten(var("o"), kept);
+        auto xst = stridesOf(xs);
+        Body perOut = {let("acc", ScalarType::F32, floatConst(r.init))};
+        ExprPtr xIdx = intConst(0);
+        for (int64_t d = 0, kd = 0, rd = 0; d < rank; ++d) {
+            ExprPtr v = reduced[d] ? var("r" + std::to_string(rd++)) : keptIdx[kd++];
+            xIdx = add(xIdx, mul(v, intConst(xst[d])));
+        }
+        StmtPtr loop;
+        Body update = {assign("acc", r.combine(var("acc", ScalarType::F32), kb.loadValue(x, xIdx)))};
+        for (int64_t rd = static_cast<int64_t>(red.size()) - 1; rd >= 0; --rd) {
+            loop = forLoop("r" + std::to_string(rd), red[rd], LoopKind::Serial, loop ? Body{loop} : update);
+        }
+        if (loop) perOut.push_back(loop);
+        else perOut.insert(perOut.end(), update.begin(), update.end());
+        perOut.push_back(store(yb, var("o"), finalize(var("acc", ScalarType::F32))));
+        Body g = guarded(var("o"), O, grid * kThreads, std::move(perOut));
+        body.insert(body.end(), g.begin(), g.end());
+        kernel.body = gpuLaunch(kernel, {grid, 1, 1}, {kThreads, 1, 1}, std::move(body));
+    }
+    return out;
+}
+
+// Gathers, scatters, transposes and fills: one thread per element.
+std::vector<LoweredKernel> gpuOther(const dlc::Kernel& k, const BufferAssignment& ba, const SlotTracker& names) {
+    const Operation& op = *k.ops[0];
+    const std::string& name = op.getOpName();
+    const Value* y = op.getResult(0).get();
+    std::vector<LoweredKernel> out;
+    KernelBuilder kb(k.name, ba, names);
+    kb.declare(k);
+    int64_t n = numel(shapeOf(y));
+    Body perElement;
+    if (name == "embedding") {
+        const Value* table = op.getOperand(0).get();
+        const Value* ids = op.getOperand(1).get();
+        int64_t D = shapeOf(table)[1];
+        perElement = {let("p", ScalarType::I64, div(var("i"), intConst(D))), let("d", ScalarType::I64, rem(var("i"), intConst(D))),
+                      let("id", ScalarType::I64, cast(ScalarType::I64, kb.loadValue(ids, var("p")))),
+                      guardIndex("id", shapeOf(table)[0], {store(kb.param(y), var("i"), kb.loadValue(table, add(mul(var("id"), intConst(D)), var("d"))))},
+                                 {store(kb.param(y), var("i"), floatConst(0.0))})};
+    } else if (name == "onehot") {
+        const Value* ids = op.getOperand(0).get();
+        int64_t C = op.getIntAttr("num_classes");
+        perElement = {let("id", ScalarType::I64, cast(ScalarType::I64, kb.loadValue(ids, div(var("i"), intConst(C))))),
+                      store(kb.param(y), var("i"), select(compare(CompareOp::EQ, rem(var("i"), intConst(C)), var("id")),
+                                                          floatConst(1.0), floatConst(0.0)))};
+    } else if (name == "scatter_add") {
+        const Value* ids = op.getOperand(0).get();
+        const Value* upd = op.getOperand(1).get();
+        int64_t D = shapeOf(y)[1];
+        n = numel(shapeOf(upd));
+        perElement = {let("p", ScalarType::I64, div(var("i"), intConst(D))), let("d", ScalarType::I64, rem(var("i"), intConst(D))),
+                      let("id", ScalarType::I64, cast(ScalarType::I64, kb.loadValue(ids, var("p")))),
+                      guardIndex("id", shapeOf(y)[0], {atomicAdd(kb.param(y), add(mul(var("id"), intConst(D)), var("d")), kb.loadValue(upd, var("i")))})};
+        out.push_back(gpuZero(k.name + "_zero", y, ba, names, k));
+    } else if (name == "transpose") {
+        const Value* x = op.getOperand(0).get();
+        const auto& perm = op.getIntListAttr("perm");
+        const Shape& ys = shapeOf(y);
+        auto xst = stridesOf(shapeOf(x));
+        std::vector<ExprPtr> idx = unflatten(var("i"), ys);
+        ExprPtr xIdx = intConst(0);
+        for (size_t d = 0; d < ys.size(); ++d) xIdx = add(xIdx, mul(idx[d], intConst(xst[perm[d]])));
+        perElement = {store(kb.param(y), var("i"), kb.loadValue(x, xIdx))};
+    } else if (name == "constant") {
+        ExprPtr value = typeOf(y) == ScalarType::F32 ? floatConst(op.getDoubleAttr("value"))
+                                                     : cast(typeOf(y), intConst(static_cast<int64_t>(op.getDoubleAttr("value"))));
+        perElement = {store(kb.param(y), var("i"), value)};
+    } else {
+        throw IRError("GPU lowering: no kernel for '" + name + "'");
+    }
+    int64_t grid = gridFor(n, kThreads);
+    Body body = {let("i", ScalarType::I64, add(mul(var("bx"), intConst(kThreads)), var("tx")))};
+    Body g = guarded(var("i"), n, grid * kThreads, std::move(perElement));
+    body.insert(body.end(), g.begin(), g.end());
+    out.push_back(kb.finish({}, k, true));
+    out.back().kernel.body = gpuLaunch(out.back().kernel, {grid, 1, 1}, {kThreads, 1, 1}, std::move(body));
+    return out;
+}
+
 } // namespace
 
 std::vector<LoweredKernel> lowerFunction(const Function& func, const std::vector<dlc::Kernel>& kernels,
                                          const BufferAssignment& buffers, Target target) {
-    if (target != Target::CPU) throw IRError("lowering: the GPU schedules arrive in P5");
     SlotTracker names(func);
     std::vector<LoweredKernel> out;
+    const bool gpu = target == Target::GPU;
     for (const dlc::Kernel& k : kernels) {
         std::vector<LoweredKernel> lowered;
         switch (k.kind) {
-            case KernelKind::Elementwise: lowered = lowerElementwise(k, buffers, names); break;
-            case KernelKind::Matmul: lowered = lowerMatmul(k, buffers, names); break;
-            case KernelKind::Reduction: lowered = lowerReduction(k, buffers, names); break;
-            case KernelKind::Row: lowered = lowerRow(k, buffers, names); break;
-            default: lowered = lowerOther(k, buffers, names); break;
+            case KernelKind::Elementwise: lowered = gpu ? gpuElementwise(k, buffers, names) : lowerElementwise(k, buffers, names); break;
+            case KernelKind::Matmul: lowered = gpu ? gpuMatmul(k, buffers, names) : lowerMatmul(k, buffers, names); break;
+            case KernelKind::Reduction: lowered = gpu ? gpuReduction(k, buffers, names) : lowerReduction(k, buffers, names); break;
+            case KernelKind::Row: lowered = gpu ? gpuRow(k, buffers, names) : lowerRow(k, buffers, names); break;
+            default: lowered = gpu ? gpuOther(k, buffers, names) : lowerOther(k, buffers, names); break;
         }
         for (auto& l : lowered) {
             // Loop passes: guards for data-dependent indices, bounds-check elimination, then the dependence check.

@@ -1,5 +1,6 @@
 #include "dlc/compiler/Compiler.h"
 #include "dlc/backends/llvm/CpuJit.h"
+#include "dlc/backends/llvm/Ptx.h"
 #include "dlc/ir/Error.h"
 #include "dlc/ir/Parser.h"
 #include "dlc/ir/SlotTracker.h"
@@ -20,17 +21,18 @@ namespace {
 
 class InterpreterRunner : public runtime::KernelRunner {
 public:
-    explicit InterpreterRunner(std::vector<loopir::Kernel> kernels) : kernels_(std::move(kernels)) {}
+    InterpreterRunner(std::vector<loopir::Kernel> kernels, std::string name) : kernels_(std::move(kernels)), name_(std::move(name)) {}
 
     void run(int kernel, void** args, int64_t begin, int64_t end) override {
         const loopir::Kernel& k = kernels_.at(kernel);
         std::vector<void*> buffers(args, args + k.globalBuffers().size());
         loopir::interpret(k, buffers, begin, end);
     }
-    std::string name() const override { return "interp"; }
+    std::string name() const override { return name_; }
 
 private:
     std::vector<loopir::Kernel> kernels_;
+    std::string name_;
 };
 
 class JitRunner : public runtime::KernelRunner {
@@ -49,10 +51,13 @@ runtime::Slot slotOf(const Buffer& b) { return {b.region, b.offset, b.size}; }
 DataType dtypeOf(const Value& v) { return static_cast<const TensorType&>(*v.getType()).getElementType(); }
 const Shape& shapeOf(const Value& v) { return static_cast<const TensorType&>(*v.getType()).getShape(); }
 
-} // namespace
+// The graph pipeline, fusion, buffer assignment and lowering for one target: the plan and its loop kernels.
+struct Lowered {
+    runtime::Plan plan;
+    std::vector<loopir::Kernel> kernels;
+};
 
-std::unique_ptr<runtime::Executable> compile(const std::string& irText, const CompileOptions& options,
-                                             CompileDumps* dumps) {
+Lowered lowerToPlan(const std::string& irText, const CompileOptions& options, loopir::Target target, CompileDumps* dumps) {
     ModulePtr module = IRParser::parseModule(irText);
     if (module->getFunctions().empty()) throw IRError("compile: the input has no function");
     auto input = Verifier::verify(*module);
@@ -83,7 +88,7 @@ std::unique_ptr<runtime::Executable> compile(const std::string& irText, const Co
     const std::vector<Kernel>& kernels = fusion.getKernels();
     BufferAssignment buffers(func, kernels);
     buffers.verify();
-    auto lowered = loopir::lowerFunction(func, kernels, buffers, loopir::Target::CPU);
+    auto lowered = loopir::lowerFunction(func, kernels, buffers, target);
 
     // The plan: arguments and results with their slots, the launches in order, the final copies.
     runtime::Plan plan;
@@ -110,7 +115,11 @@ std::unique_ptr<runtime::Executable> compile(const std::string& irText, const Co
         launch.kernel = static_cast<int>(i);
         launch.name = lowered[i].kernel.name;
         for (const Buffer* b : lowered[i].args) launch.args.push_back(slotOf(*b));
-        launch.parallelExtent = lowered[i].kernel.parallelExtent();
+        const loopir::Kernel& lk = lowered[i].kernel;
+        // A simulated GPU launch runs its blocks across the host threads.
+        launch.parallelExtent = lk.gpu ? lk.grid[0] * lk.grid[1] * lk.grid[2] : lk.parallelExtent();
+        launch.grid = lk.grid;
+        launch.block = lk.block;
         launch.flops = lowered[i].kernel.flops;
         launch.bytes = lowered[i].kernel.bytes;
         plan.launches.push_back(std::move(launch));
@@ -126,21 +135,55 @@ std::unique_ptr<runtime::Executable> compile(const std::string& irText, const Co
         dumps->memoryReport = buffers.report(func);
         for (const auto& k : loopKernels) dumps->loopIR += loopir::toString(k);
     }
+    return {std::move(plan), std::move(loopKernels)};
+}
+
+} // namespace
+
+std::unique_ptr<runtime::Executable> compile(const std::string& irText, const CompileOptions& options,
+                                             CompileDumps* dumps) {
+    const bool gpu = options.target == "gpu-sim";
+    if (!gpu && options.target != "cpu" && options.target != "interp") {
+        throw IRError("compile: unknown target '" + options.target + "' (cpu, interp or gpu-sim; 'cuda' builds a GpuArtifact)");
+    }
+    auto [plan, loopKernels] = lowerToPlan(irText, options, gpu ? loopir::Target::GPU : loopir::Target::CPU, dumps);
 
     std::unique_ptr<runtime::KernelRunner> runner;
-    if (options.target == "interp") {
-        runner = std::make_unique<InterpreterRunner>(loopKernels);
-    } else if (options.target == "cpu") {
+    if (options.target == "interp" || gpu) {
+        runner = std::make_unique<InterpreterRunner>(loopKernels, options.target);
+    } else {
         auto jit = std::make_unique<backends::llvm_emit::CpuJit>(loopKernels);
         if (dumps) {
             dumps->llvmIR = jit->emittedIR();
             dumps->llvmIROpt = jit->optimizedIR();
         }
         runner = std::make_unique<JitRunner>(std::move(jit));
-    } else {
-        throw IRError("compile: unknown target '" + options.target + "' (cpu or interp)");
     }
     return std::make_unique<runtime::Executable>(std::move(plan), std::move(runner), options.threads);
+}
+
+GpuArtifact compileGpu(const std::string& irText, const CompileOptions& options, CompileDumps* dumps, bool ptx,
+                       const std::string& arch) {
+    auto [plan, kernels] = lowerToPlan(irText, options, loopir::Target::GPU, dumps);
+    GpuArtifact out;
+    out.plan = std::move(plan);
+    out.kernels = std::move(kernels);
+    out.arch = arch;
+    if (ptx) {
+        auto module = backends::llvm_emit::compilePtx(out.kernels, arch);
+        out.ptx = std::move(module.ptx);
+        if (dumps) {
+            dumps->llvmIR = std::move(module.emittedIR);
+            dumps->llvmIROpt = std::move(module.optimizedIR);
+        }
+    }
+    return out;
+}
+
+void simulateLaunch(const GpuArtifact& artifact, int kernel, const std::vector<void*>& args) {
+    const loopir::Kernel& k = artifact.kernels.at(kernel);
+    const auto& g = k.grid;
+    loopir::interpret(k, args, 0, g[0] * g[1] * g[2]);
 }
 
 std::vector<loopir::LoweredKernel> lowerForInspection(Function& func, loopir::Target target) {

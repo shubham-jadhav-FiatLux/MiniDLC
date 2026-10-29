@@ -149,6 +149,13 @@ ExprPtr shuffleDown(ExprPtr value, ExprPtr delta) {
     return e;
 }
 
+ExprPtr shuffleXor(ExprPtr value, ExprPtr laneMask) {
+    auto e = make(ExprKind::Shuffle, value->type);
+    e->butterfly = true;
+    e->args = {std::move(value), std::move(laneMask)};
+    return e;
+}
+
 StmtPtr forLoop(const std::string& v, int64_t extent, LoopKind kind, Body body, int width) {
     auto s = std::make_shared<Stmt>();
     s->kind = StmtKind::For;
@@ -319,7 +326,9 @@ public:
             case ExprKind::Compare:
                 return "(" + expr(e->args[0]) + " " + compareName(e->compare) + " " + expr(e->args[1]) + ")";
             case ExprKind::Cast: return scalarTypeName(e->type) + "(" + expr(e->args[0]) + ")";
-            case ExprKind::Shuffle: return "shfl_down(" + expr(e->args[0]) + ", " + expr(e->args[1]) + ")";
+            case ExprKind::Shuffle:
+                return std::string(e->butterfly ? "shfl_xor(" : "shfl_down(") + expr(e->args[0]) + ", " +
+                       expr(e->args[1]) + ")";
         }
         return "?";
     }
@@ -397,7 +406,7 @@ std::string toString(const Kernel& kernel) {
         first = false;
     }
     os << ")";
-    if (kernel.grid != std::array<int64_t, 3>{1, 1, 1} || kernel.block != std::array<int64_t, 3>{1, 1, 1}) {
+    if (kernel.gpu) {
         os << " grid(" << kernel.grid[0] << "," << kernel.grid[1] << "," << kernel.grid[2] << ") block("
            << kernel.block[0] << "," << kernel.block[1] << "," << kernel.block[2] << ")";
     }

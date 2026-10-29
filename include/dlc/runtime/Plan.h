@@ -2,6 +2,7 @@
 
 #include "dlc/ir/Function.h"
 #include "dlc/passes/BufferAssignment.h"
+#include <array>
 #include <optional>
 #include <string>
 #include <vector>
@@ -39,6 +40,8 @@ struct Launch {
     std::string name;
     std::vector<Slot> args;
     int64_t parallelExtent{1};
+    std::array<int64_t, 3> grid{1, 1, 1}; // GPU launch configuration
+    std::array<int64_t, 3> block{1, 1, 1};
     double flops{0.0};
     int64_t bytes{0};
 };
@@ -59,5 +62,9 @@ struct Plan {
     std::vector<Launch> launches;
     std::vector<Copy> copies;
 };
+
+// The plan as JSON, for runtimes outside this process (the CUDA runtime in python/minidlc/gpu.py): every field above;
+// slots as {"region": "persistent"|"transient", "offset", "bytes"}.
+std::string toJson(const Plan& plan);
 
 } // namespace dlc::runtime

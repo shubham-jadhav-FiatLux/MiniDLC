@@ -1,0 +1,175 @@
+{
+ "function": "forward",
+ "persistent_bytes": 814336,
+ "transient_bytes": 4160000,
+ "args": [
+  {
+   "name": "x",
+   "role": "input",
+   "dtype": "f32",
+   "shape": [
+    1000,
+    784
+   ],
+   "slot": {
+    "region": "transient",
+    "offset": 0,
+    "bytes": 3136000
+   },
+   "init": null
+  },
+  {
+   "name": "weight",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    784,
+    256
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 0,
+    "bytes": 802816
+   },
+   "init": null
+  },
+  {
+   "name": "bias",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    256
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 802816,
+    "bytes": 1024
+   },
+   "init": null
+  },
+  {
+   "name": "weight_1",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    256,
+    10
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 803840,
+    "bytes": 10240
+   },
+   "init": null
+  },
+  {
+   "name": "bias_1",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    10
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 814080,
+    "bytes": 40
+   },
+   "init": null
+  }
+ ],
+ "results": [
+  {
+   "kind": "value",
+   "arg": "",
+   "dtype": "f32",
+   "shape": [
+    1000,
+    10
+   ],
+   "slot": {
+    "region": "transient",
+    "offset": 0,
+    "bytes": 40000
+   }
+  }
+ ],
+ "launches": [
+  {
+   "kernel": 0,
+   "name": "k0_matmul_add_relu",
+   "grid": [
+    4,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 401920000,
+   "bytes": 4963840,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 3136000
+    },
+    {
+     "region": "persistent",
+     "offset": 0,
+     "bytes": 802816
+    },
+    {
+     "region": "persistent",
+     "offset": 802816,
+     "bytes": 1024
+    },
+    {
+     "region": "transient",
+     "offset": 3136000,
+     "bytes": 1024000
+    }
+   ]
+  },
+  {
+   "kernel": 1,
+   "name": "k1_matmul_add",
+   "grid": [
+    1,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 5130000,
+   "bytes": 1074280,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 3136000,
+     "bytes": 1024000
+    },
+    {
+     "region": "persistent",
+     "offset": 803840,
+     "bytes": 10240
+    },
+    {
+     "region": "persistent",
+     "offset": 814080,
+     "bytes": 40
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 40000
+    }
+   ]
+  }
+ ],
+ "copies": []
+}

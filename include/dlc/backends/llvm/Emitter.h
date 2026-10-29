@@ -22,6 +22,11 @@ namespace dlc::backends::llvm_emit {
 // decision is the schedule's.
 std::unique_ptr<llvm::Module> emitCpuModule(const std::vector<loopir::Kernel>& kernels, llvm::LLVMContext& context);
 
+// The GPU kernels (bound loops) for NVPTX: one `ptx_kernel` function per kernel taking its global buffers as
+// `ptr addrspace(1) noalias`; shared buffers are addrspace(3) globals; see KernelEmitter::emitGpu.
+std::unique_ptr<llvm::Module> emitGpuModule(const std::vector<loopir::Kernel>& kernels, llvm::LLVMContext& context,
+                                            llvm::TargetMachine& machine);
+
 // Runs LLVM's O3 pipeline for `machine` (its TTI drives the vectorizer's cost model).
 void optimizeModule(llvm::Module& module, llvm::TargetMachine& machine);
 

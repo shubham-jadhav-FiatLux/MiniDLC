@@ -1,6 +1,7 @@
 #include "dlc/backends/llvm/CpuJit.h"
 #include "dlc/compiler/Compiler.h"
 #include "dlc/ir/Error.h"
+#include "dlc/ir/Parser.h"
 #include "dlc/loopir/Analysis.h"
 #include "dlc/loopir/Interpreter.h"
 #include "dlc/loopir/LoopIR.h"
@@ -170,6 +171,99 @@ TEST(Interpreter, ChecksEveryAccess) {
     EXPECT_EQ(out, std::vector<float>(8, 3.0f));
     k.body[0]->extent = 9;
     EXPECT_THROW(interpret(k, {a.data(), b.data(), out.data()}), IRError);
+}
+
+// A one-block GPU kernel of `threads` threads (x) with buffers a (input) and out, both of `threads` elements.
+struct GpuKernel {
+    loopir::Kernel k;
+    int a, out;
+};
+
+GpuKernel oneBlock(int64_t threads) {
+    GpuKernel g;
+    g.k.name = "gpu";
+    g.k.gpu = true;
+    g.k.block = {threads, 1, 1};
+    g.a = g.k.addBuffer({"%a", ScalarType::F32, {threads}, MemScope::Global});
+    g.out = g.k.addBuffer({"%out", ScalarType::F32, {threads}, MemScope::Global});
+    return g;
+}
+
+void launch(GpuKernel& g, Body body, std::vector<float>& a, std::vector<float>& out) {
+    g.k.body = {boundLoop("bx", 1, BindAxis::BlockX, {boundLoop("tx", g.k.block[0], BindAxis::ThreadX, std::move(body))})};
+    interpret(g.k, {a.data(), out.data()});
+}
+
+TEST(GpuInterpreter, ButterflyShufflesReduceEachWarp) {
+    GpuKernel g = oneBlock(64);
+    Body body = {let("v", ScalarType::F32, load(g.a, i64("tx"), ScalarType::F32))};
+    for (int step = 16; step >= 1; step /= 2) {
+        body.push_back(assign("v", add(var("v", ScalarType::F32), shuffleXor(var("v", ScalarType::F32), intConst(step)))));
+    }
+    body.push_back(store(g.out, i64("tx"), var("v", ScalarType::F32)));
+    std::vector<float> a(64), out(64);
+    for (int i = 0; i < 64; ++i) a[i] = static_cast<float>(i);
+    launch(g, body, a, out);
+    for (int i = 0; i < 64; ++i) EXPECT_EQ(out[i], i < 32 ? 496.0f : 1520.0f) << i; // 0+..+31, 32+..+63
+}
+
+TEST(GpuInterpreter, ShuffleDownKeepsTheLanesOwnValuePastTheEnd) {
+    GpuKernel g = oneBlock(32);
+    Body body = {store(g.out, i64("tx"), shuffleDown(load(g.a, i64("tx"), ScalarType::F32), intConst(4)))};
+    std::vector<float> a(32), out(32);
+    for (int i = 0; i < 32; ++i) a[i] = static_cast<float>(i);
+    launch(g, body, a, out);
+    for (int i = 0; i < 32; ++i) EXPECT_EQ(out[i], i + 4 < 32 ? i + 4 : i) << i;
+}
+
+TEST(GpuInterpreter, SharedMemoryAndBarriers) {
+    GpuKernel g = oneBlock(48);
+    int s = g.k.addBuffer({"tile", ScalarType::F32, {48}, MemScope::Shared});
+    Body body = {store(s, i64("tx"), load(g.a, i64("tx"), ScalarType::F32)), barrier(),
+                 store(g.out, i64("tx"), load(s, sub(intConst(47), i64("tx")), ScalarType::F32))};
+    std::vector<float> a(48), out(48);
+    for (int i = 0; i < 48; ++i) a[i] = static_cast<float>(i);
+    launch(g, body, a, out);
+    for (int i = 0; i < 48; ++i) EXPECT_EQ(out[i], 47.0f - i) << i;
+}
+
+TEST(GpuInterpreter, SharedMemoryStartsAsNaN) {
+    GpuKernel g = oneBlock(8);
+    int s = g.k.addBuffer({"tile", ScalarType::F32, {8}, MemScope::Shared});
+    Body body = {store(g.out, i64("tx"), load(s, i64("tx"), ScalarType::F32))};
+    std::vector<float> a(8), out(8);
+    launch(g, body, a, out);
+    for (float v : out) EXPECT_TRUE(std::isnan(v));
+}
+
+TEST(GpuInterpreter, RejectsDivergentBarriersAndShufflesOfInactiveLanes) {
+    GpuKernel g = oneBlock(32);
+    std::vector<float> a(32), out(32);
+    Body divergent = {ifThen(compare(CompareOp::LT, i64("tx"), intConst(16)), {barrier()})};
+    try {
+        launch(g, divergent, a, out);
+        FAIL() << "a barrier reached by half the block must be rejected";
+    } catch (const IRError& e) {
+        EXPECT_NE(std::string(e.what()).find("divergent barrier"), std::string::npos) << e.what();
+    }
+    Body inactive = {ifThen(compare(CompareOp::LT, i64("tx"), intConst(16)),
+                            {store(g.out, i64("tx"), shuffleXor(load(g.a, i64("tx"), ScalarType::F32), intConst(16)))})};
+    EXPECT_THROW(launch(g, inactive, a, out), IRError);
+}
+
+TEST(GpuSchedules, MatmulGuardsDisappearForDivisibleShapes) {
+    auto lowered = [](const char* ir) {
+        ModulePtr m = IRParser::parseModule(ir);
+        return compiler::lowerForInspection(*m->getFunctions()[0], Target::GPU);
+    };
+    auto even = lowered("func @f(%a: f32[128,64], %b: f32[64,128]) -> f32[128,128] {\n  %0 = matmul(%a, %b)\n  return %0\n}\n");
+    ASSERT_EQ(even.size(), 1u);
+    std::string text = toString(even[0].kernel);
+    EXPECT_EQ(text.find("if ("), std::string::npos) << text;
+    EXPECT_NE(text.find("barrier"), std::string::npos) << text;
+    EXPECT_EQ(even[0].kernel.grid, (std::array<int64_t, 3>{2, 2, 1}));
+    auto odd = lowered("func @f(%a: f32[100,60], %b: f32[60,70]) -> f32[100,70] {\n  %0 = matmul(%a, %b)\n  return %0\n}\n");
+    EXPECT_NE(toString(odd[0].kernel).find("if ("), std::string::npos);
 }
 
 TEST(CpuJit, CompiledKernelMatchesTheInterpreter) {

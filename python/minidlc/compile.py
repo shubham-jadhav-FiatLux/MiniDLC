@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import Callable, Dict, Any, Optional, List, Tuple
+import json
 import time
 import numpy as np
 from .tensor import Tensor
@@ -35,11 +36,16 @@ def compile(
     - "cpu": the MiniDLC compiler (autodiff and optimizer lowering in C++, fusion, buffer assignment, loop IR with CPU
       schedules, LLVM, ORC JIT). Needs the compiled `_minidlc` module (built by CMake).
     - "interp": the same compiled plan, run by the loop IR interpreter (slow; for testing).
+    - "gpu-sim": the GPU schedules (bound loops, shared memory, barriers, warp shuffles, atomics) run by the lockstep
+      GPU interpreter on the host — the semantics the "cuda" target executes, checkable without a GPU (slow).
+    - "cuda": the GPU schedules compiled to PTX through LLVM's NVPTX backend, run on an NVIDIA GPU by the CUDA
+      driver (minidlc.gpu). To run on a machine without the compiler, build an artifact with `compile_gpu`, save it,
+      and load it there with `minidlc.gpu.load` (docs/gpu.md).
     - "reference": the NumPy interpreter, with its own reverse-mode autodiff and the eager optimizer — the oracle.
     - "handwritten": the hand-written AVX2 LLVM IR kernels for a fixed two-layer ReLU MLP (a benchmark baseline;
       other models get wrong results).
     """
-    if target in ("cpu", "interp"):
+    if target in ("cpu", "interp", "gpu-sim", "cuda"):
         return CompiledFunction(loss, optimizer, target, profile=profile, threads=threads)
     if target == "reference":
         interp = ReferenceInterpreter(dtype=np.float32)
@@ -365,8 +371,6 @@ def compile(
 
         return step_fn
 
-    elif target == "cuda":
-        raise NotImplementedError("target='cuda' runs compiled artifacts on a GPU; see docs/gpu.md")
     else:
         raise ValueError(f"Unknown target: {target}")
 
@@ -390,33 +394,17 @@ class CompiledFunction:
     """
 
     def __init__(self, outputs, optimizer: Optional[Optimizer], target: str, profile: bool = False, threads: int = 0):
-        from . import ir
-        try:
-            from . import _minidlc
-        except ImportError as e:  # pragma: no cover - depends on the build
-            raise RuntimeError("target='cpu' needs the compiled _minidlc module: build the project with CMake "
-                               "(see README.md)") from e
-        roots = [outputs] if isinstance(outputs, Tensor) else list(outputs)
-        self.training = optimizer is not None
-        if self.training and (len(roots) != 1 or roots[0].shape != ()):
-            raise ValueError("a training step needs a single scalar loss")
-        params = optimizer.parameters if optimizer is not None else None
-        self.function = ir.export(roots, name="step" if self.training else "forward", params=params)
-        self.executable, self.dumps = _minidlc.compile(self.function.to_text(), target,
-                                                       {**_optimizer_options(optimizer), "threads": threads})
-        for name, value in self.function.bindings.items():
-            self.executable.set(name, np.asarray(value, dtype=np.int32 if value.dtype.kind in "iu" else np.float32,
-                                                 order="C"))
-        tensors = {}
-        _collect_leaves(roots, tensors)
-        self._params = {self.function.arg_of[i]: t for i, t in tensors.items()
-                        if i in self.function.arg_of and getattr(t, "op", None) == "parameter"}
-        self._inputs = {}
-        for i, t in tensors.items():
-            if t.op == "placeholder" and i in self.function.arg_of:
-                if t.name in self._inputs:
-                    raise ValueError(f"two placeholders are named '{t.name}'")
-                self._inputs[t.name] = (self.function.arg_of[i], np.int32 if t.dtype == "i32" else np.float32)
+        _minidlc = _compiler_module(target)
+        self.function, self.training, self._params, self._inputs = _export(outputs, optimizer)
+        options = {**_optimizer_options(optimizer), "threads": threads}
+        if target == "cuda":
+            from . import gpu
+            artifact, self.dumps = _gpu_artifact(_minidlc, self.function, options, self._inputs, self.training)
+            self.executable = gpu.GpuExecutable(artifact)
+        else:
+            self.executable, self.dumps = _minidlc.compile(self.function.to_text(), target, options)
+            for name, value in _values(self.function).items():
+                self.executable.set(name, value)
         self.executable.set_profiling(profile)
 
     def __call__(self, **feeds: np.ndarray):
@@ -447,6 +435,72 @@ class CompiledFunction:
             per = p["seconds"] / p["calls"]
             print(f"{p['name']:42s} {p['calls']:6d} {1e3 * per:9.3f} {100 * p['seconds'] / total:5.1f}% "
                   f"{p['flops'] / per / 1e9 if per else 0:8.2f} {p['bytes'] / per / 1e9 if per else 0:7.2f}")
+
+
+def _compiler_module(target: str):
+    try:
+        from . import _minidlc
+    except ImportError as e:  # pragma: no cover - depends on the build
+        raise RuntimeError(f"target='{target}' needs the compiled _minidlc module: build the project with CMake "
+                           "(see README.md)") from e
+    return _minidlc
+
+
+def _export(outputs, optimizer: Optional[Optimizer]):
+    """The graph as an IR function, plus the parameters and placeholders by argument name."""
+    from . import ir
+    roots = [outputs] if isinstance(outputs, Tensor) else list(outputs)
+    training = optimizer is not None
+    if training and (len(roots) != 1 or roots[0].shape != ()):
+        raise ValueError("a training step needs a single scalar loss")
+    params = optimizer.parameters if optimizer is not None else None
+    function = ir.export(roots, name="step" if training else "forward", params=params)
+    tensors = {}
+    _collect_leaves(roots, tensors)
+    param_tensors = {function.arg_of[i]: t for i, t in tensors.items()
+                     if i in function.arg_of and getattr(t, "op", None) == "parameter"}
+    inputs = {}
+    for i, t in tensors.items():
+        if t.op == "placeholder" and i in function.arg_of:
+            if t.name in inputs:
+                raise ValueError(f"two placeholders are named '{t.name}'")
+            inputs[t.name] = (function.arg_of[i], np.int32 if t.dtype == "i32" else np.float32)
+    return function, training, param_tensors, inputs
+
+
+def _values(function) -> Dict[str, np.ndarray]:
+    """The initial values of the params and consts, by argument name."""
+    return {name: np.asarray(value, dtype=np.int32 if value.dtype.kind in "iu" else np.float32, order="C")
+            for name, value in function.bindings.items()}
+
+
+def _gpu_artifact(_minidlc, function, options, inputs, training, ptx=True, arch="sm_75"):
+    from . import gpu
+    compiled, dumps = _minidlc.compile_gpu(function.to_text(), options, ptx, arch)
+    artifact = gpu.GpuArtifact(
+        plan=json.loads(compiled.plan_json), ptx=compiled.ptx, arch=arch,
+        inputs={name: [arg, "i32" if dtype == np.int32 else "f32"] for name, (arg, dtype) in inputs.items()},
+        values=_values(function), training=training, source=function.to_text(), options=dict(options),
+        compiled=compiled)
+    return artifact, dumps
+
+
+def compile_gpu(loss: Tensor, optimizer: Optional[Optimizer] = None, arch: str = "sm_75", ptx: bool = True,
+                parameters: Optional[List[Tensor]] = None):
+    """Compiles the graph that computes `loss` (a training step with an optimizer) for NVIDIA GPUs and returns a
+    `minidlc.gpu.GpuArtifact`: the plan, the PTX, the initial parameter values and the input names. `save()` it and run
+    it anywhere with a CUDA driver through `minidlc.gpu.load` — no compiler needed there.
+
+    `parameters` (default: the optimizer's) numbers the parameters, so that artifacts of different graphs over the same
+    model — a training step and an evaluation function — can exchange weights (`GpuFunction.get_params/set_params`).
+    """
+    _minidlc = _compiler_module("cuda")
+    function, training, param_tensors, inputs = _export(loss, optimizer)
+    artifact, _ = _gpu_artifact(_minidlc, function, _optimizer_options(optimizer), inputs, training, ptx, arch)
+    numbering = parameters if parameters is not None else (optimizer.parameters if optimizer is not None else [])
+    index = {id(t): i for i, t in enumerate(numbering)}
+    artifact.params = {arg: index[id(t)] for arg, t in param_tensors.items() if id(t) in index}
+    return artifact
 
 
 def _collect_leaves(roots, out) -> None:

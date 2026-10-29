@@ -1,37 +1,31 @@
-// RUN: %dlc-opt --passes=autodiff,fusion,mem-plan --emit-cuda %s | FileCheck %s
+// A training step on the GPU: autodiff emits matmuls with transpose flags (read through the tile loads' indexing,
+// no transpose kernels) and a scatter_add for the embedding's gradient, which becomes a fill and an atomic add per
+// element (red.global.add.f32). The loss of each row is added atomically by lane 0; an out-of-range label adds NaN.
+// SGD updates the weight in the epilogue of its gradient's matmul, in place.
+// RUN: %dlc-opt "--passes=autodiff,sgd{lr=0.1},canonicalize,cse,dce" --target=gpu --emit-loopir %s | FileCheck %s
+// RUN: %dlc-opt "--passes=autodiff,sgd{lr=0.1},canonicalize,cse,dce" --target=gpu --emit-ptx %s | FileCheck %s --check-prefix=PTX
 
-// XFAIL: *
-// The v1 CUDA templates are chosen by kernel name and ignore matmul's transpose flags, which autodiff now emits instead
-// of transpose ops. P5 replaces them with the NVPTX emitter and PTX golden tests.
+// CHECK-LABEL: kernel @k2_cross_entropy_zero(
+// CHECK-LABEL: kernel @k2_cross_entropy_rows(
+// CHECK:       if (tx == 0) {
+// CHECK:           atomic_add(%2[0], (((log(s) + m) - %1[((bx * 10) + target)]) * 0.0416666667));
+// CHECK:           atomic_add(%2[0], nan);
+// CHECK-LABEL: kernel @k6_matmul(%7: f32[24,10], %w: f32[32,10], %8: f32[24,32])
+// CHECK:             Bs1[e] = %w[((bc * 10) + bk)];
+// CHECK-LABEL: kernel @k7_matmul_mul_sub(%0: f32[24,32], %7: f32[24,10], %w: f32[32,10])
+// CHECK:               %w[((row * 10) + col)] =
+// CHECK-LABEL: kernel @k8_scatter_add_zero(%10: f32[50,32]) grid(7,1,1) block(256,1,1) {
+// CHECK-LABEL: kernel @k8_scatter_add(%ids: i32[24], %8: f32[24,32], %10: f32[50,32]) grid(3,1,1) block(256,1,1) {
+// CHECK:           atomic_add(%10[((id * 32) + d)], %8[i]);
 
-// CHECK: // Shared-memory tiled matrix multiplication kernel (Transposed B: C = A @ B^T)
-// CHECK: __global__ void matmul_transB(char* __restrict__ arena, int M, int K, int N) {
-// CHECK:     const int TILE_DIM = 16;
-// CHECK:     __shared__ float sA[TILE_DIM][TILE_DIM];
-// CHECK:     __shared__ float sB[TILE_DIM][TILE_DIM];
-// CHECK:         __syncthreads();
-// CHECK:         #pragma unroll
-// CHECK:         for (int k = 0; k < TILE_DIM; ++k) {
-// CHECK:             acc += sA[threadIdx.y][k] * sB[k][threadIdx.x];
-// CHECK:         }
-// CHECK:         __syncthreads();
+// PTX-LABEL: .entry k2_cross_entropy_rows(
+// PTX: red.global.add.f32
+// PTX-LABEL: .entry k8_scatter_add(
+// PTX: red.global.add.f32
 
-// CHECK: // Shared-memory tiled matrix multiplication kernel (Transposed A: C = A^T @ B)
-// CHECK: __global__ void matmul_transA(char* __restrict__ arena, int M, int K, int N) {
-// CHECK:     const int TILE_DIM = 16;
-// CHECK:     __shared__ float sA[TILE_DIM][TILE_DIM];
-// CHECK:     __shared__ float sB[TILE_DIM][TILE_DIM];
-// CHECK:         sA[threadIdx.x][threadIdx.y] = (k_idx_A < K && m_idx_A < M) ? A[k_idx_A * M + m_idx_A] : 0.0f;
-// CHECK:         __syncthreads();
-// CHECK:         #pragma unroll
-// CHECK:         for (int k = 0; k < TILE_DIM; ++k) {
-// CHECK:             acc += sA[threadIdx.y][k] * sB[k][threadIdx.x];
-// CHECK:         }
-// CHECK:         __syncthreads();
-
-func @test_cuda_backward(%x: f32[128,784], %w: f32[784,256] {param}) -> f32[] {
-  %0 = matmul(%x, %w) : f32[128,256]
-  %1 = relu(%0) : f32[128,256]
-  %2 = sum(%1) : f32[]
+func @step(%ids: i32[24], %y: i32[24], %table: f32[50,32] {param}, %w: f32[32,10] {param}) -> f32[] {
+  %0 = embedding(%table, %ids) : f32[24,32]
+  %1 = matmul(%0, %w) : f32[24,10]
+  %2 = cross_entropy(%1, %y) : f32[]
   return %2
 }

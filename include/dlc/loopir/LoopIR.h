@@ -26,8 +26,9 @@ struct Expr;
 using ExprPtr = std::shared_ptr<const Expr>;
 
 // An immutable expression tree. Load reads buffer `buffer` at the flat element index args[0]; Fma is a*b+c with
-// args {a, b, c}; MaxNaN is max(a, b) that returns NaN if either is NaN; Shuffle reads args[0] from the lane
-// `args[1]` lanes down in the same warp (GPU).
+// args {a, b, c}; MaxNaN is max(a, b) that returns NaN if either is NaN. Shuffle (GPU) reads args[0] from another
+// lane of the warp: `args[1]` lanes down (keeping its own value past the end), or the lane whose index is this
+// lane's XOR args[1] (a butterfly step, after which every lane holds the reduction).
 struct Expr {
     ExprKind kind{ExprKind::Int};
     ScalarType type{ScalarType::I64};
@@ -38,6 +39,7 @@ struct Expr {
     BinaryOp binary{BinaryOp::Add};
     UnaryOp unary{UnaryOp::Neg};
     CompareOp compare{CompareOp::LT};
+    bool butterfly{false}; // Shuffle: XOR lane instead of lane + delta
     std::vector<ExprPtr> args;
 };
 
@@ -53,6 +55,7 @@ ExprPtr select(ExprPtr cond, ExprPtr a, ExprPtr b);
 ExprPtr compare(CompareOp op, ExprPtr a, ExprPtr b);
 ExprPtr cast(ScalarType type, ExprPtr a);
 ExprPtr shuffleDown(ExprPtr value, ExprPtr delta);
+ExprPtr shuffleXor(ExprPtr value, ExprPtr laneMask);
 inline ExprPtr add(ExprPtr a, ExprPtr b) { return binary(BinaryOp::Add, std::move(a), std::move(b)); }
 inline ExprPtr sub(ExprPtr a, ExprPtr b) { return binary(BinaryOp::Sub, std::move(a), std::move(b)); }
 inline ExprPtr mul(ExprPtr a, ExprPtr b) { return binary(BinaryOp::Mul, std::move(a), std::move(b)); }
@@ -124,6 +127,7 @@ struct Kernel {
     std::string name;
     std::vector<BufferDecl> buffers;
     Body body;
+    bool gpu{false}; // bound loops: grid and block below
     std::array<int64_t, 3> grid{1, 1, 1};
     std::array<int64_t, 3> block{1, 1, 1};
     double flops{0.0};

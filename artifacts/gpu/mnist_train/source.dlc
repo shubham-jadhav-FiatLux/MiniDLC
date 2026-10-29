@@ -1,0 +1,9 @@
+func @step(%x: f32[128,784], %y: i32[128], %weight: f32[784,256] {param}, %bias: f32[256] {param}, %weight_1: f32[256,10] {param}, %bias_1: f32[10] {param}) -> f32[] {
+  %0 = matmul(%x, %weight) : f32[128,256]
+  %1 = add(%0, %bias) : f32[128,256]
+  %2 = relu(%1) : f32[128,256]
+  %3 = matmul(%2, %weight_1) : f32[128,10]
+  %4 = add(%3, %bias_1) : f32[128,10]
+  %5 = cross_entropy(%4, %y) : f32[]
+  return %5
+}

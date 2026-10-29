@@ -296,3 +296,33 @@ pass, and re-measurement — found that v1 was not the integrated compiler the e
   memory plan; the LLVM division bug test passes), 63 differential tests of every op through the generated code, 10
   compiled-vs-eager training tests.
 
+## P5 — The GPU backend (2026-10-29)
+
+- **GPU schedules** (`lib/loopir/Lowering.cpp`): loops bound to `blockIdx`/`threadIdx`; matmuls in 64×64 output tiles
+  per 16×16-thread block, k staged through shared memory 16 at a time (the A tile transposed and padded to 65 columns),
+  a 4×4 register tile per thread with interleaved columns so that a warp reads consecutive words, and the epilogue
+  applied in registers; elementwise, gather, transpose and fill kernels with a thread per element; row kernels
+  (softmax, log-softmax, layernorm, cross-entropy) and suffix reductions with a warp per row and butterfly shuffles;
+  scatters and the loss with a fill kernel plus atomic adds. Edge guards are emitted where the grid overshoots, and
+  bounds-check elimination removes the matmul guards when M and N are multiples of 64 and K of 16.
+- **Lockstep GPU interpreter** (`lib/loopir/Interpreter.cpp`): the threads of a block execute statement by statement;
+  `if` splits the active set; a barrier reached by part of a block is an error, as is a shuffle that reads an inactive
+  lane; shared memory starts as NaN. Blocks run on the host thread pool (atomics with `std::atomic_ref`). It is the
+  `gpu-sim` target.
+- **NVPTX emission** (`lib/backends/llvm/Emitter.cpp`, `Ptx.cpp`): `ptx_kernel` functions over `ptr addrspace(1)`
+  buffers, shared buffers as addrspace(3) globals, register tiles as allocas that SROA scalarizes, `bar.sync`,
+  `shfl.sync.bfly`, and the NVPTX TargetMachine's O3 pipeline and AsmPrinter. NVPTX has no libm, so `exp`/`log` use
+  `ex2.approx`/`lg2.approx` (like CUDA's `__expf`/`__logf`) and `tanh` goes through `exp(-2|x|)`. LLVM 23 expands
+  `atomicrmw fadd` into a compare-and-swap loop on every target tried, so float atomics are emitted as
+  `red.global.add.f32`.
+- **Artifacts and runtime:** `compileGpu` returns the plan and the PTX; the plan serializes to JSON. `minidlc/gpu.py`
+  replays a plan through the CUDA driver API (ctypes; no CUDA toolkit or compiled module needed), or on a simulated
+  device backed by the lockstep interpreter, which tests the runtime itself. Artifacts (plan, PTX, initial values,
+  source graph) are saved to a directory; `examples/colab_gpu.py` runs the committed MNIST artifacts on a GPU and
+  checks them against the NumPy reference.
+- **Results:** every op matches the reference on `gpu-sim` (the 63 differential tests run on all three targets), and
+  MLP and Char-GPT training trajectories match eager training. ptxas (sm_75) accepts every kernel with no spills; the
+  matmul kernels use 64 registers and 8.25 KiB of shared memory. **Nothing has run on a GPU yet.**
+- **Tests:** 95 GoogleTest tests (GPU interpreter semantics, guard elimination), 19 lit tests (three GPU tests:
+  tiled matmul, warp reductions, a training step with atomics; loop IR, LLVM IR and PTX), 8 GPU runtime tests.
+

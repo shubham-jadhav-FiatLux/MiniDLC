@@ -1,0 +1,1012 @@
+{
+ "function": "step",
+ "persistent_bytes": 2443520,
+ "transient_bytes": 800256,
+ "args": [
+  {
+   "name": "x",
+   "role": "input",
+   "dtype": "f32",
+   "shape": [
+    128,
+    784
+   ],
+   "slot": {
+    "region": "transient",
+    "offset": 0,
+    "bytes": 401408
+   },
+   "init": null
+  },
+  {
+   "name": "y",
+   "role": "input",
+   "dtype": "i32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "transient",
+    "offset": 673792,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "weight",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    784,
+    256
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 0,
+    "bytes": 802816
+   },
+   "init": null
+  },
+  {
+   "name": "bias",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    256
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 802816,
+    "bytes": 1024
+   },
+   "init": null
+  },
+  {
+   "name": "weight_1",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    256,
+    10
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 803840,
+    "bytes": 10240
+   },
+   "init": null
+  },
+  {
+   "name": "bias_1",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    10
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 814080,
+    "bytes": 40
+   },
+   "init": null
+  },
+  {
+   "name": "adam.beta1_pow",
+   "role": "state",
+   "dtype": "f32",
+   "shape": [],
+   "slot": {
+    "region": "persistent",
+    "offset": 814336,
+    "bytes": 4
+   },
+   "init": 1
+  },
+  {
+   "name": "adam.beta2_pow",
+   "role": "state",
+   "dtype": "f32",
+   "shape": [],
+   "slot": {
+    "region": "persistent",
+    "offset": 814592,
+    "bytes": 4
+   },
+   "init": 1
+  },
+  {
+   "name": "weight.m",
+   "role": "state",
+   "dtype": "f32",
+   "shape": [
+    784,
+    256
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 814848,
+    "bytes": 802816
+   },
+   "init": 0
+  },
+  {
+   "name": "weight.v",
+   "role": "state",
+   "dtype": "f32",
+   "shape": [
+    784,
+    256
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 1617664,
+    "bytes": 802816
+   },
+   "init": 0
+  },
+  {
+   "name": "bias.m",
+   "role": "state",
+   "dtype": "f32",
+   "shape": [
+    256
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2420480,
+    "bytes": 1024
+   },
+   "init": 0
+  },
+  {
+   "name": "bias.v",
+   "role": "state",
+   "dtype": "f32",
+   "shape": [
+    256
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2421504,
+    "bytes": 1024
+   },
+   "init": 0
+  },
+  {
+   "name": "weight_1.m",
+   "role": "state",
+   "dtype": "f32",
+   "shape": [
+    256,
+    10
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2422528,
+    "bytes": 10240
+   },
+   "init": 0
+  },
+  {
+   "name": "weight_1.v",
+   "role": "state",
+   "dtype": "f32",
+   "shape": [
+    256,
+    10
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2432768,
+    "bytes": 10240
+   },
+   "init": 0
+  },
+  {
+   "name": "bias_1.m",
+   "role": "state",
+   "dtype": "f32",
+   "shape": [
+    10
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2443008,
+    "bytes": 40
+   },
+   "init": 0
+  },
+  {
+   "name": "bias_1.v",
+   "role": "state",
+   "dtype": "f32",
+   "shape": [
+    10
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2443264,
+    "bytes": 40
+   },
+   "init": 0
+  }
+ ],
+ "results": [
+  {
+   "kind": "value",
+   "arg": "",
+   "dtype": "f32",
+   "shape": [],
+   "slot": {
+    "region": "transient",
+    "offset": 800000,
+    "bytes": 4
+   }
+  },
+  {
+   "kind": "donates",
+   "arg": "weight",
+   "dtype": "f32",
+   "shape": [
+    784,
+    256
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 0,
+    "bytes": 802816
+   }
+  },
+  {
+   "kind": "donates",
+   "arg": "weight.m",
+   "dtype": "f32",
+   "shape": [
+    784,
+    256
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 814848,
+    "bytes": 802816
+   }
+  },
+  {
+   "kind": "donates",
+   "arg": "weight.v",
+   "dtype": "f32",
+   "shape": [
+    784,
+    256
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 1617664,
+    "bytes": 802816
+   }
+  },
+  {
+   "kind": "donates",
+   "arg": "bias",
+   "dtype": "f32",
+   "shape": [
+    256
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 802816,
+    "bytes": 1024
+   }
+  },
+  {
+   "kind": "donates",
+   "arg": "bias.m",
+   "dtype": "f32",
+   "shape": [
+    256
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2420480,
+    "bytes": 1024
+   }
+  },
+  {
+   "kind": "donates",
+   "arg": "bias.v",
+   "dtype": "f32",
+   "shape": [
+    256
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2421504,
+    "bytes": 1024
+   }
+  },
+  {
+   "kind": "donates",
+   "arg": "weight_1",
+   "dtype": "f32",
+   "shape": [
+    256,
+    10
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 803840,
+    "bytes": 10240
+   }
+  },
+  {
+   "kind": "donates",
+   "arg": "weight_1.m",
+   "dtype": "f32",
+   "shape": [
+    256,
+    10
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2422528,
+    "bytes": 10240
+   }
+  },
+  {
+   "kind": "donates",
+   "arg": "weight_1.v",
+   "dtype": "f32",
+   "shape": [
+    256,
+    10
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2432768,
+    "bytes": 10240
+   }
+  },
+  {
+   "kind": "donates",
+   "arg": "bias_1",
+   "dtype": "f32",
+   "shape": [
+    10
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 814080,
+    "bytes": 40
+   }
+  },
+  {
+   "kind": "donates",
+   "arg": "bias_1.m",
+   "dtype": "f32",
+   "shape": [
+    10
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2443008,
+    "bytes": 40
+   }
+  },
+  {
+   "kind": "donates",
+   "arg": "bias_1.v",
+   "dtype": "f32",
+   "shape": [
+    10
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2443264,
+    "bytes": 40
+   }
+  },
+  {
+   "kind": "donates",
+   "arg": "adam.beta1_pow",
+   "dtype": "f32",
+   "shape": [],
+   "slot": {
+    "region": "persistent",
+    "offset": 814336,
+    "bytes": 4
+   }
+  },
+  {
+   "kind": "donates",
+   "arg": "adam.beta2_pow",
+   "dtype": "f32",
+   "shape": [],
+   "slot": {
+    "region": "persistent",
+    "offset": 814592,
+    "bytes": 4
+   }
+  }
+ ],
+ "launches": [
+  {
+   "kernel": 0,
+   "name": "k0_matmul_add_relu_cmp_gt",
+   "grid": [
+    4,
+    2,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 51478528,
+   "bytes": 1467392,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 401408
+    },
+    {
+     "region": "persistent",
+     "offset": 0,
+     "bytes": 802816
+    },
+    {
+     "region": "persistent",
+     "offset": 802816,
+     "bytes": 1024
+    },
+    {
+     "region": "transient",
+     "offset": 401408,
+     "bytes": 131072
+    },
+    {
+     "region": "transient",
+     "offset": 532480,
+     "bytes": 131072
+    }
+   ]
+  },
+  {
+   "kernel": 1,
+   "name": "k1_matmul_add",
+   "grid": [
+    1,
+    2,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 656640,
+   "bytes": 146472,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 401408,
+     "bytes": 131072
+    },
+    {
+     "region": "persistent",
+     "offset": 803840,
+     "bytes": 10240
+    },
+    {
+     "region": "persistent",
+     "offset": 814080,
+     "bytes": 40
+    },
+    {
+     "region": "transient",
+     "offset": 663552,
+     "bytes": 5120
+    }
+   ]
+  },
+  {
+   "kernel": 2,
+   "name": "k2_cross_entropy_zero",
+   "grid": [
+    1,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 0,
+   "bytes": 0,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 800000,
+     "bytes": 4
+    }
+   ]
+  },
+  {
+   "kernel": 3,
+   "name": "k2_cross_entropy_rows",
+   "grid": [
+    128,
+    1,
+    1
+   ],
+   "block": [
+    32,
+    1,
+    1
+   ],
+   "flops": 6400,
+   "bytes": 5636,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 663552,
+     "bytes": 5120
+    },
+    {
+     "region": "transient",
+     "offset": 673792,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 800000,
+     "bytes": 4
+    }
+   ]
+  },
+  {
+   "kernel": 4,
+   "name": "k3_onehot",
+   "grid": [
+    5,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 0,
+   "bytes": 5632,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 673792,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 668672,
+     "bytes": 5120
+    }
+   ]
+  },
+  {
+   "kernel": 5,
+   "name": "k4_softmax",
+   "grid": [
+    128,
+    1,
+    1
+   ],
+   "block": [
+    32,
+    1,
+    1
+   ],
+   "flops": 6400,
+   "bytes": 10240,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 663552,
+     "bytes": 5120
+    },
+    {
+     "region": "transient",
+     "offset": 673792,
+     "bytes": 5120
+    }
+   ]
+  },
+  {
+   "kernel": 6,
+   "name": "k5_sub_mul",
+   "grid": [
+    5,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 2560,
+   "bytes": 15360,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 673792,
+     "bytes": 5120
+    },
+    {
+     "region": "transient",
+     "offset": 668672,
+     "bytes": 5120
+    },
+    {
+     "region": "transient",
+     "offset": 794624,
+     "bytes": 5120
+    }
+   ]
+  },
+  {
+   "kernel": 7,
+   "name": "k6_sum",
+   "grid": [
+    1,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 1280,
+   "bytes": 5160,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 794624,
+     "bytes": 5120
+    },
+    {
+     "region": "transient",
+     "offset": 799744,
+     "bytes": 40
+    }
+   ]
+  },
+  {
+   "kernel": 8,
+   "name": "k7_matmul_select",
+   "grid": [
+    4,
+    2,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 688128,
+   "bytes": 277504,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 794624,
+     "bytes": 5120
+    },
+    {
+     "region": "persistent",
+     "offset": 803840,
+     "bytes": 10240
+    },
+    {
+     "region": "transient",
+     "offset": 532480,
+     "bytes": 131072
+    },
+    {
+     "region": "transient",
+     "offset": 663552,
+     "bytes": 131072
+    }
+   ]
+  },
+  {
+   "kernel": 9,
+   "name": "k8_sum",
+   "grid": [
+    1,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 32768,
+   "bytes": 132096,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 663552,
+     "bytes": 131072
+    },
+    {
+     "region": "transient",
+     "offset": 532480,
+     "bytes": 1024
+    }
+   ]
+  },
+  {
+   "kernel": 10,
+   "name": "k9_mul_sub",
+   "grid": [
+    1,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 2,
+   "bytes": 12,
+   "args": [
+    {
+     "region": "persistent",
+     "offset": 814336,
+     "bytes": 4
+    },
+    {
+     "region": "transient",
+     "offset": 533504,
+     "bytes": 4
+    }
+   ]
+  },
+  {
+   "kernel": 11,
+   "name": "k10_mul_sub",
+   "grid": [
+    1,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 2,
+   "bytes": 12,
+   "args": [
+    {
+     "region": "persistent",
+     "offset": 814592,
+     "bytes": 4
+    },
+    {
+     "region": "transient",
+     "offset": 533760,
+     "bytes": 4
+    }
+   ]
+  },
+  {
+   "kernel": 12,
+   "name": "k11_matmul_mul_mul_add_x15",
+   "grid": [
+    1,
+    4,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 691200,
+   "bytes": 197640,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 401408,
+     "bytes": 131072
+    },
+    {
+     "region": "transient",
+     "offset": 794624,
+     "bytes": 5120
+    },
+    {
+     "region": "persistent",
+     "offset": 2422528,
+     "bytes": 10240
+    },
+    {
+     "region": "persistent",
+     "offset": 2432768,
+     "bytes": 10240
+    },
+    {
+     "region": "transient",
+     "offset": 533504,
+     "bytes": 4
+    },
+    {
+     "region": "transient",
+     "offset": 533760,
+     "bytes": 4
+    },
+    {
+     "region": "persistent",
+     "offset": 803840,
+     "bytes": 10240
+    }
+   ]
+  },
+  {
+   "kernel": 13,
+   "name": "k12_matmul_mul_mul_add_x15",
+   "grid": [
+    4,
+    13,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 54190080,
+   "bytes": 5349384,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 401408
+    },
+    {
+     "region": "transient",
+     "offset": 663552,
+     "bytes": 131072
+    },
+    {
+     "region": "persistent",
+     "offset": 814848,
+     "bytes": 802816
+    },
+    {
+     "region": "persistent",
+     "offset": 1617664,
+     "bytes": 802816
+    },
+    {
+     "region": "transient",
+     "offset": 533504,
+     "bytes": 4
+    },
+    {
+     "region": "transient",
+     "offset": 533760,
+     "bytes": 4
+    },
+    {
+     "region": "persistent",
+     "offset": 0,
+     "bytes": 802816
+    }
+   ]
+  },
+  {
+   "kernel": 14,
+   "name": "k13_mul_mul_add_mul_x14",
+   "grid": [
+    1,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 3584,
+   "bytes": 7176,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 532480,
+     "bytes": 1024
+    },
+    {
+     "region": "persistent",
+     "offset": 2420480,
+     "bytes": 1024
+    },
+    {
+     "region": "persistent",
+     "offset": 2421504,
+     "bytes": 1024
+    },
+    {
+     "region": "transient",
+     "offset": 533504,
+     "bytes": 4
+    },
+    {
+     "region": "transient",
+     "offset": 533760,
+     "bytes": 4
+    },
+    {
+     "region": "persistent",
+     "offset": 802816,
+     "bytes": 1024
+    }
+   ]
+  },
+  {
+   "kernel": 15,
+   "name": "k14_mul_mul_add_mul_x14",
+   "grid": [
+    1,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 140,
+   "bytes": 288,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 799744,
+     "bytes": 40
+    },
+    {
+     "region": "persistent",
+     "offset": 2443008,
+     "bytes": 40
+    },
+    {
+     "region": "persistent",
+     "offset": 2443264,
+     "bytes": 40
+    },
+    {
+     "region": "transient",
+     "offset": 533504,
+     "bytes": 4
+    },
+    {
+     "region": "transient",
+     "offset": 533760,
+     "bytes": 4
+    },
+    {
+     "region": "persistent",
+     "offset": 814080,
+     "bytes": 40
+    }
+   ]
+  }
+ ],
+ "copies": []
+}

@@ -301,9 +301,10 @@ The C++ compiler is exercised by `dlc-opt` (IR dumps after each pass, loop IR, L
 | **P1** | 2026-10-18 | Op registry; parser and verifier rewritten; use-list hygiene; Python exporter, IR parser and executor; translation validation of the graph passes. Five known bugs fixed (parser round trip, undefined operands, DCE use lists, matmul shape checks, constant-folding use-after-free); 8 remain |
 | **P2** | 2026-10-18 | Backward primitives (`cmp_gt`, `select`, `broadcast_to`, `reduce_max`, `scatter_add`, `cast`, `tanh`, `sqrt`, `rsqrt`, matmul transpose flags); activity analysis; autodiff rewritten (every VJP checked against finite differences); Adam/SGD lowering with donated results and initialized state; canonicalize to a fixpoint (type-preserving, NaN-safe, transpose folding); exact CSE keys. Five more known bugs fixed; 3 remain (P3, P4) |
 | **P3** | 2026-10-18 | Fusion rewritten (matmul epilogues, multi-output elementwise kernels, row/reduction/gather/scatter kernels; legal only if the kernel graph stays acyclic and epilogues never feed the matmul); a cost model (FLOPs, compulsory bytes, intensity); buffer assignment with a persistent region, liveness-based transient arena, reshape aliases, in-place donated updates and a checker. The last two known bugs fixed; the v1 loop IR and template backends removed from the build |
+| **P5** | 2026-10-29 | GPU schedules for every kernel class (shared-memory tiled matmul with 4×4 register tiles and in-register epilogues, warp-per-row kernels with butterfly shuffles, atomics for scatters and the loss); a lockstep GPU interpreter that rejects divergent barriers and shuffles of inactive lanes (target `gpu-sim`); NVPTX emission (`ptx_kernel`, addrspace(1)/(3), `bar.sync`, `shfl.sync`, `red.global.add.f32`, `ex2`/`lg2` approximations) through LLVM's NVPTX backend; GPU artifacts (plan JSON + PTX) and a CUDA driver runtime in Python (ctypes). Every op and both training models match the reference on `gpu-sim`; ptxas accepts all kernels with no spills. **Not yet run on a GPU**: `examples/colab_gpu.py` does that on Colab (docs/gpu.md) |
 | **P4** | 2026-10-29 | Loop IR v2; CPU schedules per kernel class (register-tiled matmul with in-register epilogues, vectorized elementwise and row kernels, parallel outer loops); loop passes (range analysis with branch refinement, bounds checking with guards for data-dependent indices, bounds-check elimination, dependence check of parallel and vectorized loops); LLVM emitter + O3 + ORC LLJIT; runtime (plan, executable, thread pool); loop IR interpreter; nanobind `_minidlc`; `dl.compile(target="cpu")`. MNIST and Char-GPT train through generated code and match the reference |
 
-Audit rows that P1–P4 changed:
+Audit rows that P1–P5 changed:
 
 | Spec item | Status | Notes |
 |---|---|---|
@@ -319,6 +320,6 @@ Audit rows that P1–P4 changed:
 | Loop IR, lowering, CPU schedules | ✓ | Loop IR v2; every kernel class lowered; register tiling, vectorization, parallel loops |
 | Range-analysis BCE, loop passes | ✓ | Range analysis with branch refinement, guards for data indices, BCE, dependence check of every parallel/vectorized loop |
 | LLVM backend: `IRBuilder`, `-O3` via `PassBuilder`, ORC JIT | ✓ | Mechanical translation of the loop IR; LLVM vectorizes into `<8 x float>` |
-| Runtime | ◐ | Plan, executable, persistent region + transient arena, thread pool, per-kernel timers; no checkpoints or artifacts yet (P5) |
-| CUDA backend | ✗ | P5 |
+| Runtime | ✓ | Plan, executable, persistent region + transient arena, thread pool, per-kernel timers; GPU artifacts (plan JSON + PTX + initial values) saved and loaded; a CUDA driver runtime (`minidlc/gpu.py`) that replays plans. No checkpoints of training state |
+| CUDA backend | ◐ | GPU schedules, NVPTX emission and the driver runtime are built and tested without a GPU: differentially on the lockstep GPU interpreter, and by ptxas. Not yet run on GPU hardware |
 | Tests | ✓ | Unit, lit/FileCheck, translation validation, finite-difference VJP checks, differential tests of generated code, compiled-vs-eager training, fuzzers; ASan/UBSan |

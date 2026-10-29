@@ -1,0 +1,17 @@
+{
+ "arch": "sm_75",
+ "inputs": {
+  "x": [
+   "x",
+   "f32"
+  ]
+ },
+ "training": false,
+ "params": {
+  "bias_1": 3,
+  "weight_1": 2,
+  "bias": 1,
+  "weight": 0
+ },
+ "options": {}
+}

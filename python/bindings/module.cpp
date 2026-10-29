@@ -68,6 +68,40 @@ nb::dict describe(const dlc::runtime::Executable& e) {
     return out;
 }
 
+dlc::compiler::CompileOptions parseOptions(const std::string& target, nb::dict options) {
+    dlc::compiler::CompileOptions opts;
+    opts.target = target;
+    if (options.contains("threads")) opts.threads = nb::cast<size_t>(options["threads"]);
+    if (options.contains("optimizer") && !options["optimizer"].is_none()) {
+        dlc::OptimizerConfig config;
+        std::string kind = nb::cast<std::string>(options["optimizer"]);
+        if (kind == "sgd") config.kind = dlc::OptimizerConfig::Kind::SGD;
+        else if (kind == "adam") config.kind = dlc::OptimizerConfig::Kind::Adam;
+        else throw nb::value_error("optimizer must be 'adam' or 'sgd'");
+        auto number = [&](const char* key, double& field) {
+            if (options.contains(key)) field = nb::cast<double>(options[key]);
+        };
+        number("lr", config.lr);
+        number("momentum", config.momentum);
+        number("beta1", config.beta1);
+        number("beta2", config.beta2);
+        number("eps", config.eps);
+        opts.optimizer = config;
+    }
+    return opts;
+}
+
+nb::dict dumpsDict(const dlc::compiler::CompileDumps& dumps) {
+    nb::dict d;
+    d["graph"] = dumps.graphIR;
+    d["loopir"] = dumps.loopIR;
+    d["llvm"] = dumps.llvmIR;
+    d["llvm_opt"] = dumps.llvmIROpt;
+    d["cost"] = dumps.costReport;
+    d["memory"] = dumps.memoryReport;
+    return d;
+}
+
 } // namespace
 
 NB_MODULE(_minidlc, m) {
@@ -132,41 +166,56 @@ NB_MODULE(_minidlc, m) {
     m.def(
         "compile",
         [](const std::string& ir, const std::string& target, nb::dict options) {
-            dlc::compiler::CompileOptions opts;
-            opts.target = target;
-            if (options.contains("threads")) opts.threads = nb::cast<size_t>(options["threads"]);
-            if (options.contains("optimizer") && !options["optimizer"].is_none()) {
-                dlc::OptimizerConfig config;
-                std::string kind = nb::cast<std::string>(options["optimizer"]);
-                if (kind == "sgd") config.kind = dlc::OptimizerConfig::Kind::SGD;
-                else if (kind == "adam") config.kind = dlc::OptimizerConfig::Kind::Adam;
-                else throw nb::value_error("optimizer must be 'adam' or 'sgd'");
-                auto number = [&](const char* key, double& field) {
-                    if (options.contains(key)) field = nb::cast<double>(options[key]);
-                };
-                number("lr", config.lr);
-                number("momentum", config.momentum);
-                number("beta1", config.beta1);
-                number("beta2", config.beta2);
-                number("eps", config.eps);
-                opts.optimizer = config;
-            }
+            dlc::compiler::CompileOptions opts = parseOptions(target, options);
             dlc::compiler::CompileDumps dumps;
             std::unique_ptr<Executable> exe;
             {
                 nb::gil_scoped_release release;
                 exe = dlc::compiler::compile(ir, opts, &dumps);
             }
-            nb::dict d;
-            d["graph"] = dumps.graphIR;
-            d["loopir"] = dumps.loopIR;
-            d["llvm"] = dumps.llvmIR;
-            d["llvm_opt"] = dumps.llvmIROpt;
-            d["cost"] = dumps.costReport;
-            d["memory"] = dumps.memoryReport;
-            return nb::make_tuple(std::move(exe), d);
+            return nb::make_tuple(std::move(exe), dumpsDict(dumps));
         },
         nb::arg("ir"), nb::arg("target") = "cpu", nb::arg("options") = nb::dict(),
-        "Compiles the first function of `ir` for `target` ('cpu' or 'interp'). Options: optimizer ('adam' or 'sgd'), "
+        "Compiles the first function of `ir` for `target` ('cpu', 'interp' or 'gpu-sim'). Options: optimizer ('adam' or 'sgd'), "
         "lr, momentum, beta1, beta2, eps, threads. Returns (Executable, dumps).");
+
+    using dlc::compiler::GpuArtifact;
+    nb::class_<GpuArtifact>(m, "GpuArtifact")
+        .def_prop_ro("plan_json", [](const GpuArtifact& a) { return dlc::runtime::toJson(a.plan); })
+        .def_prop_ro("ptx", [](const GpuArtifact& a) { return a.ptx; })
+        .def_prop_ro("arch", [](const GpuArtifact& a) { return a.arch; })
+        .def_prop_ro("kernel_names",
+                     [](const GpuArtifact& a) {
+                         std::vector<std::string> names;
+                         for (const auto& k : a.kernels) names.push_back(k.name);
+                         return names;
+                     })
+        .def(
+            "simulate",
+            [](const GpuArtifact& a, int kernel, const std::vector<uintptr_t>& pointers) {
+                std::vector<void*> args;
+                for (uintptr_t p : pointers) args.push_back(reinterpret_cast<void*>(p));
+                if (kernel < 0 || static_cast<size_t>(kernel) >= a.kernels.size()) throw nb::index_error("no such kernel");
+                if (args.size() != a.kernels[kernel].globalBuffers().size()) throw nb::value_error("wrong number of buffers");
+                nb::gil_scoped_release release;
+                dlc::compiler::simulateLaunch(a, kernel, args);
+            },
+            nb::arg("kernel"), nb::arg("pointers"),
+            "Runs kernel `kernel` with the lockstep GPU interpreter; `pointers` are host addresses of its buffers.");
+
+    m.def(
+        "compile_gpu",
+        [](const std::string& ir, nb::dict options, bool ptx, const std::string& arch) {
+            dlc::compiler::CompileOptions opts = parseOptions("cuda", options);
+            dlc::compiler::CompileDumps dumps;
+            GpuArtifact artifact;
+            {
+                nb::gil_scoped_release release;
+                artifact = dlc::compiler::compileGpu(ir, opts, &dumps, ptx, arch);
+            }
+            return nb::make_tuple(std::move(artifact), dumpsDict(dumps));
+        },
+        nb::arg("ir"), nb::arg("options") = nb::dict(), nb::arg("ptx") = true, nb::arg("arch") = "sm_75",
+        "Compiles the first function of `ir` with the GPU schedules: (GpuArtifact, dumps). The artifact holds the plan "
+        "(as JSON) and, with ptx=True, the PTX of every kernel for `arch`.");
 }

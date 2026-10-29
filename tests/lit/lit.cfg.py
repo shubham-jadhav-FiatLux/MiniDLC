@@ -40,6 +40,5 @@ if not filecheck:
     lit_config.fatal("LLVM FileCheck not found; install LLVM tools or pass --param filecheck=...")
 config.environment["PATH"] = os.pathsep.join([os.path.dirname(filecheck), config.environment.get("PATH", "")])
 
-# Inputs/ holds files that other tests feed to dlc-opt; they are not tests themselves. The v1 CUDA template tests are
-# excluded until the GPU path (P5) replaces them with PTX golden tests.
-config.excludes = ["Inputs", "cuda_backward_kernels.dlc", "cuda_reductions.dlc", "cuda_tiled_matmul.dlc"]
+# Inputs/ holds files that other tests feed to dlc-opt; they are not tests themselves.
+config.excludes = ["Inputs"]

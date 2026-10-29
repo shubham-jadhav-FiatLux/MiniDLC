@@ -1,7 +1,7 @@
 """MiniDLC: A Mini Deep-Learning Compiler"""
 
 from .tensor import Tensor, placeholder
-from .compile import compile
+from .compile import compile, compile_gpu
 from . import ops
 from . import nn
 from . import optim
@@ -35,6 +35,7 @@ __all__ = [
     "Tensor",
     "placeholder",
     "compile",
+    "compile_gpu",
     "ops",
     "nn",
     "optim",

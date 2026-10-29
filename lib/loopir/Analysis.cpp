@@ -181,6 +181,24 @@ std::optional<bool> decide(const ExprPtr& cond, const RangeEnv& env) {
     return std::nullopt;
 }
 
+void collectVars(const ExprPtr& e, std::set<std::string>& out) {
+    if (e->kind == ExprKind::Var) out.insert(e->name);
+    for (const auto& a : e->args) collectVars(a, out);
+}
+
+// "x in [0, 4], y in [?, 7]": the ranges behind a failed bounds check.
+std::string rangesOf(const ExprPtr& e, const RangeEnv& env) {
+    std::set<std::string> names;
+    collectVars(e, names);
+    std::string out;
+    for (const auto& n : names) {
+        Interval r = env.get(n).value_or(Interval::unknown());
+        out += (out.empty() ? "" : ", ") + n + " in [" + (r.lo == kMin ? "?" : std::to_string(r.lo)) + ", " +
+               (r.hi == kMax ? "?" : std::to_string(r.hi)) + "]";
+    }
+    return out;
+}
+
 class BoundsChecker {
 public:
     BoundsChecker(Kernel& k, BoundsReport& report) : k_(k), report_(report) {}
@@ -209,7 +227,7 @@ private:
             } else {
                 throw IRError("bounds check: " + k_.name + " reads " + k_.buffers[e->buffer].name + "[" +
                               toString(args[0], k_) + "] with index range [" + std::to_string(r.lo) + ", " +
-                              std::to_string(r.hi) + "], outside its " + std::to_string(n) + " elements");
+                              std::to_string(r.hi) + "], outside its " + std::to_string(n) + " elements (" + rangesOf(args[0], env_) + ")");
             }
         }
         if (!changed) return e;
@@ -253,7 +271,8 @@ private:
                     } else {
                         throw IRError("bounds check: " + k_.name + " writes " + k_.buffers[s->buffer].name + "[" +
                                       toString(s->index, k_) + "] with index range [" + std::to_string(r.lo) + ", " +
-                                      std::to_string(r.hi) + "], outside its " + std::to_string(n) + " elements");
+                                      std::to_string(r.hi) + "], outside its " + std::to_string(n) + " elements (" +
+                                      rangesOf(s->index, env_) + ")");
                     }
                     break;
                 }

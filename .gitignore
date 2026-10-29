@@ -43,6 +43,7 @@ Output/
 
 # Benchmark and run outputs
 *.npz
+!artifacts/gpu/*/values.npz
 *.png
 *.dot
 *.svg

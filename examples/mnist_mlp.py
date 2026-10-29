@@ -2,12 +2,14 @@
 """
 Example: MLP training on MNIST using MiniDLC.
 
-    PYTHONPATH=python python3 examples/mnist_mlp.py [epochs] [--target=cpu|reference|handwritten] [--profile]
+    PYTHONPATH=python python3 examples/mnist_mlp.py [epochs] [--target=cpu|cuda|gpu-sim|reference|handwritten] [--profile]
 
 The default target "cpu" compiles the training step — forward, backward and the Adam update as one graph — with the
 MiniDLC compiler (C++ autodiff and optimizer lowering, fusion, buffer assignment, loop IR, LLVM, ORC JIT) and evaluates
-with a compiled inference function. "reference" trains in the NumPy interpreter; "handwritten" runs hand-written AVX2
-LLVM IR kernels for this fixed MLP (a baseline).
+with a compiled inference function. "cuda" compiles the same graphs with the GPU schedules to PTX and runs them on an
+NVIDIA GPU through the CUDA driver; "gpu-sim" runs the GPU schedules in the lockstep GPU interpreter (very slow: a check,
+not a way to train). "reference" trains in the NumPy interpreter; "handwritten" runs hand-written AVX2 LLVM IR kernels
+for this fixed MLP (a baseline).
 """
 
 import sys
@@ -52,7 +54,7 @@ def main():
     for arg in sys.argv[1:]:
         if arg.startswith("--target="):
             target = arg.split("=")[1]
-        elif arg in ("reference", "cpu", "interp", "handwritten"):
+        elif arg in ("reference", "cpu", "interp", "handwritten", "cuda", "gpu-sim"):
             target = arg
 
     # Compile training step
@@ -74,7 +76,7 @@ def main():
 
     print("\nEvaluating test set accuracy...")
     test_logits = model(x)
-    if target in ("cpu", "interp"):
+    if target in ("cpu", "interp", "cuda", "gpu-sim"):
         train_step.sync_params()  # the trained weights live in the executable
         infer = dl.compile(test_logits, target=target)
         forward = lambda xb: infer(x=xb)

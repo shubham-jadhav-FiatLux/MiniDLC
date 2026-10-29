@@ -215,7 +215,12 @@ schedule per kernel class and target; the emitters translate it without making d
   are static; tiles are written as `outer * factor + inner`.
 - **Statements:** typed locals (`f32 v = …;`, reassignment), stores, `atomic_add`, `if` (explicit guards), `barrier`.
 - **Expressions:** `i64` index arithmetic (folded as it is built), `f32` arithmetic, `fma`, `max_nan` (NaN-propagating
-  max, so `relu(NaN) = NaN`), `exp`, `log`, `tanh`, `sqrt`, `rsqrt`, `select`, comparisons, casts, warp shuffles.
+  max, so `relu(NaN) = NaN`), `exp`, `log`, `tanh`, `sqrt`, `rsqrt`, `select`, comparisons, casts, and the warp shuffles
+  `shfl_down(v, d)` (lane + d; past the warp's end a lane keeps its value) and `shfl_xor(v, m)` (lane XOR m).
+- **GPU kernels** print their launch configuration, `grid(x,y,z) block(x,y,z)`; their bound loops have exactly those
+  extents and run in parallel. Within a block, `barrier` must be reached by every thread, and a shuffle must read an
+  active lane — the lockstep interpreter (target `gpu-sim`) rejects anything else. A block or thread axis of extent 1
+  has no loop; its index, if used, is the constant 0.
 
 ### The first layer of the MNIST MLP on the CPU
 
@@ -245,6 +250,29 @@ kernel @k0_matmul_add_relu(%x: f32[128,784], %w: f32[784,256], %b: f32[256], %2:
   }
 }
 ```
+
+### A row of a softmax on the GPU
+
+```
+kernel @k0_softmax(%x: f32[37,100], %0: f32[37,100]) grid(37,1,1) block(32,1,1) {
+  for bx in 0..37 bind(blockIdx.x) {              // a block (one warp) per row
+    for tx in 0..32 bind(threadIdx.x) {
+      f32 m = -inf;
+      for t in 0..4 {                             // lanes stride over the row
+        i64 l = ((t * 32) + tx);
+        if (l < 100) { m = max_nan(m, %x[((bx * 100) + l)]); }
+      }
+      m = max_nan(m, shfl_xor(m, 16));            // butterfly: every lane ends with the row max
+      …
+      m = max_nan(m, shfl_xor(m, 1));
+      …                                           // the same for the sum of exp(x - m), then the stores
+    }
+  }
+}
+```
+
+The matmul schedule (shared-memory tiles, barriers, 4×4 register tiles) is in `docs/gpu.md` and
+`tests/lit/cuda_tiled_matmul.dlc`.
 
 ### Loop passes (`lib/loopir/Analysis.cpp`)
 

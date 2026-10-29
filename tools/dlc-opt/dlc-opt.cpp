@@ -12,6 +12,7 @@
 #include "dlc/passes/Autodiff.h"
 #include "dlc/passes/Optimizer.h"
 #include "dlc/backends/llvm/CpuJit.h"
+#include "dlc/backends/llvm/Ptx.h"
 #include "dlc/compiler/Compiler.h"
 #include "dlc/passes/BufferAssignment.h"
 #include "dlc/passes/CostModel.h"
@@ -33,11 +34,13 @@ void printUsage(const char* prog) {
               << "  --passes=<p1,p2,...>   Comma-separated list of passes to run\n"
               << "                         Available: shape-infer, canonicalize, cse, dce, activity, autodiff,\n"
               << "                         sgd{lr=,momentum=}, adam{lr=,beta1=,beta2=,eps=}, fusion, buffer-assign\n"
-              << "  --emit-loopir          Fuse, assign buffers and lower to loop IR with the CPU schedules; print it\n"
-              << "  --emit-llvm            ... then emit the LLVM IR for the host CPU (before optimization)\n"
+              << "  --target=cpu|gpu       Schedules for the loop IR options below (default cpu)\n"
+              << "  --emit-loopir          Fuse, assign buffers and lower to loop IR with the target's schedules; print it\n"
+              << "  --emit-llvm            ... then emit the LLVM IR (host CPU, or nvptx64-nvidia-cuda; before optimization)\n"
               << "  --emit-llvm-opt        ... after LLVM's O3 pipeline\n"
+              << "  --emit-ptx             ... the PTX assembly (--target=gpu; --arch=sm_XX, default sm_75)\n"
               << "  --print-loop-report    Per loop kernel: accesses proven in bounds, guarded (indexed by data), guards\n"
-              << "                         eliminated; then the parallel extent\n"
+              << "                         eliminated; then the parallel extent (CPU) or the launch configuration (GPU)\n"
               << "  --print-cost           Print the kernels with their FLOPs, bytes and arithmetic intensity\n"
               << "  --print-mem-report     Print the buffer assignment: regions, offsets, live ranges, arena reuse\n"
               << "  --print-after-all      Print IR after each pass\n"
@@ -144,7 +147,9 @@ int main(int argc, char* argv[]) {
     bool verifyEach = true;
     bool printCost = false;
     bool printMemReport = false;
-    std::string emit; // "loopir", "llvm" or "llvm-opt"
+    std::string emit; // "loopir", "llvm", "llvm-opt" or "ptx"
+    bool gpuTarget = false;
+    std::string arch = "sm_75";
     bool printLoopReport = false;
 
     for (int i = 1; i < argc; ++i) {
@@ -157,8 +162,12 @@ int main(int argc, char* argv[]) {
             return 0;
         } else if (arg.starts_with("--passes=")) {
             passesArg = arg.substr(9);
-        } else if (arg == "--emit-loopir" || arg == "--emit-llvm" || arg == "--emit-llvm-opt") {
+        } else if (arg == "--emit-loopir" || arg == "--emit-llvm" || arg == "--emit-llvm-opt" || arg == "--emit-ptx") {
             emit = arg.substr(7);
+        } else if (arg == "--target=cpu" || arg == "--target=gpu") {
+            gpuTarget = arg == "--target=gpu";
+        } else if (arg.starts_with("--arch=")) {
+            arch = arg.substr(7);
         } else if (arg == "--print-loop-report") {
             printLoopReport = true;
         } else if (arg == "--print-cost") {
@@ -252,17 +261,31 @@ int main(int argc, char* argv[]) {
         if (!emit.empty() || printLoopReport) {
             std::vector<dlc::loopir::Kernel> all;
             for (const auto& func : module->getFunctions()) {
-                for (auto& l : dlc::compiler::lowerForInspection(*func, dlc::loopir::Target::CPU)) {
+                auto target = gpuTarget ? dlc::loopir::Target::GPU : dlc::loopir::Target::CPU;
+                for (auto& l : dlc::compiler::lowerForInspection(*func, target)) {
                     if (printLoopReport) {
                         std::cout << l.kernel.name << ": " << l.bounds.accesses << " accesses, " << l.bounds.proven
                                   << " proven in bounds, " << l.bounds.guarded << " guarded, " << l.bounds.eliminated
-                                  << " guards eliminated; parallel extent " << l.kernel.parallelExtent() << "\n";
+                                  << " guards eliminated; ";
+                        const auto& g = l.kernel.grid;
+                        const auto& b = l.kernel.block;
+                        if (l.kernel.gpu) {
+                            std::cout << "grid (" << g[0] << ", " << g[1] << ", " << g[2] << "), block (" << b[0] << ", "
+                                      << b[1] << ", " << b[2] << ")\n";
+                        } else {
+                            std::cout << "parallel extent " << l.kernel.parallelExtent() << "\n";
+                        }
                     }
                     all.push_back(std::move(l.kernel));
                 }
             }
             if (emit == "loopir") {
                 for (const auto& k : all) std::cout << dlc::loopir::toString(k);
+            } else if (gpuTarget && !emit.empty()) {
+                auto ptx = dlc::backends::llvm_emit::compilePtx(all, arch);
+                std::cout << (emit == "ptx" ? ptx.ptx : emit == "llvm-opt" ? ptx.optimizedIR : ptx.emittedIR);
+            } else if (emit == "ptx") {
+                throw dlc::IRError("--emit-ptx needs --target=gpu");
             } else if (!emit.empty()) {
                 std::cout << dlc::backends::llvm_emit::cpuModuleText(all, emit == "llvm-opt");
             }
