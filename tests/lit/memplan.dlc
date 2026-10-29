@@ -1,12 +1,14 @@
-// RUN: %dlc-opt --passes=shape-infer,mem-plan --print-mem-report %s | FileCheck %s
+// The memory plan of a training step: Adam's moments join the parameter in the persistent region, and the update of
+// %w, %w.m and %w.v is written in place (it is fused into the epilogue of the matmul that computes the gradient).
+// RUN: %dlc-opt "--passes=autodiff,adam{lr=0.01},canonicalize,cse,dce" %s | %dlc-opt --print-mem-report - | FileCheck %s
 
-// CHECK: === Memory Planning Report ===
-// CHECK: Total Peak Arena Size:
-// CHECK: Allocated Tensors:
+// CHECK:      Buffer assignment for @step
+// CHECK-NEXT:   persistent region: {{[0-9]+}} bytes (params, optimizer state, consts)
+// CHECK:        in-place updates: 5, copied at the end: 0
+// CHECK:        %w persistent offset 0 size 3072 live -1..{{[0-9]+}}
 
-func @test_disjoint_branches(%x: f32[128,256], %y: f32[128,256]) -> f32[128,256] {
-  %0 = add(%x, %y) : f32[128,256]
-  %1 = relu(%0) : f32[128,256]
-  %2 = mul(%1, %x) : f32[128,256]
-  return %2
+func @step(%x: f32[32,24], %y: i32[32], %w: f32[24,32] {param}) -> f32[] {
+  %0 = matmul(%x, %w) : f32[32,32]
+  %1 = cross_entropy(%0, %y) : f32[]
+  return %1
 }

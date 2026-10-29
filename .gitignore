@@ -54,3 +54,6 @@ CS*_Learning.md
 ID*_Learning.md
 
 ResumeProjectsToBuild.md
+
+# The compiled Python module, built by CMake into the package
+python/minidlc/_minidlc*.so

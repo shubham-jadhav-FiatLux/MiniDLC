@@ -1,26 +1,27 @@
-// RUN: %dlc-opt --passes=shape-infer,fusion --emit-loopir %s | FileCheck %s
+// Indices read from memory are checked: the embedding's row ids get a guard in the schedule (an out-of-range id
+// gives a zero row), and inside the guard range analysis narrows `id` to [0, 9] and proves the table read in bounds.
+// The cross-entropy label is guarded the same way (an invalid label makes the loss NaN). Every other access is
+// proven in bounds statically.
+// RUN: %dlc-opt --emit-loopir %s | FileCheck %s
+// RUN: %dlc-opt --print-loop-report %s | FileCheck %s --check-prefix=REPORT
 
-// CHECK: kernel @matmul {
-// CHECK:   attributes {bounds_check_eliminated = true}
-// CHECK:   parallel for i in 0..64 {
-// CHECK:     for j in 0..128 {
-// CHECK:       acc = 0.0;
-// CHECK:       for k in 0..256 vectorize(8) {
-// CHECK:         acc = fma(a[((i * 256) + k)], b[((k * 128) + j)], acc);
-// CHECK:       }
-// CHECK:       0[((i * 128) + j)] = acc;
-// CHECK:     }
-// CHECK:   }
-// CHECK: }
-// CHECK: kernel @fused_elementwise_relu {
-// CHECK:   attributes {bounds_check_eliminated = true}
-// CHECK:   parallel for idx in 0..8192 vectorize(8) {
-// CHECK:     1[idx] = relu(0[idx]);
-// CHECK:   }
-// CHECK: }
+// CHECK-LABEL: kernel @k0_embedding(
+// CHECK:         i64 id = i64(%ids[p]);
+// CHECK-NEXT:    if (id >= 0) {
+// CHECK-NEXT:      if (id < 10) {
+// CHECK-NEXT:        for d in 0..4 vectorize(8) {
+// CHECK-NEXT:          %0[((p * 4) + d)] = %table[((id * 4) + d)];
+// CHECK:           } else {
+// CHECK:             %0[((p * 4) + d)] = 0.0;
+// CHECK-LABEL: kernel @k1_cross_entropy(
+// CHECK:         i64 target = i64(%labels[r]);
+// CHECK-NEXT:    if (target >= 0) {
 
-func @test_bounds_check_elim(%a: f32[64,256], %b: f32[256,128]) -> f32[64,128] {
-  %0 = matmul(%a, %b) : f32[64,128]
-  %1 = relu(%0) : f32[64,128]
+// REPORT: k0_embedding: 5 accesses, 5 proven in bounds, 0 guarded, 0 guards eliminated; parallel extent 1
+// REPORT: k1_cross_entropy: 5 accesses, 5 proven in bounds, 0 guarded, 0 guards eliminated; parallel extent 1
+
+func @gather(%table: f32[10,4], %ids: i32[6], %labels: i32[6]) -> f32[] {
+  %0 = embedding(%table, %ids) : f32[6,4]
+  %1 = cross_entropy(%0, %labels) : f32[]
   return %1
 }

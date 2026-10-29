@@ -79,32 +79,29 @@ from `benchmarks/memory_plan.py` and `dlc-opt --print-cost`. They describe the p
 ## 5. MNIST MLP training
 
 Model 784 → 256 → 10 with ReLU, cross-entropy, Adam (lr 1.5e-3), batch 128, 2 epochs (936 steps). Test accuracy is
-measured on 9,984 of the 10,000 test images (the last partial batch is dropped).
-Command: `PYTHONPATH=python python3 examples/mnist_mlp.py 2 [--target=reference]`.
+measured on 9,984 of the 10,000 test images (the last partial batch is dropped). Command:
+`PYTHONPATH=python python3 examples/mnist_mlp.py 2 [--target=...]`, NumPy linked to OpenBLAS, i7-8550U (4 cores, 8
+threads), 2026-10-29. Single runs; times moved by up to 2× with other load on the machine, so read them as ranges until
+the repeated measurements of P7.
 
-| Run | Training time | Test accuracy |
+| Target | Training time | Test accuracy |
 |---|:---:|:---:|
-| `--target=cpu`: hand-written LLVM IR kernels + NumPy softmax | 31.6 s | 96.88% |
-| `--target=reference`, system NumPy (netlib BLAS) | 72.6 s | 96.93% |
-| `--target=reference`, pip NumPy (OpenBLAS) | 13.6 s | 96.84% |
+| `cpu`: the compiled training step (generated code, 8 threads) | 0.9–2.0 s | 96.81–96.92% |
+| `reference`: NumPy interpreter (OpenBLAS, multithreaded) | 5.4 s | 96.84% |
+| `handwritten`: the v1 hand-written AVX2 kernels (one thread, scalar backward GEMM) | 31.6–64.8 s | 96.88% |
 
-The `cpu` target is 2.3× faster than the interpreter on the netlib NumPy, and 2.3× slower than the same interpreter on a
-standard NumPy.
+Where the compiled step's time goes (`examples/mnist_mlp.py 1 --profile`; FLOPs and bytes from the cost model):
 
-Where the `cpu` step time goes (`examples/mnist_mlp.py 1 --target=cpu --profile`):
+| Kernel | ms per step | Share | GFLOP/s |
+|---|:---:|:---:|:---:|
+| forward layer 1: matmul + bias + ReLU (+ the ReLU mask for backward) | 0.79 | 49% | 65 |
+| dW1 = xᵀ·dh with the Adam update of W1 in its epilogue | 0.57 | 35% | 95 |
+| dh = dlogits·W2ᵀ, masked by the ReLU (select) | 0.08 | 5% | 8 |
+| dW2 with W2's Adam update; forward layer 2 | 0.12 | 8% | 11–12 |
+| softmax, cross-entropy, bias sums, the rest | 0.06 | 4% | — |
 
-| Stage | Mean per step | Share |
-|---|:---:|:---:|
-| `bwd_layer1`: scalar `matmul_transA` for dW1, ReLU backward, bias gradient | 31.5 ms | 78.7% |
-| `fwd_layer1_fused`: vectorized matmul+bias+ReLU | 6.6 ms | 16.5% |
-| `opt_adam` (four parameter tensors) | 0.66 ms | 1.7% |
-| `bwd_layer2` | 0.61 ms | 1.5% |
-| `fwd_layer2_bias` | 0.43 ms | 1.1% |
-| `softmax_loss` (NumPy) | 0.19 ms | 0.5% |
-| `bwd_dlogits` (NumPy) | 0.03 ms | 0.1% |
-
-The dW1 GEMM has the same FLOP count as the forward GEMM but is scalar with a strided inner loop, so vectorizing it is the
-largest available speedup.
+The two large GEMMs run at 65–95 GFLOP/s: 4×16 register tiles, unrolled by the emitter, which LLVM's SLP vectorizer
+turns into 8-wide FMAs, across 8 threads. The small kernels are bound by launch and memory, not arithmetic.
 
 ## 6. GPU
 
@@ -160,8 +157,8 @@ tho".
 | Contract tests | 9 | NaN/Inf, overflow, softmax axes, broadcasting, zero-size dims — on the reference interpreter only |
 | Random-DAG fuzzer | 25 seeds | Reference VJPs vs finite differences (11 of the 25 graphs check a single input gradient) |
 
-These tests cover the reference interpreter and the C++ graph passes. Nothing yet compares generated code with the
-reference; differential testing of generated code arrives with P4.
+`tests/python/test_cpu_backend.py` (63 tests) compares generated code with the reference for every op, and
+`tests/python/test_cpu_training.py` (10 tests) compares compiled training with eager training.
 
 ## 9. Withdrawn claims (2026-10-17 audit)
 

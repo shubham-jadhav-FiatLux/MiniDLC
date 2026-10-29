@@ -20,13 +20,14 @@ planned (phase given). The defects are detailed in [`architecture.md`](architect
 | Dependences and fusion legality | `lib/passes/Fusion.cpp` | CS6843 (dependence analysis) | ✓ merges legal only if the kernel graph stays acyclic |
 | Liveness-based memory planning | `lib/passes/BufferAssignment.cpp` | CS6843; register-allocation analogy | ✓ per-kernel liveness, interval colouring, in-place updates, checker |
 | Roofline cost model | `lib/passes/CostModel.cpp` | CS6400 / ID5130 | ✓ FLOPs and compulsory bytes per kernel |
-| Interval range analysis, bounds-check elimination | loop IR v2 (P4) | CS6843 A2 (range analysis), A4 (bounds checks) | ○ P4 (the v1 analysis left the build with the v1 loop IR in P3) |
+| Interval range analysis, bounds-check elimination | `lib/loopir/Analysis.cpp` | CS6843 A2 (range analysis), A4 (bounds checks) | ✓ branch refinement, guards for data indices, BCE |
+| Dependence analysis of parallel and vector loops | `lib/loopir/Analysis.cpp` | CS6843 PAR | ✓ every parallel and vectorized loop is checked |
 | Golden IR tests (lit + FileCheck) | `tests/lit/` | CS6843 / LLVM tooling | ✓ |
-| Cache blocking, loop tiling | loop IR v2 schedules (P4) | CS6600 Computer Architecture | ○ P4 |
-| SIMD vectorization (AVX2) | `python/minidlc/llvm_engine.py` | CS6600 / CS6400 | ✓ hand-written `<8 x float>` kernels; ○ generated (P4) |
-| ILP through unrolling | loop IR v2 schedules (P4) | CS6600 | ○ P4 |
+| Cache blocking, register tiling | `lib/loopir/Lowering.cpp` | CS6600 Computer Architecture | ✓ 4×16 register tiles; 65–95 GFLOP/s on the MNIST GEMMs |
+| SIMD vectorization (AVX2) | schedules + `lib/backends/llvm/` | CS6600 / CS6400 | ✓ `vectorize(8)` loops and unrolled tiles become `<8 x float>` FMAs |
+| ILP through unrolling | `lib/backends/llvm/Emitter.cpp` | CS6600 | ✓ the emitter expands unrolled loops; 64 independent accumulators per tile |
 | Roofline model | `benchmarks/`, `docs/perf-report.md` | CS6400 / ID5130 | ✓ CPU, measured; GPU ceilings only (P5) |
-| Thread-pool runtime | `include/dlc/runtime/ThreadPool.h` | ID5130 (work sharing) | ◐ mutex + condition-variable queue; not on the executed path (P4) |
+| Thread-pool runtime | `lib/runtime/ThreadPool.cpp`, `Executable.cpp` | ID5130 (work sharing) | ✓ the outermost parallel loop of each kernel is split across threads |
 | Numerical stability (log-sum-exp, NaN semantics) | `python/minidlc/reference.py`, `python/minidlc/llvm_engine.py` | ID5130 (floating point) | ✓ reference interpreter and hand-written CPU kernels |
 | Shared-memory tiling, coalescing, bank conflicts | GPU schedules (P5) | CS6023 GPU Programming | ○ P5 (the v1 CUDA text templates left the build in P3) |
 | Warp-shuffle reductions | GPU schedules (P5) | CS6023 (warp primitives) | ○ P5 |

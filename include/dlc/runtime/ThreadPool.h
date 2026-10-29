@@ -38,6 +38,9 @@ public:
 
     // Parallel-for over [start, end)
     void parallelFor(int64_t start, int64_t end, const std::function<void(int64_t)>& func);
+    // Splits [0, extent) into one contiguous chunk per worker and calls func(begin, end) for each, in parallel.
+    void parallelChunks(int64_t extent, const std::function<void(int64_t, int64_t)>& func);
+    size_t size() const { return workers_.size(); }
 
 private:
     std::vector<std::thread> workers_;

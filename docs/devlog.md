@@ -271,3 +271,28 @@ pass, and re-measurement — found that v1 was not the integrated compiler the e
 - **Tests:** 75 GoogleTest tests (fusion legality, cost model, buffer assignment; the fuzzer checks every mutant's
   assignment), 12 lit tests, 243 Python tests.
 
+## P4 — The CPU backend (2026-10-29)
+
+- **Loop IR v2** (`lib/loopir/LoopIR.cpp`): loops with a kind (serial, parallel, vectorize, unroll, bound), buffers with
+  a scope, explicit guards, barriers and atomics, typed expressions with folding, a printer.
+- **Lowering and CPU schedules** (`lib/loopir/Lowering.cpp`), one per kernel class: a 4×16 register-tiled matmul
+  (outer-product form; dot-product form for a transposed B) with the epilogue applied to the tile in registers,
+  partial tiles as separate branches; elementwise kernels over collapsed dimensions; row kernels; three reduction
+  layouts; guarded gathers and scatters; transposes and fills.
+- **Loop passes** (`lib/loopir/Analysis.cpp`): range analysis with branch refinement; bounds checking, with guards for
+  indices read from memory (any input is memory-safe) and an error for any other unprovable access; bounds-check
+  elimination; a dependence check that parallel iterations write disjoint elements and vectorized loops carry no
+  memory dependence.
+- **LLVM backend** (`lib/backends/llvm/`): `IRBuilder` emission with `noalias` buffers, emitter-side unrolling,
+  `llvm.loop.vectorize` metadata, `reassoc` only on reduction updates, `llvm.maximum` for NaN-propagating ReLU; O3 via
+  `PassBuilder` with the host TargetMachine; ORC LLJIT.
+- **Runtime and bindings:** a backend-neutral plan (slots, launches, final copies), an executable with a persistent
+  region and a transient arena, a chunking thread pool, per-kernel timers, a loop IR interpreter target, and the
+  nanobind module `_minidlc`. `dl.compile(loss, optimizer, target="cpu")` compiles the whole training step.
+- **Results:** MNIST trains 2 epochs through generated code in about 1–2 s to 96.8–96.9% (the hand-written v1 kernels
+  took 31.6 s, the NumPy interpreter 5.4 s with OpenBLAS); the layer GEMMs run at 65–95 GFLOP/s. Char-GPT follows the
+  reference loss trajectory step for step.
+- **Tests:** 89 GoogleTest tests (loop IR, analyses, JIT, compiler), 16 lit tests (loop IR, LLVM IR, guards, tiles,
+  memory plan; the LLVM division bug test passes), 63 differential tests of every op through the generated code, 10
+  compiled-vs-eager training tests.
+

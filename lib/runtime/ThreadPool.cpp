@@ -69,4 +69,28 @@ void ThreadPool::parallelFor(int64_t start, int64_t end, const std::function<voi
     }
 }
 
+void ThreadPool::parallelChunks(int64_t extent, const std::function<void(int64_t, int64_t)>& func) {
+    if (extent <= 0) return;
+    int64_t workers = static_cast<int64_t>(workers_.size());
+    if (workers <= 1 || extent == 1) {
+        func(0, extent);
+        return;
+    }
+    int64_t chunks = std::min(workers, extent);
+    int64_t base = extent / chunks;
+    int64_t extra = extent % chunks;
+    std::vector<std::future<void>> futures;
+    int64_t begin = 0;
+    for (int64_t c = 0; c < chunks; ++c) {
+        int64_t end = begin + base + (c < extra ? 1 : 0);
+        if (c == chunks - 1) {
+            func(begin, end); // the calling thread takes the last chunk
+        } else {
+            futures.push_back(enqueue([begin, end, &func]() { func(begin, end); }));
+        }
+        begin = end;
+    }
+    for (auto& f : futures) f.get();
+}
+
 } // namespace dlc::runtime

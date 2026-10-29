@@ -100,6 +100,8 @@ class IRFunction:
     bindings: Dict[str, np.ndarray] = field(default_factory=dict)
     # Per result: ("value", None), ("grad", arg name) or ("donates", arg name). Empty means all plain values.
     result_info: List[Tuple[str, Optional[str]]] = field(default_factory=list)
+    # The traced tensor behind each argument (export only): id(tensor) -> argument name.
+    arg_of: Dict[int, str] = field(default_factory=dict, repr=False, compare=False)
 
     def result_kinds(self) -> List[Tuple[str, Optional[str]]]:
         return self.result_info or [("value", None)] * len(self.result_types)
@@ -217,13 +219,14 @@ def export(
     name: str = "main",
     module: Any = None,
     names: Optional[Mapping[Tensor, str]] = None,
+    params: Optional[Sequence[Tensor]] = None,
 ) -> IRFunction:
     """Lowers the graph that computes `outputs` to an IRFunction.
 
-    Placeholders become input arguments and nn.Parameters param arguments; tensor-valued constants (masks, position
-    indices) become const arguments; f32 scalar constants become `constant` ops. Arguments are named after `names`,
-    then `module.named_parameters()`, then the tensors' own names, made valid and unique. The data of param and const
-    arguments is kept in `bindings`.
+    Placeholders become input arguments and nn.Parameters param arguments (with `params`, only those; the others are
+    const); tensor-valued constants (masks, position indices) become const arguments; f32 scalar constants become
+    `constant` ops. Arguments are named after `names`, then `module.named_parameters()`, then the tensors' own names,
+    made valid and unique. The data of param and const arguments is kept in `bindings`.
     """
     roots = [outputs] if isinstance(outputs, Tensor) else list(outputs)
     if not roots:
@@ -235,10 +238,13 @@ def export(
         given.update({id(t): n for t, n in names.items()})
 
     order = _topological_order(roots)
+    trainable = None if params is None else {id(p) for p in params}
     leaves: List[Tuple[Tensor, str]] = []
     for t in order:
         if not t.inputs:
             role = _leaf_role(t)
+            if role == "param" and trainable is not None and id(t) not in trainable:
+                role = "const"
             if role is not None:
                 leaves.append((t, role))
     leaves.sort(key=lambda item: ROLES.index(item[1]))  # stable: encounter order within each role
@@ -268,7 +274,9 @@ def export(
         operands = [value_names[id(i)] for i in t.inputs]
         ops.append(IROp(t.op, operands, result, _ir_type(t), _export_attrs(t)))
     ops.append(IROp("return", [value_names[id(r)] for r in roots]))
-    return IRFunction(name, args, [_ir_type(r) for r in roots], ops, bindings)
+    func = IRFunction(name, args, [_ir_type(r) for r in roots], ops, bindings)
+    func.arg_of = {id(t): value_names[id(t)] for t, _ in leaves}
+    return func
 
 
 def _topological_order(roots: Sequence[Tensor]) -> List[Tensor]:

@@ -7,55 +7,40 @@ MiniDLC is a learning project: a deep-learning compiler built from scratch in C+
 own Python frontend is traced into an SSA graph IR, differentiated, optimized, lowered to a loop IR, and compiled through
 LLVM — for x86-64 CPUs and, via LLVM's NVPTX backend, for NVIDIA GPUs.
 
-> **Status (2026-10-18): v1 prototype, being rebuilt as v2.** An audit found that the v1 pieces were not connected end
-> to end. Since then the frontend and the C++ compiler share a textual IR (P1); the C++ compiler builds a complete
-> training step — forward, backward and Adam/SGD update in one graph — whose gradients match finite differences (P2);
-> and it fuses that graph into kernels and plans their memory, with every parameter updated in place (P3). Code
-> generation for the plan is next (P4); training still doesn't run compiled code. This README
-> describes what exists today; the v2 design and the status of each component are in
+> **Status (2026-10-29): v2 rebuild, phases P0–P4 done.** A model traced in Python is exported as IR text and compiled
+> by the C++ compiler — autodiff, the Adam/SGD update, fusion, buffer assignment, loop IR with CPU schedules, LLVM,
+> ORC JIT — into one native training step. MNIST and a character-level Transformer train through the generated code
+> and match the NumPy reference. The GPU path (P5) is next. The v2 design and the status of each component are in
 > [`docs/architecture.md`](docs/architecture.md).
 
 ## What works today
 
+- **Compiled training on the CPU.** `dl.compile(loss, optimizer, target="cpu")` builds forward, backward and the update
+  as one graph and compiles it in-process. The MNIST MLP (784 → 256 → 10) trains 2 epochs in about 1–2 s on a 4-core
+  laptop and reaches 96.8–96.9% test accuracy; Char-GPT follows the reference interpreter's loss trajectory step for
+  step ([`docs/perf-report.md`](docs/perf-report.md)).
+- **The C++ compiler.**
+  - An SSA graph IR with an op registry, a round-tripping parser and printer, and a verifier that runs after every
+    pass.
+  - Graph passes: shape inference, canonicalization, CSE, DCE, activity analysis, reverse-mode autodiff (every VJP
+    checked against finite differences), Adam/SGD lowering with in-place updates, fusion with legality checks, a cost
+    model, and buffer assignment with a checker.
+  - A loop IR with per-kernel-class CPU schedules (4×16 register-tiled matmul, vectorized elementwise and row
+    kernels, parallel outer loops), and loop passes: range analysis, bounds checking with guards for data-dependent
+    indices, bounds-check elimination, and a dependence check of every parallel and vectorized loop.
+  - An LLVM emitter (`IRBuilder`, O3, ORC LLJIT) whose output LLVM vectorizes into `<8 x float>` FMAs.
 - **Python frontend and reference interpreter.** Tensors with operator overloading, `nn` modules (Linear, LayerNorm,
-  Embedding, causal self-attention, a character-level Transformer), SGD and Adam, and MNIST/TinyShakespeare loaders. A
-  NumPy interpreter executes traced graphs and implements reverse-mode autodiff for 18 ops. Every op's gradient is
-  checked against float64 central finite differences, alongside a seeded random-DAG fuzzer and NaN/Inf/overflow
-  contract tests.
-- **MNIST training.** An MLP (784 → 256 → 10) reaches 96.93% test accuracy on the reference interpreter and 96.88% with
-  `--target=cpu`, which runs **hand-written** AVX2 LLVM IR kernels (fused matmul+bias+ReLU, backward GEMMs, Adam)
-  compiled at run time with `clang -O3` and called through ctypes.
-- **Character-level Transformer.** Trains on TinyShakespeare with the reference interpreter; a seeded 2,000-step run
-  reaches 2.10 nats held-out cross-entropy, below the 2.45-nat bigram baseline
-  ([`docs/perf-report.md`](docs/perf-report.md)).
-- **C++ compiler infrastructure.** An SSA graph IR with an op registry (operand counts, attributes and type rules shared
-  by the builder, parser, verifier and shape inference); a printer and parser that round-trip, with `line:col` errors; a
-  verifier that runs after every pass; graph passes (shape inference, canonicalization to a fixpoint, CSE, DCE,
-  activity analysis, reverse-mode autodiff, Adam/SGD lowering, fusion grouping, memory planning); a loop IR with
-  interval range analysis and remainder-loop peeling; and `dlc-opt`, which prints the IR after each pass.
-- **Kernels and memory.** Fusion groups the training step into kernels (matmul epilogues, multi-output elementwise
-  kernels), legal only if the kernel graph stays acyclic; buffer assignment puts parameters and Adam state in a
-  persistent region, reuses a transient arena by liveness, updates parameters in place, and checks every plan.
-- **The training step as one C++ graph.** `dlc-opt --passes="autodiff,adam{lr=0.001},canonicalize,cse,dce"` turns an
-  exported model into a single function that returns the loss and the updated parameters and Adam state (donated,
-  i.e. updated in place). Every VJP rule matches float64 finite differences, and run in the reference interpreter the
-  step follows eager training of an MLP and a Char-GPT step by step.
-- **Textual IR between Python and C++.** `minidlc.ir.export` writes a traced model (the MLP, Char-GPT) as canonical IR
-  text, which `dlc-opt` prints back byte for byte; `minidlc.ir.parse_function` and `execute` run `dlc-opt`'s output in
-  the reference interpreter. Translation validation runs every graph pass on 16 exported graphs and compares the
-  results with the unoptimized function in float64 ([`docs/ir-spec.md`](docs/ir-spec.md)).
+  Embedding, causal self-attention, a character-level Transformer), SGD and Adam, MNIST/TinyShakespeare loaders, and a
+  NumPy interpreter with its own autodiff — the oracle every compiled result is compared with.
+- **Testing.** Translation validation of every graph pass; differential tests of every op through the generated code
+  (odd shapes, broadcasting, zero-size dimensions, NaN/Inf); a mutation fuzzer for the parser and passes; ASan/UBSan.
 
-## Known limitations (being fixed in v2)
+## Known limitations
 
-- **Training doesn't use the C++ compiler yet.** The frontend and `dlc-opt` exchange IR text, but
-  `dl.compile(..., target="cpu")` runs the hand-written kernels for a fixed two-layer ReLU MLP. It does not compile the
-  traced graph, and other models get wrong results on that target — use `target="reference"` for anything else.
-- **No code generator is in the build until P4.** The v1 loop IR and text-template LLVM/CUDA emitters were removed in
-  P3; P4 brings the loop IR v2 and the LLVM emitter, P5 the GPU path.
-- **No code has run on a GPU yet**, so the CUDA emitter's output is unverified.
-- Each known bug is recorded as a disabled unit test in [`tests/unit/test_known_bugs.cpp`](tests/unit/test_known_bugs.cpp),
-  an expected-failure lit test, or a strict expected failure in the translation-validation suite, to be enabled by the
-  phase that fixes it.
+- **No GPU path yet** (P5): NVPTX emission and the CUDA runtime come next. Nothing has run on a GPU.
+- **Attention is single-head** (real multi-head attention is P6), and the compiled step has fixed shapes: a new batch
+  size means a new compilation.
+- `--target=handwritten` keeps the hand-written AVX2 kernels for one fixed MLP as a benchmark baseline only.
 
 ## Repository layout
 
@@ -65,8 +50,9 @@ MiniDLC/
 ├── pyproject.toml        # Python package; pytest configuration
 ├── .github/workflows/    # CI: sanitizer and release builds, unit and lit tests, pytest
 ├── docs/                 # architecture (v2 + status), IR spec, pass pages, perf report, course map, devlog
-├── include/dlc/, lib/    # C++: ir/, passes/, runtime/ (loopir/ and backends/ hold v1 code that is no longer built)
-├── tools/dlc-opt/        # opt-style driver: --passes, --print-after-all, --dot, --print-cost, --print-mem-report
+├── include/dlc/, lib/    # C++: ir/, passes/, loopir/, backends/llvm/, runtime/, compiler/ (some v1 files remain, unbuilt)
+├── tools/dlc-opt/        # opt-style driver: --passes, --print-after-all, --dot, --emit-{loopir,llvm,llvm-opt}, reports
+├── python/bindings/      # the nanobind module _minidlc: compile(ir_text, target, options) -> Executable
 ├── python/minidlc/       # frontend, reference interpreter, IR export/parse/execute (ir.py), hand-written LLVM kernels
 ├── tests/
 │   ├── unit/             # GoogleTest; test_known_bugs.cpp records known defects as disabled tests
@@ -82,51 +68,49 @@ MiniDLC/
 
 - Linux on x86-64 with AVX2 and FMA
 - CMake ≥ 3.20 and a C++20 compiler
-- `clang` on `PATH` (the CPU kernels are compiled at run time)
-- Python ≥ 3.11 with NumPy
-- For the tests: GoogleTest (system package, or fetched by CMake), LLVM's `FileCheck`, `lit` (`pip install lit`) and
-  `pytest`
+- LLVM 23 development files (headers, `LLVMConfig.cmake`, `libLLVM`) and `FileCheck`
+- Python ≥ 3.11 with NumPy and nanobind (`pip install numpy nanobind`); `pytest` and `lit` for the tests
 
 ### Build and test
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j4
-ctest --test-dir build --output-on-failure   # 75 GoogleTest tests, 12 lit/FileCheck tests, the Python compiler tests
-pytest                                       # 34 Python tests + 209 compiler tests (need build/dlc-opt)
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DPython_EXECUTABLE=$(which python3)
+cmake --build build -j4          # also builds the _minidlc module into python/minidlc/
+ctest --test-dir build --output-on-failure   # GoogleTest, lit/FileCheck, and the Python compiler and backend tests
+pytest                                       # all Python tests (the compiler ones need build/dlc-opt and _minidlc)
+pip install -e .                             # optional: the minidlc package, with the compiled module
 ```
 
-For a sanitizer build, configure with `-DCMAKE_BUILD_TYPE=Debug -DDLC_SANITIZE=ON` (AddressSanitizer and
-UndefinedBehaviorSanitizer); CI runs both configurations.
-
-### Inspect passes with `dlc-opt`
-
-```bash
-PYTHONPATH=python python3 examples/export_ir.py chargpt | ./build/dlc-opt --passes=shape-infer,canonicalize,cse,dce
-./build/dlc-opt tests/lit/roundtrip.dlc --passes=shape-infer,canonicalize,cse,dce --print-after-all
-./build/dlc-opt tests/lit/fusion.dlc --passes=fusion --print-cost    # kernels, FLOPs, bytes, intensity
-PYTHONPATH=python python3 examples/export_ir.py mlp \
-  | ./build/dlc-opt --passes="autodiff,adam{lr=0.001},canonicalize,cse,dce" \
-  | ./build/dlc-opt --print-mem-report                               # the training step's memory plan
-```
+For a sanitizer build, configure with `-DCMAKE_BUILD_TYPE=Debug -DDLC_SANITIZE=ON -DDLC_BUILD_PYTHON=OFF`
+(AddressSanitizer and UndefinedBehaviorSanitizer); CI runs both configurations.
 
 ### Train
 
 ```bash
-PYTHONPATH=python python3 examples/mnist_mlp.py 2                     # hand-written LLVM kernels, ~35 s
+PYTHONPATH=python python3 examples/mnist_mlp.py 2                     # compiled training step (target cpu)
 PYTHONPATH=python python3 examples/mnist_mlp.py 2 --target=reference  # NumPy interpreter
-PYTHONPATH=python python3 examples/char_gpt.py                        # 40-step demo on the interpreter
-PYTHONPATH=python python3 benchmarks/chargpt_heldout.py               # 2,000 steps + held-out loss, ~2 min
+PYTHONPATH=python python3 examples/char_gpt.py                        # Char-GPT, compiled
+PYTHONPATH=python python3 benchmarks/chargpt_heldout.py               # 2,000 steps + held-out loss
 ```
 
-MNIST timings depend heavily on the BLAS library your NumPy links; see [`docs/perf-report.md`](docs/perf-report.md).
+### Look inside with `dlc-opt`
+
+```bash
+PYTHONPATH=python python3 examples/export_ir.py mlp > mlp.dlc          # the traced model as IR text
+./build/dlc-opt mlp.dlc --passes="autodiff,adam{lr=0.001},canonicalize,cse,dce" > step.dlc
+./build/dlc-opt step.dlc --print-cost          # kernels, FLOPs, bytes, intensity
+./build/dlc-opt step.dlc --print-mem-report    # persistent region, transient arena, in-place updates
+./build/dlc-opt step.dlc --emit-loopir         # loop IR with the CPU schedules
+./build/dlc-opt step.dlc --print-loop-report   # accesses proven in bounds / guarded
+./build/dlc-opt step.dlc --emit-llvm-opt       # LLVM IR after O3
+```
 
 ## Roadmap
 
 v2 keeps the Python frontend, makes the textual graph IR the contract with the C++ compiler, adds a GPU-aware loop IR
 with per-target schedules, and generates code through one LLVM emitter for x86-64 (ORC JIT) and NVIDIA GPUs (NVPTX →
 PTX). Phases: **P0** truthful docs and real tests (done) → **P1** IR and Python↔C++ bridge (done) → **P2** training
-graph in C++ (done) → **P3** fusion and buffer assignment (done) → **P4** CPU backend → **P5** GPU backend → **P6** Transformer on both
+graph in C++ (done) → **P3** fusion and buffer assignment (done) → **P4** CPU backend (done) → **P5** GPU backend → **P6** Transformer on both
 targets → **P7** measurements and write-up. Details: [`docs/architecture.md`](docs/architecture.md).
 
 ## Course mapping

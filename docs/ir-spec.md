@@ -199,59 +199,78 @@ expected failures, so fixing one fails the test until the marker is removed; non
 the step function that `autodiff,adam{...}` or `autodiff,sgd{...}` builds for an MLP and a Char-GPT for several steps:
 losses and parameters follow eager training in the reference interpreter.
 
-## 5. Loop IR Specification
+## 5. Loop IR v2
 
-Lowered from fused Graph IR clusters, the Loop IR models loop nests, memory buffers, affine index access patterns, and hardware mapping directives.
+The loop IR (`include/dlc/loopir/LoopIR.h`) is a small loop-nest IR that both targets share. Lowering
+(`lib/loopir/Lowering.cpp`) turns each fused kernel into one or more loop kernels, choosing loops with a rule-based
+schedule per kernel class and target; the emitters translate it without making decisions of their own.
+`dlc-opt --emit-loopir` prints it.
 
-### Syntax Example
+### Constructs
 
-```dlc
-kernel @fused_matmul_bias_relu {
-  buffer %arg0 : offset 802816 bytes, size 401408 bytes, shape [128, 784]
-  buffer %arg1 : offset 0 bytes, size 802816 bytes, shape [784, 256]
-  buffer %arg2 : offset 1335296 bytes, size 1024 bytes, shape [256]
-  buffer %2 : offset 131072 bytes, size 131072 bytes, shape [128, 256]
-  attributes {bounds_check_eliminated = true}
-  parallel for i in 0..128 {
-    for j in 0..256 {
-      acc = 0.0;
-      for k in 0..784 vectorize(8) {
-        acc = fma(arg0[((i * 784) + k)], arg1[((k * 256) + j)], acc);
+- **Kernel:** a name, buffers and a body. Global buffers are the kernel's parameters (one per planned buffer it
+  touches; values that share storage share a buffer); `register` and `shared` buffers are local.
+- **Loops:** `for v in 0..N` with a kind — serial, `parallel` (the CPU runtime splits the outermost such loop across
+  threads), `vectorize(w)`, `unroll` (expanded by the emitter), or `bind(blockIdx.x | threadIdx.x | …)` (GPU). Extents
+  are static; tiles are written as `outer * factor + inner`.
+- **Statements:** typed locals (`f32 v = …;`, reassignment), stores, `atomic_add`, `if` (explicit guards), `barrier`.
+- **Expressions:** `i64` index arithmetic (folded as it is built), `f32` arithmetic, `fma`, `max_nan` (NaN-propagating
+  max, so `relu(NaN) = NaN`), `exp`, `log`, `tanh`, `sqrt`, `rsqrt`, `select`, comparisons, casts, warp shuffles.
+
+### The first layer of the MNIST MLP on the CPU
+
+```
+kernel @k0_matmul_add_relu(%x: f32[128,784], %w: f32[784,256], %b: f32[256], %2: f32[128,256]) {
+  alloc acc1: f32[4,16] register
+  parallel for p in 0..32 {                       // 32 blocks of 4 rows, across threads
+    for jt0 in 0..16 {                            // 16 tiles of 16 columns
+      for ii2 in 0..4 unroll { for jj3 in 0..16 unroll { acc1[((ii2 * 16) + jj3)] = 0.0; } }
+      for k4 in 0..784 {
+        for ii2 in 0..4 unroll {
+          for jj3 in 0..16 unroll {
+            acc1[((ii2 * 16) + jj3)] = fma(%x[((((p * 4) + ii2) * 784) + k4)], %w[((k4 * 256) + ((jt0 * 16) + jj3))], acc1[…]);
+          }
+        }
       }
-      2[((i * 256) + j)] = max((acc + arg2[j]), 0.0);
+      for ii2 in 0..4 unroll {                    // the epilogue, in registers
+        for jj3 in 0..16 unroll {
+          f32 acc5 = acc1[((ii2 * 16) + jj3)];
+          f32 in6 = %b[((jt0 * 16) + jj3)];
+          f32 v7 = (acc5 + in6);
+          f32 v8 = max_nan(v7, 0.0);
+          %2[((((p * 4) + ii2) * 256) + ((jt0 * 16) + jj3))] = v8;
+        }
+      }
     }
   }
 }
 ```
 
-> **Two v1 defects are visible in this dump.** The output buffer `%2` (bytes 131072–262143) lies inside the weight
-> buffer `%arg1` (bytes 0–802815) that the same kernel reads, because memory planning runs on the unfused op
-> schedule; executing this kernel gives wrong results. And `vectorize(8)` is placed on the reduction loop `k`, whose
-> accesses to `arg1` have stride 256, so it is not a legal contiguous vectorization (the LLVM template ignores the
-> annotation and vectorizes over `j`). The v2 loop IR addresses both.
+### Loop passes (`lib/loopir/Analysis.cpp`)
 
-### Loop IR AST Constructs
+Run on every lowered kernel:
 
-1. **KernelNest**: Container containing:
-   - `name`: Kernel symbol name.
-   - `buffers`: List of memory buffers allocated in the contiguous arena with byte offsets and shapes.
-   - `rootStmts`: Root statement sequence.
-   - `boundsCheckEliminated`: Boolean attribute indicating static range-analysis verification. v1 emits no guards,
-     so the flag does not change generated code.
+1. **Range analysis:** interval arithmetic over loop variables, integer locals and branch conditions (inside
+   `if (x < c)`, x ≤ c − 1).
+2. **Bounds checking with guard insertion:** every load and store is proven in bounds, or, if its index is read from
+   memory (an embedding id, a class label, a scatter row), guarded so that any input is memory-safe. An access that is
+   neither is a lowering bug and an error.
+3. **Bounds-check elimination:** an `if` whose condition range analysis decides is replaced by the branch it takes.
+4. **Schedule verification (dependence analysis):** iterations of a parallel loop must write disjoint elements and
+   read nothing another iteration writes (checked by enumerating the loop with range analysis over the inner loops);
+   a vectorized loop must not carry a dependence through global memory (register-buffer reductions may be
+   reassociated).
 
-2. **Statements (`LoopStmt`)**:
-   - `ForLoop(var, start, end, step)`: Iteration construct with attributes:
-     - `parallel`: Enables multi-threaded or multi-block scheduling.
-     - `vectorize(W)`: Directs SIMD generation with vector width $W$ (e.g. 8 for AVX2).
-     - `unroll(U)`: Directs loop unrolling with factor $U$.
-   - `AssignStmt(var, expr)`: Local register/variable assignment.
-   - `StoreStmt(buffer, indexExpr, valueExpr)`: Memory store into a designated arena buffer.
+`dlc-opt --print-loop-report` prints, per kernel, the accesses proven in bounds, guarded and eliminated.
 
-3. **Expressions (`Expr`)**:
-   - `VarExpr(name)`: Variable or induction symbol reference.
-   - `ConstExpr(val)`: Floating-point or integer constant.
-   - `LoadExpr(buffer, indexExpr)`: Memory read from an arena buffer at an affine index.
-   - `BinaryExpr(op, lhs, rhs)`: Arithmetic operations (`+`, `-`, `*`, `/`, `max`, `min`).
-   - `UnaryExpr(op, operand)`: Unary functions (`exp`, `log`, `relu`, `sqrt`, `neg`).
-   - `FMAExpr(a, b, c)`: Fused multiply-accumulate evaluating $a \cdot b + c$.
+### Code generation (`lib/backends/llvm/`)
 
+Each loop kernel becomes `void @name(ptr %args, i64 %begin, i64 %end)`. It unpacks the buffer pointers and calls an
+always-inline body that takes them as `noalias` parameters; the outermost parallel loop runs `[begin, end)`. `unroll`
+loops are expanded by the emitter, so register tiles become SSA values. `vectorize(w)` becomes
+`llvm.loop.vectorize.width` metadata, plus `reassoc` on that loop's reduction updates only. `fma` becomes
+`llvm.fmuladd`, `max_nan` `llvm.maximum`. The module goes through LLVM's O3 pipeline with the host's TargetMachine and
+is compiled in-process by ORC LLJIT (`--emit-llvm`, `--emit-llvm-opt` print it). The loop vectorizer and the SLP
+vectorizer turn the schedule's `vectorize(8)` loops and unrolled register tiles into `<8 x float>` code. The loop IR
+interpreter (`lib/loopir/Interpreter.cpp`, target `interp`) runs the same kernels one iteration at a time,
+bounds-checking every access.

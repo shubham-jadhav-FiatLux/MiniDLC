@@ -301,12 +301,14 @@ The C++ compiler is exercised by `dlc-opt` (IR dumps after each pass, loop IR, L
 | **P1** | 2026-10-18 | Op registry; parser and verifier rewritten; use-list hygiene; Python exporter, IR parser and executor; translation validation of the graph passes. Five known bugs fixed (parser round trip, undefined operands, DCE use lists, matmul shape checks, constant-folding use-after-free); 8 remain |
 | **P2** | 2026-10-18 | Backward primitives (`cmp_gt`, `select`, `broadcast_to`, `reduce_max`, `scatter_add`, `cast`, `tanh`, `sqrt`, `rsqrt`, matmul transpose flags); activity analysis; autodiff rewritten (every VJP checked against finite differences); Adam/SGD lowering with donated results and initialized state; canonicalize to a fixpoint (type-preserving, NaN-safe, transpose folding); exact CSE keys. Five more known bugs fixed; 3 remain (P3, P4) |
 | **P3** | 2026-10-18 | Fusion rewritten (matmul epilogues, multi-output elementwise kernels, row/reduction/gather/scatter kernels; legal only if the kernel graph stays acyclic and epilogues never feed the matmul); a cost model (FLOPs, compulsory bytes, intensity); buffer assignment with a persistent region, liveness-based transient arena, reshape aliases, in-place donated updates and a checker. The last two known bugs fixed; the v1 loop IR and template backends removed from the build |
+| **P4** | 2026-10-29 | Loop IR v2; CPU schedules per kernel class (register-tiled matmul with in-register epilogues, vectorized elementwise and row kernels, parallel outer loops); loop passes (range analysis with branch refinement, bounds checking with guards for data-dependent indices, bounds-check elimination, dependence check of parallel and vectorized loops); LLVM emitter + O3 + ORC LLJIT; runtime (plan, executable, thread pool); loop IR interpreter; nanobind `_minidlc`; `dl.compile(target="cpu")`. MNIST and Char-GPT train through generated code and match the reference |
 
-Audit rows that P1–P3 changed:
+Audit rows that P1–P4 changed:
 
 | Spec item | Status | Notes |
 |---|---|---|
-| Python ↔ C++ link | ◐ | IR text both ways: `minidlc.ir.export` writes canonical IR that `dlc-opt` reads; `minidlc.ir.parse_function` and `execute` run its output. No in-process binding yet (P4) |
+| Python ↔ C++ link | ✓ | IR text through nanobind: `_minidlc.compile(ir_text, target, options)` returns an executable; parameters stay in it between steps |
+| `dl.compile` runs the pass pipeline | ✓ | `target="cpu"`: the whole pipeline, compiled in-process |
 | Verifier (types, shapes, dominance) | ✓ | Registry type rules, attributes, dominance, signature, single trailing return, use lists; runs on `dlc-opt`'s input and after every pass |
 | Printer/parser round-trip | ✓ | Fixpoint for every op and for the MLP and Char-GPT graphs; errors carry `line:col`. A fuzzer runs 2,000 mutated modules through the parser, verifier and passes: each either raises `IRError` or, if it verifies, prints back to a fixpoint |
 | Shape inference, canonicalize, CSE, DCE | ✓ | Translation-validated on 16 graphs. Shape errors reported; canonicalization type-preserving and NaN-safe, to a fixpoint; CSE keys exact; use lists consistent |
@@ -314,5 +316,9 @@ Audit rows that P1–P3 changed:
 | Optimizer as ops in the graph; buffer donation | ✓ | Adam and SGD lowered into the graph with donated results; the step graph matches eager training; buffer assignment updates every parameter and state buffer in place |
 | Fusion | ✓ | Kernel classes for every op; legality by quotient-graph acyclicity; multi-output kernels; MNIST training step in 15 kernels |
 | Memory planning | ✓ | Buffer assignment after fusion: persistent region, per-kernel liveness, 256-byte alignment, in-place updates, a checker on every plan |
-| Loop IR and lowering templates, LLVM/CUDA template backends | ✗ | Removed from the build in P3; rebuilt in P4 (loop IR v2, LLVM emitter) and P5 (PTX) |
-| Tests | ◐ | Unit tests with assertions, ASan/UBSan CI, a parser fuzzer, translation validation of the graph passes. Generated code has no differential tests yet (P4) |
+| Loop IR, lowering, CPU schedules | ✓ | Loop IR v2; every kernel class lowered; register tiling, vectorization, parallel loops |
+| Range-analysis BCE, loop passes | ✓ | Range analysis with branch refinement, guards for data indices, BCE, dependence check of every parallel/vectorized loop |
+| LLVM backend: `IRBuilder`, `-O3` via `PassBuilder`, ORC JIT | ✓ | Mechanical translation of the loop IR; LLVM vectorizes into `<8 x float>` |
+| Runtime | ◐ | Plan, executable, persistent region + transient arena, thread pool, per-kernel timers; no checkpoints or artifacts yet (P5) |
+| CUDA backend | ✗ | P5 |
+| Tests | ✓ | Unit, lit/FileCheck, translation validation, finite-difference VJP checks, differential tests of generated code, compiled-vs-eager training, fuzzers; ASan/UBSan |

@@ -1,16 +1,20 @@
-// RUN: %dlc-opt --passes=shape-infer,fusion --emit-loopir %s | FileCheck %s
+// Partial tiles are split from full ones instead of guarded element by element: with 10 rows and 4-row tiles, the
+// parallel loop runs 3 row blocks and the last one takes the 2-row branch; with 20 columns and 16-column tiles, each
+// row block runs one full tile and a 4-column tail. Range analysis proves every access in bounds in both branches.
+// RUN: %dlc-opt --emit-loopir %s | FileCheck %s
+// RUN: %dlc-opt --print-loop-report %s | FileCheck %s --check-prefix=REPORT
 
-// CHECK: kernel @fused_elementwise_relu {
-// CHECK:   attributes {bounds_check_eliminated = true}
-// CHECK:   parallel for idx in 0..128 vectorize(8) {
-// CHECK:     0[idx] = relu(x[idx]);
-// CHECK:   }
-// CHECK:   for idx in 128..130 {
-// CHECK:     0[idx] = relu(x[idx]);
-// CHECK:   }
-// CHECK: }
+// CHECK-LABEL: kernel @k0_matmul(
+// CHECK:         alloc acc{{[0-9]+}}: f32[4,16] register
+// CHECK:         alloc acc{{[0-9]+}}: f32[4,4] register
+// CHECK:         alloc acc{{[0-9]+}}: f32[2,16] register
+// CHECK:         alloc acc{{[0-9]+}}: f32[2,4] register
+// CHECK:         for p in 0..3 {
+// CHECK:           if (p < 2) {
 
-func @test_versioning(%x: f32[130]) -> f32[130] {
-  %0 = relu(%x) : f32[130]
+// REPORT: k0_matmul: {{[0-9]+}} accesses, {{[0-9]+}} proven in bounds, 0 guarded, 0 guards eliminated; parallel extent 1
+
+func @tiles(%a: f32[10,8], %b: f32[8,20]) -> f32[10,20] {
+  %0 = matmul(%a, %b) : f32[10,20]
   return %0
 }

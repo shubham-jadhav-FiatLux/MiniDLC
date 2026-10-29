@@ -25,14 +25,22 @@ def compile(
     optimizer: Optional[Optimizer] = None,
     target: str = "reference",
     profile: bool = False,
-) -> Callable[..., float]:
-    """Returns a training-step function for `loss` on the given target.
+    threads: int = 0,
+) -> Callable[..., Any]:
+    """Compiles the graph that computes `loss` (or any outputs) for `target`.
 
-    - "reference": runs the traced graph in the NumPy interpreter, with reverse-mode autodiff and the optimizer.
-    - "cpu": runs hand-written LLVM IR kernels (llvm_engine.py) for a fixed two-layer ReLU MLP with cross-entropy and
-      Adam. It does not compile the traced graph; other models get wrong results on this target.
-    - "cuda": not implemented yet.
+    With an optimizer the result is a training step: `step(x=..., y=...)` runs forward, backward and the update and
+    returns the loss. Without one it is a function that returns the outputs.
+
+    - "cpu": the MiniDLC compiler (autodiff and optimizer lowering in C++, fusion, buffer assignment, loop IR with CPU
+      schedules, LLVM, ORC JIT). Needs the compiled `_minidlc` module (built by CMake).
+    - "interp": the same compiled plan, run by the loop IR interpreter (slow; for testing).
+    - "reference": the NumPy interpreter, with its own reverse-mode autodiff and the eager optimizer — the oracle.
+    - "handwritten": the hand-written AVX2 LLVM IR kernels for a fixed two-layer ReLU MLP (a benchmark baseline;
+      other models get wrong results).
     """
+    if target in ("cpu", "interp"):
+        return CompiledFunction(loss, optimizer, target, profile=profile, threads=threads)
     if target == "reference":
         interp = ReferenceInterpreter(dtype=np.float32)
 
@@ -70,9 +78,9 @@ def compile(
 
         return step_fn
 
-    elif target == "cpu":
-        # Hand-written AVX2 LLVM IR kernels for a fixed MLP: relu(x @ W1 + b1) @ W2 + b2, cross-entropy, Adam.
-        # The traced graph is not compiled; the C++ compiler is not connected to execution yet (v2, phase P4).
+    elif target == "handwritten":
+        # Hand-written AVX2 LLVM IR kernels for a fixed MLP: relu(x @ W1 + b1) @ W2 + b2, cross-entropy, Adam, kept as
+        # a baseline for the generated code. The traced graph is not compiled.
         engine = LLVMCPUEngine.get()
 
         # Find model parameters and placeholders
@@ -358,8 +366,97 @@ def compile(
         return step_fn
 
     elif target == "cuda":
-        raise NotImplementedError(
-            "target='cuda' is not implemented yet (v2, phase P5); use target='reference' or target='cpu'."
-        )
+        raise NotImplementedError("target='cuda' runs compiled artifacts on a GPU; see docs/gpu.md")
     else:
         raise ValueError(f"Unknown target: {target}")
+
+
+def _optimizer_options(optimizer: Optional[Optimizer]) -> Dict[str, Any]:
+    if optimizer is None:
+        return {}
+    if isinstance(optimizer, Adam):
+        return {"optimizer": "adam", "lr": optimizer.lr, "beta1": optimizer.beta1, "beta2": optimizer.beta2,
+                "eps": optimizer.eps}
+    if isinstance(optimizer, SGD):
+        return {"optimizer": "sgd", "lr": optimizer.lr, "momentum": optimizer.momentum}
+    raise ValueError(f"the compiler lowers Adam and SGD, not {type(optimizer).__name__}")
+
+
+class CompiledFunction:
+    """A graph compiled by the MiniDLC compiler.
+
+    The parameters live in the executable between calls (updated in place by the training step); `sync_params()`
+    copies them back into the `nn.Parameter`s, e.g. before evaluating or sampling with another function.
+    """
+
+    def __init__(self, outputs, optimizer: Optional[Optimizer], target: str, profile: bool = False, threads: int = 0):
+        from . import ir
+        try:
+            from . import _minidlc
+        except ImportError as e:  # pragma: no cover - depends on the build
+            raise RuntimeError("target='cpu' needs the compiled _minidlc module: build the project with CMake "
+                               "(see README.md)") from e
+        roots = [outputs] if isinstance(outputs, Tensor) else list(outputs)
+        self.training = optimizer is not None
+        if self.training and (len(roots) != 1 or roots[0].shape != ()):
+            raise ValueError("a training step needs a single scalar loss")
+        params = optimizer.parameters if optimizer is not None else None
+        self.function = ir.export(roots, name="step" if self.training else "forward", params=params)
+        self.executable, self.dumps = _minidlc.compile(self.function.to_text(), target,
+                                                       {**_optimizer_options(optimizer), "threads": threads})
+        for name, value in self.function.bindings.items():
+            self.executable.set(name, np.asarray(value, dtype=np.int32 if value.dtype.kind in "iu" else np.float32,
+                                                 order="C"))
+        tensors = {}
+        _collect_leaves(roots, tensors)
+        self._params = {self.function.arg_of[i]: t for i, t in tensors.items()
+                        if i in self.function.arg_of and getattr(t, "op", None) == "parameter"}
+        self._inputs = {}
+        for i, t in tensors.items():
+            if t.op == "placeholder" and i in self.function.arg_of:
+                if t.name in self._inputs:
+                    raise ValueError(f"two placeholders are named '{t.name}'")
+                self._inputs[t.name] = (self.function.arg_of[i], np.int32 if t.dtype == "i32" else np.float32)
+        self.executable.set_profiling(profile)
+
+    def __call__(self, **feeds: np.ndarray):
+        missing = set(self._inputs) - set(feeds)
+        if missing:
+            raise ValueError(f"missing inputs: {sorted(missing)}")
+        arrays = {arg: np.asarray(feeds[name], dtype=dtype, order="C") for name, (arg, dtype) in self._inputs.items()}
+        outputs = self.executable.run(arrays)
+        if self.training:
+            return float(outputs[0])
+        return outputs[0] if len(outputs) == 1 else outputs
+
+    def sync_params(self) -> None:
+        """Copies the executable's parameters back into the nn.Parameters."""
+        for name, tensor in self._params.items():
+            tensor.data[...] = self.executable.get(name)
+
+    def get_profile(self) -> List[Dict[str, Any]]:
+        return self.executable.profile()
+
+    def print_profile(self) -> None:
+        rows = sorted(self.get_profile(), key=lambda p: -p["seconds"])
+        total = sum(p["seconds"] for p in rows) or 1.0
+        print(f"{'kernel':42s} {'calls':>6s} {'ms/call':>9s} {'share':>6s} {'GFLOP/s':>8s} {'GB/s':>7s}")
+        for p in rows:
+            if p["calls"] == 0:
+                continue
+            per = p["seconds"] / p["calls"]
+            print(f"{p['name']:42s} {p['calls']:6d} {1e3 * per:9.3f} {100 * p['seconds'] / total:5.1f}% "
+                  f"{p['flops'] / per / 1e9 if per else 0:8.2f} {p['bytes'] / per / 1e9 if per else 0:7.2f}")
+
+
+def _collect_leaves(roots, out) -> None:
+    stack = list(roots)
+    seen = set()
+    while stack:
+        t = stack.pop()
+        if id(t) in seen:
+            continue
+        seen.add(id(t))
+        if not t.inputs:
+            out[id(t)] = t
+        stack.extend(t.inputs)

@@ -1,13 +1,25 @@
-// RUN: %dlc-opt --passes=shape-infer,fusion --emit-loopir %s | FileCheck %s
+// Lowering with the CPU schedules. The first layer of the MNIST MLP is one matmul kernel: a parallel loop over row
+// blocks, a 4x16 register tile accumulated over k, and the bias add and ReLU applied to the tile in registers (the
+// epilogue). The NaN-propagating max keeps relu(NaN) = NaN.
+// RUN: %dlc-opt --emit-loopir %s | FileCheck %s
+// RUN: %dlc-opt --emit-llvm-opt %s | FileCheck %s --check-prefix=LLVM
 
-// CHECK: kernel @fused_elementwise_add {
-// CHECK:   parallel for idx in 0..32768 vectorize(8) {
-// CHECK:     1[idx] = max((a[idx] + b[idx]), 0.0);
-// CHECK:   }
-// CHECK: }
+// CHECK-LABEL: kernel @k0_matmul_add_relu(%x: f32[128,784], %w: f32[784,256], %b: f32[256], %2: f32[128,256]) {
+// CHECK-NEXT:    alloc acc{{[0-9]+}}: f32[4,16] register
+// CHECK-NEXT:    parallel for p in 0..32 {
+// CHECK-NEXT:      for jt{{[0-9]+}} in 0..16 {
+// CHECK:             for k{{[0-9]+}} in 0..784 {
+// CHECK:                 acc{{[0-9]+}}[{{.*}}] = fma(%x[{{.*}}], %w[{{.*}}], acc{{[0-9]+}}[{{.*}}]);
+// CHECK:             f32 v{{[0-9]+}} = max_nan(v{{[0-9]+}}, 0.0);
+// CHECK-NEXT:        %2[((((p * 4) + ii{{[0-9]+}}) * 256) + ((jt{{[0-9]+}} * 16) + jj{{[0-9]+}}))] = v{{[0-9]+}};
 
-func @test_elementwise_chain(%a: f32[128,256], %b: f32[128,256]) -> f32[128,256] {
-  %0 = add(%a, %b) : f32[128,256]
-  %1 = relu(%0) : f32[128,256]
-  return %1
+// LLVM's SLP vectorizer turns the unrolled tile into 8-wide FMAs, and the max into llvm.maximum.
+// LLVM: @llvm.fmuladd.v8f32
+// LLVM: @llvm.maximum.v8f32
+
+func @layer(%x: f32[128,784], %w: f32[784,256], %b: f32[256]) -> f32[128,256] {
+  %0 = matmul(%x, %w) : f32[128,256]
+  %1 = add(%0, %b) : f32[128,256]
+  %2 = relu(%1) : f32[128,256]
+  return %2
 }

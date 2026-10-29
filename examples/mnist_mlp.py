@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """
 Example: MLP training on MNIST using MiniDLC.
-Trains with target "cpu" (hand-written LLVM IR kernels for this fixed MLP, the default) or "reference" (the NumPy
-interpreter with reverse-mode autodiff), then evaluates test accuracy on the MNIST test set.
+
+    PYTHONPATH=python python3 examples/mnist_mlp.py [epochs] [--target=cpu|reference|handwritten] [--profile]
+
+The default target "cpu" compiles the training step — forward, backward and the Adam update as one graph — with the
+MiniDLC compiler (C++ autodiff and optimizer lowering, fusion, buffer assignment, loop IR, LLVM, ORC JIT) and evaluates
+with a compiled inference function. "reference" trains in the NumPy interpreter; "handwritten" runs hand-written AVX2
+LLVM IR kernels for this fixed MLP (a baseline).
 """
 
 import sys
@@ -47,7 +52,7 @@ def main():
     for arg in sys.argv[1:]:
         if arg.startswith("--target="):
             target = arg.split("=")[1]
-        elif arg in ("reference", "cpu", "cuda"):
+        elif arg in ("reference", "cpu", "interp", "handwritten"):
             target = arg
 
     # Compile training step
@@ -68,14 +73,19 @@ def main():
                 print(f"Epoch {ep+1}/{epochs} | Batch {b+1:03d}/{n_batches} | Loss: {cur_loss:.4f} | Time: {elapsed:.1f}s")
 
     print("\nEvaluating test set accuracy...")
-    interp = dl.ReferenceInterpreter()
     test_logits = model(x)
+    if target in ("cpu", "interp"):
+        train_step.sync_params()  # the trained weights live in the executable
+        infer = dl.compile(test_logits, target=target)
+        forward = lambda xb: infer(x=xb)
+    else:
+        interp = dl.ReferenceInterpreter()
+        forward = lambda xb: interp.forward(test_logits, {x: xb})[test_logits]
     correct = 0
     total = 0
 
     for xb, yb in dl.data.mnist_batches(ts_x, ts_y, batch_size=batch_size, shuffle=False):
-        vals = interp.forward(test_logits, {x: xb})
-        preds = np.argmax(vals[test_logits], axis=-1)
+        preds = np.argmax(forward(xb), axis=-1)
         correct += int(np.sum(preds == yb))
         total += len(yb)
 

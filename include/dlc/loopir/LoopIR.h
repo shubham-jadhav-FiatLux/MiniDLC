@@ -1,260 +1,141 @@
 #pragma once
 
 #include "dlc/ir/Type.h"
+#include <array>
+#include <memory>
 #include <string>
 #include <vector>
-#include <memory>
-#include <sstream>
 
+// Loop IR v2: a small loop-nest IR (a "TIR-lite") for both targets. Schedules turn each fused kernel's computation
+// into a nest of loops whose kinds say how they run (serially, across CPU threads, vectorized, unrolled, or bound to
+// GPU blocks and threads); the emitters translate it mechanically.
 namespace dlc::loopir {
 
-// Memory buffer allocated inside the unified arena
-struct Buffer {
+// Index arithmetic is I64; tensor elements are F32 or I32; conditions are Bool.
+enum class ScalarType { F32, I32, I64, Bool };
+
+std::string scalarTypeName(ScalarType type);
+ScalarType elementType(DataType type);
+
+enum class ExprKind { Int, Float, Var, Load, Binary, Unary, Select, Compare, Cast, Shuffle };
+enum class BinaryOp { Add, Sub, Mul, Div, Rem, Min, Max, MaxNaN, Fma };
+enum class UnaryOp { Neg, Exp, Log, Tanh, Sqrt, Rsqrt };
+enum class CompareOp { LT, LE, GT, GE, EQ, NE };
+
+struct Expr;
+using ExprPtr = std::shared_ptr<const Expr>;
+
+// An immutable expression tree. Load reads buffer `buffer` at the flat element index args[0]; Fma is a*b+c with
+// args {a, b, c}; MaxNaN is max(a, b) that returns NaN if either is NaN; Shuffle reads args[0] from the lane
+// `args[1]` lanes down in the same warp (GPU).
+struct Expr {
+    ExprKind kind{ExprKind::Int};
+    ScalarType type{ScalarType::I64};
+    int64_t intValue{0};
+    double floatValue{0.0};
+    std::string name; // Var
+    int buffer{-1};   // Load
+    BinaryOp binary{BinaryOp::Add};
+    UnaryOp unary{UnaryOp::Neg};
+    CompareOp compare{CompareOp::LT};
+    std::vector<ExprPtr> args;
+};
+
+// Constructors fold integer constants and drop identities (x+0, x*1, x*0 for indices).
+ExprPtr intConst(int64_t value);
+ExprPtr floatConst(double value);
+ExprPtr var(const std::string& name, ScalarType type = ScalarType::I64);
+ExprPtr load(int buffer, ExprPtr index, ScalarType type);
+ExprPtr binary(BinaryOp op, ExprPtr a, ExprPtr b);
+ExprPtr fma(ExprPtr a, ExprPtr b, ExprPtr c);
+ExprPtr unary(UnaryOp op, ExprPtr a);
+ExprPtr select(ExprPtr cond, ExprPtr a, ExprPtr b);
+ExprPtr compare(CompareOp op, ExprPtr a, ExprPtr b);
+ExprPtr cast(ScalarType type, ExprPtr a);
+ExprPtr shuffleDown(ExprPtr value, ExprPtr delta);
+inline ExprPtr add(ExprPtr a, ExprPtr b) { return binary(BinaryOp::Add, std::move(a), std::move(b)); }
+inline ExprPtr sub(ExprPtr a, ExprPtr b) { return binary(BinaryOp::Sub, std::move(a), std::move(b)); }
+inline ExprPtr mul(ExprPtr a, ExprPtr b) { return binary(BinaryOp::Mul, std::move(a), std::move(b)); }
+inline ExprPtr div(ExprPtr a, ExprPtr b) { return binary(BinaryOp::Div, std::move(a), std::move(b)); }
+inline ExprPtr rem(ExprPtr a, ExprPtr b) { return binary(BinaryOp::Rem, std::move(a), std::move(b)); }
+
+enum class LoopKind { Serial, Parallel, Vectorized, Unrolled, Bound };
+enum class BindAxis { BlockX, BlockY, BlockZ, ThreadX, ThreadY, ThreadZ };
+
+std::string bindAxisName(BindAxis axis);
+
+enum class StmtKind { For, Let, Assign, Store, AtomicAdd, If, Barrier };
+
+struct Stmt;
+using StmtPtr = std::shared_ptr<Stmt>;
+using Body = std::vector<StmtPtr>;
+
+// For: `var` runs over [0, extent) (normalized loops; schedules express tiles as outer*factor+inner). A Vectorized
+// loop has a vector width, an Unrolled loop is fully unrolled, a Bound loop is one thread or block index.
+// Let declares a mutable local scalar `name`; Assign updates it. Store/AtomicAdd write `value` at `buffer[index]`.
+struct Stmt {
+    StmtKind kind{StmtKind::For};
+    // For
+    std::string var;
+    int64_t extent{0};
+    LoopKind loop{LoopKind::Serial};
+    int width{1};
+    BindAxis axis{BindAxis::ThreadX};
+    Body body;
+    // Let / Assign
     std::string name;
-    DataType elemType{DataType::Float32};
+    ScalarType type{ScalarType::F32};
+    // Let / Assign / Store / AtomicAdd
+    ExprPtr value;
+    // Store / AtomicAdd
+    int buffer{-1};
+    ExprPtr index;
+    // If
+    ExprPtr cond;
+    Body elseBody;
+};
+
+StmtPtr forLoop(const std::string& var, int64_t extent, LoopKind kind, Body body, int width = 1);
+StmtPtr boundLoop(const std::string& var, int64_t extent, BindAxis axis, Body body);
+StmtPtr let(const std::string& name, ScalarType type, ExprPtr value);
+StmtPtr assign(const std::string& name, ExprPtr value);
+StmtPtr store(int buffer, ExprPtr index, ExprPtr value);
+StmtPtr atomicAdd(int buffer, ExprPtr index, ExprPtr value);
+StmtPtr ifThen(ExprPtr cond, Body thenBody, Body elseBody = {});
+StmtPtr barrier();
+
+enum class MemScope { Global, Shared, Register };
+
+std::string memScopeName(MemScope scope);
+
+struct BufferDecl {
+    std::string name;
+    ScalarType type{ScalarType::F32};
     Shape shape;
-    std::vector<int64_t> strides;
-    int64_t arenaOffsetBytes{0};
-    int64_t sizeBytes{0};
-    bool isInput{false};
-    bool isOutput{false};
-    bool isDonated{false};
+    MemScope scope{MemScope::Global};
 
-    int64_t getNumElements() const {
-        if (shape.empty()) return 0;
-        int64_t count = 1;
-        for (auto dim : shape) count *= dim;
-        return count;
-    }
-
-    void computeContiguousStrides() {
-        strides.resize(shape.size());
-        if (shape.empty()) return;
-        int64_t stride = 1;
-        for (int i = static_cast<int>(shape.size()) - 1; i >= 0; --i) {
-            strides[i] = stride;
-            stride *= shape[i];
-        }
-    }
+    int64_t elements() const;
 };
 
-// Expression AST for loop nest bodies
-class Expr {
-public:
-    virtual ~Expr() = default;
-    virtual std::string toString() const = 0;
-};
-using ExprPtr = std::shared_ptr<Expr>;
+// One parallel region: the global buffers are its parameters, in order; shared and register buffers are local. On the
+// CPU the outermost loop may be Parallel, and the runtime splits its range across threads; on the GPU the Bound loops
+// give the launch configuration.
+struct Kernel {
+    std::string name;
+    std::vector<BufferDecl> buffers;
+    Body body;
+    std::array<int64_t, 3> grid{1, 1, 1};
+    std::array<int64_t, 3> block{1, 1, 1};
+    double flops{0.0};
+    int64_t bytes{0};
 
-class VarExpr : public Expr {
-public:
-    explicit VarExpr(std::string name) : name_(std::move(name)) {}
-    const std::string& getName() const { return name_; }
-    std::string toString() const override { return name_; }
-private:
-    std::string name_;
-};
-
-class ConstExpr : public Expr {
-public:
-    explicit ConstExpr(double val) : val_(val), isFloat_(true) {}
-    explicit ConstExpr(int64_t intVal) : intVal_(intVal), isFloat_(false) {}
-    explicit ConstExpr(int intVal) : intVal_(intVal), isFloat_(false) {}
-    double getVal() const { return val_; }
-
-    int64_t getIntVal() const { return intVal_; }
-    bool isFloat() const { return isFloat_; }
-    std::string toString() const override {
-        if (isFloat_) {
-            std::ostringstream ss;
-            ss << val_;
-            if (ss.str().find('.') == std::string::npos) ss << ".0";
-            return ss.str();
-        }
-        return std::to_string(intVal_);
-    }
-private:
-    double val_{0.0};
-    int64_t intVal_{0};
-    bool isFloat_{true};
+    int addBuffer(BufferDecl decl);
+    std::vector<int> globalBuffers() const;
+    // The extent of the outermost loop if it is Parallel, else 1.
+    int64_t parallelExtent() const;
 };
 
-class LoadExpr : public Expr {
-public:
-    LoadExpr(std::string bufName, ExprPtr index)
-        : bufName_(std::move(bufName)), index_(std::move(index)) {}
-    const std::string& getBufName() const { return bufName_; }
-    const ExprPtr& getIndex() const { return index_; }
-    std::string toString() const override {
-        return bufName_ + "[" + (index_ ? index_->toString() : "0") + "]";
-    }
-private:
-    std::string bufName_;
-    ExprPtr index_;
-};
-
-enum class BinaryOp {
-    Add, Sub, Mul, Div, Max, Min
-};
-
-class BinaryExpr : public Expr {
-public:
-    BinaryExpr(BinaryOp op, ExprPtr lhs, ExprPtr rhs)
-        : op_(op), lhs_(std::move(lhs)), rhs_(std::move(rhs)) {}
-    BinaryOp getOp() const { return op_; }
-    const ExprPtr& getLhs() const { return lhs_; }
-    const ExprPtr& getRhs() const { return rhs_; }
-    std::string toString() const override;
-private:
-    BinaryOp op_;
-    ExprPtr lhs_;
-    ExprPtr rhs_;
-};
-
-enum class UnaryOp {
-    Exp, Log, Relu, Sqrt, Neg
-};
-
-class UnaryExpr : public Expr {
-public:
-    UnaryExpr(UnaryOp op, ExprPtr operand)
-        : op_(op), operand_(std::move(operand)) {}
-    UnaryOp getOp() const { return op_; }
-    const ExprPtr& getOperand() const { return operand_; }
-    std::string toString() const override;
-private:
-    UnaryOp op_;
-    ExprPtr operand_;
-};
-
-class FMAExpr : public Expr {
-public:
-    FMAExpr(ExprPtr a, ExprPtr b, ExprPtr c)
-        : a_(std::move(a)), b_(std::move(b)), c_(std::move(c)) {}
-    const ExprPtr& getA() const { return a_; }
-    const ExprPtr& getB() const { return b_; }
-    const ExprPtr& getC() const { return c_; }
-    std::string toString() const override {
-        return "fma(" + a_->toString() + ", " + b_->toString() + ", " + c_->toString() + ")";
-    }
-private:
-    ExprPtr a_;
-    ExprPtr b_;
-    ExprPtr c_;
-};
-
-// Statement AST
-class LoopStmt {
-public:
-    virtual ~LoopStmt() = default;
-    virtual std::string toString(int indent = 0) const = 0;
-};
-using LoopStmtPtr = std::shared_ptr<LoopStmt>;
-
-class AssignStmt : public LoopStmt {
-public:
-    AssignStmt(std::string varName, ExprPtr value)
-        : varName_(std::move(varName)), value_(std::move(value)) {}
-    const std::string& getVarName() const { return varName_; }
-    const ExprPtr& getValue() const { return value_; }
-    std::string toString(int indent = 0) const override;
-private:
-    std::string varName_;
-    ExprPtr value_;
-};
-
-class StoreStmt : public LoopStmt {
-public:
-    StoreStmt(std::string bufName, ExprPtr index, ExprPtr value)
-        : bufName_(std::move(bufName)), index_(std::move(index)), value_(std::move(value)) {}
-    const std::string& getBufName() const { return bufName_; }
-    const ExprPtr& getIndex() const { return index_; }
-    const ExprPtr& getValue() const { return value_; }
-    std::string toString(int indent = 0) const override;
-private:
-    std::string bufName_;
-    ExprPtr index_;
-    ExprPtr value_;
-};
-
-class ForLoop : public LoopStmt {
-public:
-    ForLoop(std::string varName, int64_t start, int64_t end, int64_t step = 1)
-        : varName_(std::move(varName)), start_(start), end_(end), step_(step) {}
-
-    const std::string& getVarName() const { return varName_; }
-    int64_t getStart() const { return start_; }
-    int64_t getEnd() const { return end_; }
-    int64_t getStep() const { return step_; }
-
-    void setStart(int64_t s) { start_ = s; }
-    void setEnd(int64_t e) { end_ = e; }
-    void setStep(int64_t s) { step_ = s; }
-
-    bool isParallel() const { return parallel_; }
-    void setParallel(bool p) { parallel_ = p; }
-
-    int64_t getVectorWidth() const { return vectorWidth_; }
-    void setVectorWidth(int64_t w) { vectorWidth_ = w; }
-
-    int64_t getUnrollFactor() const { return unrollFactor_; }
-    void setUnrollFactor(int64_t u) { unrollFactor_ = u; }
-
-    void addBodyStmt(LoopStmtPtr stmt) { body_.push_back(std::move(stmt)); }
-    const std::vector<LoopStmtPtr>& getBody() const { return body_; }
-    std::vector<LoopStmtPtr>& getBody() { return body_; }
-
-    std::string toString(int indent = 0) const override;
-
-private:
-    std::string varName_;
-    int64_t start_;
-    int64_t end_;
-    int64_t step_;
-    bool parallel_{false};
-    int64_t vectorWidth_{1};
-    int64_t unrollFactor_{1};
-    std::vector<LoopStmtPtr> body_;
-};
-
-class KernelNest {
-public:
-    explicit KernelNest(std::string name) : name_(std::move(name)) {}
-
-    const std::string& getName() const { return name_; }
-    void addBuffer(Buffer buf) { buffers_.push_back(std::move(buf)); }
-    const std::vector<Buffer>& getBuffers() const { return buffers_; }
-    std::vector<Buffer>& getBuffers() { return buffers_; }
-
-    Buffer* getBuffer(const std::string& name) {
-        for (auto& b : buffers_) {
-            if (b.name == name) return &b;
-        }
-        return nullptr;
-    }
-
-    void addRootStmt(LoopStmtPtr stmt) { rootStmts_.push_back(std::move(stmt)); }
-    const std::vector<LoopStmtPtr>& getRootStmts() const { return rootStmts_; }
-    std::vector<LoopStmtPtr>& getRootStmts() { return rootStmts_; }
-
-    int64_t getEstimatedFlops() const { return estimatedFlops_; }
-    void setEstimatedFlops(int64_t flops) { estimatedFlops_ = flops; }
-
-    int64_t getEstimatedBytesMoved() const { return estimatedBytesMoved_; }
-    void setEstimatedBytesMoved(int64_t bytes) { estimatedBytesMoved_ = bytes; }
-
-    bool hasBoundsCheckEliminated() const { return boundsCheckEliminated_; }
-    void setBoundsCheckEliminated(bool val) { boundsCheckEliminated_ = val; }
-
-    std::string toString() const;
-
-private:
-    std::string name_;
-    std::vector<Buffer> buffers_;
-    std::vector<LoopStmtPtr> rootStmts_;
-    int64_t estimatedFlops_{0};
-    int64_t estimatedBytesMoved_{0};
-    bool boundsCheckEliminated_{false};
-};
+std::string toString(const ExprPtr& expr, const Kernel& kernel);
+std::string toString(const Kernel& kernel);
 
 } // namespace dlc::loopir

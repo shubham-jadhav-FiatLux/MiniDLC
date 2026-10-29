@@ -6,8 +6,11 @@ Demonstrates:
   2. Causal self-attention with a triangular mask (single-head for now; head splitting arrives in v2, phase P6).
   3. Pre-LN Transformer blocks with residual connections and GELU feed-forward MLPs.
   4. Automatic differentiation with cross-entropy loss and Adam optimization.
-  5. Training through dl.compile(loss, optimizer, target='reference'), i.e. the NumPy reference interpreter.
+  5. Training through dl.compile(loss, optimizer, target): "cpu" (the default) compiles the whole training step with the
+     MiniDLC compiler; "reference" runs the NumPy interpreter.
   6. Autoregressive character generation given prompts.
+
+    PYTHONPATH=python python3 examples/char_gpt.py [--target=cpu|reference] [--steps=N] [--block-size=..] ...
 """
 
 import sys
@@ -40,6 +43,7 @@ def main():
     num_layers = 2
     lr = 0.008
     num_steps = 40
+    target = "cpu"
 
     for arg in sys.argv[1:]:
         if arg.startswith("--block-size="):
@@ -54,6 +58,8 @@ def main():
             num_steps = int(arg.split("=")[1])
         elif arg.startswith("--lr="):
             lr = float(arg.split("=")[1])
+        elif arg.startswith("--target="):
+            target = arg.split("=")[1]
 
     np.random.seed(1337)  # before model init, so weights and batches are reproducible
     print(f"\n[2/4] Initializing Transformer model...")
@@ -81,8 +87,8 @@ def main():
 
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
-    print(f"\n[3/4] Compiling end-to-end training step (dl.compile target='reference')...")
-    train_step = dl.compile(loss_node, optimizer=optimizer, target="reference")
+    print(f"\n[3/4] Compiling end-to-end training step (dl.compile target='{target}')...")
+    train_step = dl.compile(loss_node, optimizer=optimizer, target=target)
 
     print(f"  Training for {num_steps} iterations (Adam lr={lr})...")
     batches = tinyshakespeare_batches(data, batch_size=batch_size, block_size=block_size, steps=num_steps)
@@ -100,8 +106,10 @@ def main():
 
     print(f"\nTraining complete. Loss decreased from {losses[0]:.4f} to {losses[-1]:.4f}")
 
-    # 4. Text Generation Demonstration
+    # 4. Text Generation Demonstration (prompts change length, so this runs in the reference interpreter)
     print(f"\n[4/4] Autoregressive Text Generation Demonstration:")
+    if hasattr(train_step, "sync_params"):
+        train_step.sync_params()
     interp = ReferenceInterpreter()
     prompts = ["ROMEO:\n", "First Citizen:\n"]
     for prompt in prompts:

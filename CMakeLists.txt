@@ -1,9 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
-project(MiniDLC VERSION 0.1.0 LANGUAGES CXX)
+project(MiniDLC VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+# The libraries are also linked into the _minidlc Python module.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # Compiler flags
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -16,7 +18,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 # Options
 option(DLC_BUILD_TOOLS "Build MiniDLC compiler tools (e.g. dlc-opt)" ON)
 option(DLC_BUILD_TESTS "Build MiniDLC tests" ON)
-option(DLC_BUILD_PYTHON "Build Python bindings (not implemented yet)" OFF)
+option(DLC_BUILD_PYTHON "Build the _minidlc Python module (needs Python and nanobind)" ON)
 option(DLC_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 
 if(DLC_SANITIZE)
@@ -59,21 +61,67 @@ add_library(dlc_passes
 )
 target_link_libraries(dlc_passes PUBLIC dlc_ir)
 
-# 3. Runtime Library
+# 3. Loop IR v2: lowering with the target schedules, and the interpreter
+add_library(dlc_loopir
+    lib/loopir/LoopIR.cpp
+    lib/loopir/Lowering.cpp
+    lib/loopir/Interpreter.cpp
+    lib/loopir/Analysis.cpp
+)
+target_link_libraries(dlc_loopir PUBLIC dlc_passes)
+
+# 4. Runtime: thread pool, plans and executables (no LLVM)
 add_library(dlc_runtime
     lib/runtime/Arena.cpp
     lib/runtime/ThreadPool.cpp
+    lib/runtime/Executable.cpp
 )
 target_include_directories(dlc_runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(dlc_runtime PUBLIC Threads::Threads)
+target_link_libraries(dlc_runtime PUBLIC dlc_ir Threads::Threads)
+
+# 5. LLVM backend (emitter, O3 pipeline, ORC LLJIT) and the compiler driver
+find_package(LLVM REQUIRED CONFIG)
+if(LLVM_VERSION_MAJOR LESS 23)
+    message(FATAL_ERROR "MiniDLC needs LLVM 23 or newer, found ${LLVM_PACKAGE_VERSION}")
+endif()
+message(STATUS "Using LLVM ${LLVM_PACKAGE_VERSION} from ${LLVM_DIR}")
+add_library(dlc_llvm
+    lib/backends/llvm/Emitter.cpp
+    lib/backends/llvm/CpuJit.cpp
+)
+target_include_directories(dlc_llvm SYSTEM PUBLIC ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(dlc_llvm PUBLIC ${LLVM_DEFINITIONS})
+target_link_libraries(dlc_llvm PUBLIC dlc_loopir LLVM)
+
+add_library(dlc_compiler lib/compiler/Compiler.cpp)
+target_link_libraries(dlc_compiler PUBLIC dlc_llvm dlc_loopir dlc_runtime dlc_passes dlc_ir)
 
 
-# 6. Tools: dlc-opt and Microbenchmarks
+# 6. The _minidlc Python module (nanobind), written next to the pure-Python package
+if(DLC_BUILD_PYTHON)
+    find_package(Python 3.11 COMPONENTS Interpreter Development.Module)
+    if(Python_FOUND)
+        execute_process(COMMAND ${Python_EXECUTABLE} -m nanobind --cmake_dir
+                        OUTPUT_VARIABLE DLC_NANOBIND_DIR OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    endif()
+    if(DLC_NANOBIND_DIR)
+        list(APPEND CMAKE_PREFIX_PATH ${DLC_NANOBIND_DIR})
+        find_package(nanobind CONFIG REQUIRED)
+        nanobind_add_module(_minidlc NB_STATIC python/bindings/module.cpp)
+        target_link_libraries(_minidlc PRIVATE dlc_compiler)
+        set(DLC_PYTHON_MODULE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/python/minidlc CACHE PATH "Where _minidlc is written")
+        set_target_properties(_minidlc PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${DLC_PYTHON_MODULE_DIR})
+    else()
+        message(STATUS "_minidlc disabled: it needs Python >= 3.11 with nanobind (pip install nanobind)")
+    endif()
+endif()
+
+# 7. Tools: dlc-opt and Microbenchmarks
 if(DLC_BUILD_TOOLS)
     add_executable(dlc-opt
         tools/dlc-opt/dlc-opt.cpp
     )
-    target_link_libraries(dlc-opt PRIVATE dlc_passes dlc_runtime dlc_ir)
+    target_link_libraries(dlc-opt PRIVATE dlc_compiler)
 
     add_executable(dlc_fma_peak
         benchmarks/fma_peak.cpp
@@ -82,7 +130,7 @@ if(DLC_BUILD_TOOLS)
     target_link_libraries(dlc_fma_peak PRIVATE Threads::Threads)
 endif()
 
-# 7. Tests: GoogleTest unit tests and lit/FileCheck golden tests
+# 8. Tests: GoogleTest unit tests and lit/FileCheck golden tests
 if(DLC_BUILD_TESTS)
     enable_testing()
     find_package(GTest CONFIG QUIET)
@@ -102,15 +150,16 @@ if(DLC_BUILD_TESTS)
         tests/unit/test_ir.cpp
         tests/unit/test_passes.cpp
         tests/unit/test_runtime.cpp
+        tests/unit/test_loopir.cpp
         tests/unit/test_known_bugs.cpp
     )
-    target_link_libraries(dlc_unit_tests PRIVATE dlc_passes dlc_runtime dlc_ir GTest::gtest_main)
+    target_link_libraries(dlc_unit_tests PRIVATE dlc_compiler GTest::gtest_main)
     include(GoogleTest)
     gtest_discover_tests(dlc_unit_tests PROPERTIES TIMEOUT 120)
 
     # Golden IR tests: lit drives dlc-opt and checks its output with LLVM's FileCheck
     find_program(LIT_EXECUTABLE NAMES lit llvm-lit)
-    find_program(FILECHECK_EXECUTABLE NAMES FileCheck HINTS /usr/lib/llvm-23/bin /usr/lib/llvm-18/bin)
+    find_program(FILECHECK_EXECUTABLE NAMES FileCheck HINTS ${LLVM_TOOLS_BINARY_DIR} /usr/lib/llvm-23/bin)
     if(DLC_BUILD_TOOLS AND LIT_EXECUTABLE AND FILECHECK_EXECUTABLE)
         add_test(NAME lit
             COMMAND ${LIT_EXECUTABLE} -sv ${CMAKE_CURRENT_SOURCE_DIR}/tests/lit
@@ -131,6 +180,7 @@ if(DLC_BUILD_TESTS)
         add_test(NAME python_compiler_tests
             COMMAND ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
                     tests/python/test_translation_validation.py tests/python/test_training_graph.py
+                    tests/python/test_cpu_backend.py tests/python/test_cpu_training.py
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
         set_tests_properties(python_compiler_tests PROPERTIES ENVIRONMENT "DLC_OPT=$<TARGET_FILE:dlc-opt>")
     else()

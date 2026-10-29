@@ -1,10 +1,14 @@
 // The v1 LLVM emitter picked a text template by kernel name and turned div into fadd (a known bug from the
-// 2026-10-17 audit). P4's emitter translates the loop IR, so the kernel must divide.
+// 2026-10-17 audit). The emitter translates the loop IR, so the kernel divides — vectorized by the schedule's
+// vectorize(8), which reaches LLVM as loop metadata.
 // RUN: %dlc-opt --emit-llvm %s | FileCheck %s
-// XFAIL: *
-// P3 removed the v1 emitter; remove the XFAIL line when P4 brings --emit-llvm back.
+// RUN: %dlc-opt --emit-llvm-opt %s | FileCheck %s --check-prefix=OPT
 
-// CHECK: fdiv
+// CHECK:     define internal void @k0_div.body(ptr noalias %0, ptr noalias %1, ptr noalias %2, i64 %3, i64 %4)
+// CHECK:     fdiv float
+// CHECK:     define void @k0_div(ptr %0, i64 %1, i64 %2)
+// CHECK:     !{!"llvm.loop.vectorize.width", i32 8}
+// OPT:       fdiv <8 x float>
 
 func @d(%a: f32[64], %b: f32[64]) -> f32[64] {
   %0 = div(%a, %b) : f32[64]

@@ -1,43 +1,33 @@
-# Range Analysis, Bounds-Check Elimination and Loop Peeling
+# Range Analysis, Guards and Bounds-Check Elimination
 
 ## Purpose
-Prove with static interval analysis that every memory access in a loop nest stays in bounds, so the accesses need no
-runtime checks; where a vectorized loop's trip count is not a multiple of the vector width, split it so that both
-parts provably stay in bounds.
+Prove that every memory access of a loop kernel stays inside its buffer, so the generated code needs no runtime check.
+Where an index comes from data and cannot be proven, the generated code checks it, so that it is memory-safe for any
+input.
 
-## Interval range analysis (CS6843 A2)
+## Algorithm (`lib/loopir/Analysis.cpp`)
+1. **Range analysis:** interval arithmetic over the loop variables (`[0, extent − 1]`), integer locals, `+ − ×`,
+   division and remainder by constants, `min`/`max`. Branch conditions refine ranges: inside `if (x < c)`, x ≤ c − 1;
+   in the else branch, x ≥ c; a branch whose range becomes empty is infeasible and skipped.
+2. **Bounds checking:** every load and store index must lie in `[0, elements − 1]`.
+   - An index computed from data (loaded from memory) gets a **guard**: a load becomes
+     `select(in bounds, load(clamped index), 0)`, a store runs only when in bounds.
+   - The schedules guard their own data indices explicitly, saying what an invalid index means: a zero embedding row,
+     a skipped scatter row, a NaN loss. Inside those guards, refinement proves the accesses.
+   - Any other unprovable access is a lowering bug, reported as an error.
+3. **Bounds-check elimination:** an `if` whose condition range analysis decides is replaced by the branch it takes.
+4. **Tiling without peeling:** where a tile doesn't divide the iteration space, the schedule emits the full tile and
+   the partial tile as two branches (`tests/lit/loop_versioning.dlc`). This is the "unguarded interior, separate
+   boundary" form; on the GPU (P5) partial tiles are guarded and BCE removes the guards that tile-divisible shapes make
+   redundant.
 
-### 1. Induction-variable environment
-For each loop in the nest:
-$$\text{ForLoop}(v, \text{start}, \text{end}, \text{step}) \implies \text{Env}[v] = [\text{start}, \text{end} - 1]$$
+## Status (P4)
+- Unit tests `RangeAnalysis.*` and `Bounds.*`: interval arithmetic, refinement, guards on indices read from memory
+  (an out-of-range id reads 0), elimination of decided guards, and an out-of-bounds schedule rejected.
+- Lit tests `bounds_check_elim.dlc` (guarded embedding and labels) and `loop_versioning.dlc` (partial tiles).
+- `dlc-opt --print-loop-report` shows, per kernel, the accesses proven, guarded and eliminated. Every access of the
+  MNIST and Char-GPT training steps is proven or guarded.
 
-### 2. Interval arithmetic
-- **Constant**: $\text{Interval}(c) = [c, c]$
-- **Variable**: $\text{Interval}(v) = \text{Env}[v]$
-- **Addition**: $[l_1, u_1] + [l_2, u_2] = [l_1 + l_2, u_1 + u_2]$
-- **Subtraction**: $[l_1, u_1] - [l_2, u_2] = [l_1 - u_2, u_1 - l_2]$
-- **Multiplication**: $[\min(p_i), \max(p_i)]$ for $p_i \in \{l_1 l_2, l_1 u_2, u_1 l_2, u_1 u_2\}$
-
-### 3. Safety check
-For every load or store into buffer $B$ with $N = \prod \text{shape}$ elements, the index interval must satisfy
-$idx_{\min} \ge 0$ and $idx_{\max} < N$.
-
-## Loop peeling (CS6843 A4)
-When a loop is vectorized with width $W > 1$ and its trip count $R$ is not divisible by $W$:
-1. **Vector main loop:** $[\text{start}, \text{split})$ with $\text{split} = \text{start} + \lfloor R / W \rfloor \cdot W$.
-2. **Scalar tail loop:** $[\text{split}, \text{end})$.
-
-If every access is proven in bounds, the kernel is stamped `attributes {bounds_check_eliminated = true}`. With static
-shapes no runtime test is needed to choose between the two parts, so this is peeling rather than versioning.
-
-## Status (v1)
-- The analysis and the peeling work and are tested (`tests/lit/bounds_check_elim.dlc`, `tests/lit/loop_versioning.dlc`,
-  `tests/unit/test_runtime.cpp`).
-- v1 never emits bounds checks, so there is nothing to eliminate: the attribute is printed but no code generator reads
-  it, and the LLVM template ignores the main/tail split.
-- The access check ignores the vector width, relying on peeling to make trip counts divisible; the division rule is
-  unsound for negative intervals.
-
-## v2 (P4–P5)
-The loop IR gets explicit `if` guards, so the pass deletes the guards it proves redundant. On the GPU, partial tiles are
-split into unguarded interior blocks and guarded boundary blocks, and the cost of the guards is measured.
+## Course link
+Range analysis and bounds-check elimination: CS6843 assignments A2 and A4, with branch refinement — the part of A4
+that was hardest to get right.
