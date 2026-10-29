@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Builds the GPU artifacts: each graph compiled with the GPU schedules, to PTX through LLVM's NVPTX backend, saved as
 plan.json + kernels.ptx + values.npz + meta.json. A machine with an NVIDIA GPU runs them with examples/colab_gpu.py
-and needs only NumPy and the CUDA driver (no LLVM, no compiled module).
+and needs only NumPy and the CUDA driver (no LLVM, no compiled module). The evaluation artifacts carry no weights:
+the runner gives them the training step's.
 
     PYTHONPATH=python python3 examples/gpu_artifacts.py [mnist|chargpt|all] [--out=artifacts/gpu] [--arch=sm_75]
 """
@@ -37,14 +38,14 @@ def main():
         model, loss, optimizer, logits = gpu_models.mnist_graphs()
         params = model.parameters()
         save("mnist_train", dl.compile_gpu(loss, optimizer, arch=arch), out)
-        save("mnist_eval", dl.compile_gpu(logits, arch=arch, parameters=params), out)
+        save("mnist_eval", dl.compile_gpu(logits, arch=arch, parameters=params, include_params=False), out)
     if which in ("chargpt", "all"):
         print("Char-GPT:")
         _, tokenizer = load_tinyshakespeare()
         model, loss, optimizer, eval_loss = gpu_models.chargpt_graphs(tokenizer.vocab_size)
         params = model.parameters()
         save("chargpt_train", dl.compile_gpu(loss, optimizer, arch=arch), out)
-        save("chargpt_eval", dl.compile_gpu(eval_loss, arch=arch, parameters=params), out)
+        save("chargpt_eval", dl.compile_gpu(eval_loss, arch=arch, parameters=params, include_params=False), out)
     print(f"done in {time.time() - t0:.1f}s")
 
 

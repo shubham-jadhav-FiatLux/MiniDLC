@@ -127,10 +127,28 @@ and for each kernel of the MNIST training step the ceiling its arithmetic intens
 
 GPU measurements (CUDA events; Nsight Compute where available) start in P5.
 
-## 7. Character-level Transformer (reference interpreter)
+## 7. Character-level Transformer
 
-Model: 2 pre-LayerNorm blocks, d_model 32, context 32, 30,656 parameters. Attention is single-head: `MultiHeadAttention`
-does not split heads yet (fixed in P6). Data: TinyShakespeare, 1,115,394 characters, 65-character vocabulary.
+**P6 (2026-10-29): compiled, multi-head, against PyTorch.** Model: 2 pre-LayerNorm blocks, d_model 64, 4 heads of 16
+channels, context 32, batch 16, Adam 3e-3. Data: TinyShakespeare, trained on the first 90%, evaluated on 40 fixed
+batches of the last 10%. Both runs start from the same weights and see the same batches
+(`benchmarks/chargpt_heldout.py 2000 --targets=cpu,torch`).
+
+| Steps | MiniDLC `cpu` (held-out nats) | PyTorch 2.x CPU, float32 |
+|---|---|---|
+| 0 | 4.2248 | 4.2248 |
+| 500 | 2.2041 | 2.2041 |
+| 1,000 | 2.0555 | 2.0554 |
+| 1,500 | 1.9994 | 1.9995 |
+| 2,000 | **1.9306** | **1.9328** |
+
+The curves differ by at most 0.0022 nats. Held-out baselines fitted on the training split (add-one smoothing):
+unigram 3.3473, bigram 2.4819 nats, so the model beats the bigram by 0.55 nats. In float64, the reference interpreter's
+loss and every parameter gradient match PyTorch's to 1e-7 relative (`tests/python/test_pytorch_crosscheck.py`); the
+compiled step's Adam trajectory matches PyTorch's on `cpu` and `gpu-sim`. Step times are in §8 (P7).
+
+**Before P6** (single-head attention: `MultiHeadAttention` did not split heads; reference interpreter): model of 2
+blocks, d_model 32, context 32, 30,656 parameters.
 
 | Run | Result | Command |
 |---|---|---|

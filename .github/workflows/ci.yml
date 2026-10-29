@@ -34,6 +34,11 @@ jobs:
           sudo ./llvm.sh 23
           sudo apt-get install -y llvm-23-dev llvm-23-tools libzstd-dev libedit-dev libcurl4-openssl-dev libxml2-dev
           pip install lit numpy pytest nanobind
+      - name: Install the external references (PyTorch CPU, ptxas)
+        if: matrix.sanitize == 'OFF'
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install nvidia-cuda-nvcc-cu12  # ptxas, found by test_gpu_backend.py under the interpreter's site-packages
       - name: Allow sanitizers with high ASLR entropy
         if: matrix.sanitize == 'ON'
         run: sudo sysctl -w vm.mmap_rnd_bits=28
@@ -50,7 +55,7 @@ jobs:
           -DPython3_EXECUTABLE=$(which python)
       - name: Build
         run: cmake --build build
-      - name: Test (GoogleTest, lit/FileCheck, the Python compiler and backend tests)
+      - name: Test (GoogleTest, lit/FileCheck, the Python compiler, backend and cross-check tests)
         run: ctest --test-dir build --output-on-failure
 
   python:

@@ -115,10 +115,11 @@ class Sequential(Module):
         return x
 
 class MultiHeadAttention(Module):
-    """Causal scaled dot-product attention with q/k/v/output projections.
+    """Causal multi-head scaled dot-product attention with q/k/v/output projections.
 
-    Heads are not split yet: this computes single-head attention over all d_model channels, scaled by
-    1/sqrt(d_model / num_heads). Real head splitting (reshape + transpose + 4-D matmul) arrives in v2, phase P6.
+    The projections are split into `num_heads` heads of d_model / num_heads channels: [B, T, D] is reshaped to
+    [B, T, H, Dh] and transposed to [B, H, T, Dh]; scores are a batched matmul over (B, H) scaled by 1/sqrt(Dh); the
+    heads' outputs are transposed back and concatenated before the output projection.
     """
     def __init__(self, d_model: int, num_heads: int, causal: bool = True) -> None:
         super().__init__()
@@ -133,23 +134,24 @@ class MultiHeadAttention(Module):
         self.v_proj = Linear(d_model, d_model)
         self.out_proj = Linear(d_model, d_model)
 
+    def _heads(self, t: Tensor) -> Tensor:
+        b, s, _ = t.shape
+        return ops.transpose(ops.reshape(t, (b, s, self.num_heads, self.d_k)), perm=[0, 2, 1, 3])  # [B, H, T, Dh]
+
     def forward(self, x: Tensor) -> Tensor:
-        # x is [B, T, D]
-        q = self.q_proj(x)
-        k = self.k_proj(x)
-        v = self.v_proj(x)
+        b, s, d = x.shape
+        q = self._heads(self.q_proj(x))
+        k = self._heads(self.k_proj(x))
+        v = self._heads(self.v_proj(x))
 
-        # Transpose k for dot product: [B, T, D] -> [B, D, T]
-        kT = ops.transpose(k, perm=[0, 2, 1])
-        scores = ops.matmul(q, kT) * (1.0 / np.sqrt(self.d_k))  # [B, T, T]
-
+        kT = ops.transpose(k, perm=[0, 1, 3, 2])                     # [B, H, Dh, T]
+        scores = ops.matmul(q, kT) * (1.0 / np.sqrt(self.d_k))     # [B, H, T, T]
         if self.causal:
-            seq_len = x.shape[1]
-            mask = ops.triu_mask(seq_len)  # [T, T]
-            scores = ops.add(scores, mask)
+            scores = ops.add(scores, ops.triu_mask(s))             # [T, T], broadcast over B and H
 
-        attn = ops.softmax(scores, axis=-1)  # [B, T, T]
-        context = ops.matmul(attn, v)        # [B, T, D]
+        attn = ops.softmax(scores, axis=-1)
+        context = ops.matmul(attn, v)                              # [B, H, T, Dh]
+        context = ops.reshape(ops.transpose(context, perm=[0, 2, 1, 3]), (b, s, d))
         return self.out_proj(context)
 
 class TransformerBlock(Module):

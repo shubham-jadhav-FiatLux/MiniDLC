@@ -486,13 +486,15 @@ def _gpu_artifact(_minidlc, function, options, inputs, training, ptx=True, arch=
 
 
 def compile_gpu(loss: Tensor, optimizer: Optional[Optimizer] = None, arch: str = "sm_75", ptx: bool = True,
-                parameters: Optional[List[Tensor]] = None):
+                parameters: Optional[List[Tensor]] = None, include_params: bool = True):
     """Compiles the graph that computes `loss` (a training step with an optimizer) for NVIDIA GPUs and returns a
     `minidlc.gpu.GpuArtifact`: the plan, the PTX, the initial parameter values and the input names. `save()` it and run
     it anywhere with a CUDA driver through `minidlc.gpu.load` — no compiler needed there.
 
     `parameters` (default: the optimizer's) numbers the parameters, so that artifacts of different graphs over the same
     model — a training step and an evaluation function — can exchange weights (`GpuFunction.get_params/set_params`).
+    With include_params=False the numbered parameters' values are left out (they start as zeros): for a function that
+    always receives its weights from another artifact.
     """
     _minidlc = _compiler_module("cuda")
     function, training, param_tensors, inputs = _export(loss, optimizer)
@@ -500,6 +502,8 @@ def compile_gpu(loss: Tensor, optimizer: Optional[Optimizer] = None, arch: str =
     numbering = parameters if parameters is not None else (optimizer.parameters if optimizer is not None else [])
     index = {id(t): i for i, t in enumerate(numbering)}
     artifact.params = {arg: index[id(t)] for arg, t in param_tensors.items() if id(t) in index}
+    if not include_params:
+        artifact.values = {arg: v for arg, v in artifact.values.items() if arg not in artifact.params}
     return artifact
 
 

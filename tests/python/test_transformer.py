@@ -140,6 +140,31 @@ def test_causal_multi_head_attention():
 
     print("[PASS] test_causal_multi_head_attention")
 
+def test_attention_splits_heads():
+    """The module matches an explicit NumPy multi-head attention, and differs from single-head attention."""
+    np.random.seed(3)
+    B, T, D, H = 2, 5, 12, 3
+    mha = nn.MultiHeadAttention(d_model=D, num_heads=H, causal=True)
+    x = np.random.randn(B, T, D).astype(np.float32)
+    root = mha(dl.Tensor(shape=(B, T, D), dtype="f32", op="constant", data=x))
+    got = ReferenceInterpreter().forward(root, {})[root]
+
+    def linear(layer, v):
+        return v @ layer.weight.data + layer.bias.data
+
+    def attention(heads):
+        dh = D // heads
+        split = lambda v: v.reshape(B, T, heads, dh).transpose(0, 2, 1, 3)
+        q, k, v = (split(linear(l, x)) for l in (mha.q_proj, mha.k_proj, mha.v_proj))
+        s = q @ k.transpose(0, 1, 3, 2) / np.sqrt(D // H) + np.triu(np.full((T, T), -1e9), 1)
+        a = np.exp(s - s.max(-1, keepdims=True))
+        a /= a.sum(-1, keepdims=True)
+        return linear(mha.out_proj, (a @ v).transpose(0, 2, 1, 3).reshape(B, T, D))
+
+    np.testing.assert_allclose(got, attention(H), rtol=1e-4, atol=1e-5)
+    assert not np.allclose(got, attention(1), atol=1e-3)
+
+
 def test_transformer_block():
     np.random.seed(42)
     B, T, D = 2, 8, 16

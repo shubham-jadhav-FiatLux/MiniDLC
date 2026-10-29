@@ -326,3 +326,23 @@ pass, and re-measurement — found that v1 was not the integrated compiler the e
 - **Tests:** 95 GoogleTest tests (GPU interpreter semantics, guard elimination), 19 lit tests (three GPU tests:
   tiled matmul, warp reductions, a training step with atomics; loop IR, LLVM IR and PTX), 8 GPU runtime tests.
 
+## P6 — The Transformer on both targets (2026-10-29)
+
+- **Multi-head attention:** `MultiHeadAttention` now splits heads — projections reshaped to [B, T, H, Dh] and
+  transposed to [B, H, T, Dh], 4-D batched matmuls for the scores and the context (canonicalization folds the key
+  transpose into the matmul's `transpose_b`), heads merged back before the output projection. A test checks it
+  against an explicit NumPy multi-head implementation and that it differs from single-head attention. Nothing else in
+  the compiler changed: 4-D matmuls, reshapes and transposes were already supported on both targets.
+- **PyTorch reference** (`benchmarks/torch_chargpt.py`): the same function in PyTorch ops, with MiniDLC's weights.
+  In float64 the reference interpreter's loss and every gradient match PyTorch's to 1e-7; the compiled step's Adam
+  trajectory and final weights match PyTorch's on `cpu` and `gpu-sim`. The one exception is the key projection's
+  bias: softmax ignores it, so its gradient is zero up to rounding, which Adam amplifies differently in each
+  implementation.
+- **Held-out evaluation** (`benchmarks/chargpt_heldout.py`): trains on any target — the compiled step with a compiled
+  evaluation function that receives its weights, PyTorch, or the reference — from the same weights on the same
+  batches; n-gram baselines are now fitted on the training split and evaluated on the held-out split. 2,000 steps
+  (d_model 64, 4 heads, 2 layers): `cpu` 1.9306 nats, PyTorch 1.9328, bigram 2.4819; the curves never differ by more
+  than 0.0022.
+- **GPU artifacts** for Char-GPT (d_model 128, 4 heads, 4 layers, context 64): a 316-kernel training step and a
+  67-kernel evaluation function; evaluation artifacts carry no weights. The GPU run waits for Colab.
+

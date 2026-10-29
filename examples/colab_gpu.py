@@ -119,6 +119,10 @@ def run_chargpt(device, steps):
     data = tokenizer.encode(text)
     split = int(0.9 * len(data))
     train, val = data[:split], data[split:]
+    counts = np.ones((tokenizer.vocab_size, tokenizer.vocab_size))
+    np.add.at(counts, (train[:-1], train[1:]), 1)
+    bigram = float(-np.log((counts / counts.sum(axis=1, keepdims=True))[val[:-1], val[1:]]).mean())
+    print(f"  held-out bigram baseline {bigram:.4f} nats")
     model, loss, optimizer, _ = gpu_models.chargpt_graphs(tokenizer.vocab_size)
     train_artifact = gpu.GpuArtifact.load(os.path.join(ARTIFACTS, "chargpt_train"))
     check_initial_weights(train_artifact, model)
@@ -152,7 +156,8 @@ def run_chargpt(device, steps):
             print(f"  step {s:5d}  train loss {last:.4f}  held-out loss {curve[-1][1]:.4f}  ({time.perf_counter() - t0:.0f} s)")
     print(f"  {1e3 * train_seconds / steps:.2f} ms/step")
     fixed = [batch(train, rng) for _ in range(2 if SIM else 20)]
-    result.update(held_out=curve, ms_per_step=1e3 * train_seconds / steps,
+    print(f"  final held-out loss {curve[-1][1]:.4f} ({curve[-1][1] - bigram:+.4f} vs bigram)")
+    result.update(held_out=curve, bigram=bigram, ms_per_step=1e3 * train_seconds / steps,
                   profile=profile(step, lambda: [step(**b) for b in fixed]))
     return result
 

@@ -18,8 +18,9 @@ LLVM — for x86-64 CPUs and, via LLVM's NVPTX backend, for NVIDIA GPUs.
 
 - **Compiled training on the CPU.** `dl.compile(loss, optimizer, target="cpu")` builds forward, backward and the update
   as one graph and compiles it in-process. The MNIST MLP (784 → 256 → 10) trains 2 epochs in about 1–2 s on a 4-core
-  laptop and reaches 96.8–96.9% test accuracy; Char-GPT follows the reference interpreter's loss trajectory step for
-  step ([`docs/perf-report.md`](docs/perf-report.md)).
+  laptop and reaches 96.8–96.9% test accuracy. Char-GPT (multi-head attention) reaches 1.93 nats held-out after
+  2,000 steps, against 1.93 for PyTorch from the same weights and batches and 2.48 for a bigram model
+  ([`docs/perf-report.md`](docs/perf-report.md)).
 - **The C++ compiler.**
   - An SSA graph IR with an op registry, a round-tripping parser and printer, and a verifier that runs after every
     pass.
@@ -45,8 +46,8 @@ LLVM — for x86-64 CPUs and, via LLVM's NVPTX backend, for NVIDIA GPUs.
 
 - **Nothing has run on a GPU yet.** The GPU path is tested on the simulated device and with ptxas; the hardware run
   (`examples/colab_gpu.py` on Colab) is pending, so there are no GPU timings.
-- **Attention is single-head** (real multi-head attention is P6), and the compiled step has fixed shapes: a new batch
-  size means a new compilation.
+- **Static shapes:** a compiled step has fixed shapes, so a new batch size or context length means a new compilation
+  (text generation, whose length grows, runs in the reference interpreter).
 - `--target=handwritten` keeps the hand-written AVX2 kernels for one fixed MLP as a benchmark baseline only.
 
 ## Repository layout

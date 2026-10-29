@@ -1,0 +1,3447 @@
+{
+ "function": "forward",
+ "persistent_bytes": 3338496,
+ "transient_bytes": 3149824,
+ "args": [
+  {
+   "name": "x",
+   "role": "input",
+   "dtype": "i32",
+   "shape": [
+    16,
+    64
+   ],
+   "slot": {
+    "region": "transient",
+    "offset": 524288,
+    "bytes": 4096
+   },
+   "init": null
+  },
+  {
+   "name": "y",
+   "role": "input",
+   "dtype": "i32",
+   "shape": [
+    16,
+    64
+   ],
+   "slot": {
+    "region": "transient",
+    "offset": 3145728,
+    "bytes": 4096
+   },
+   "init": null
+  },
+  {
+   "name": "emb_weight",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    65,
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 0,
+    "bytes": 33280
+   },
+   "init": null
+  },
+  {
+   "name": "emb_weight_1",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    64,
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 33280,
+    "bytes": 32768
+   },
+   "init": null
+  },
+  {
+   "name": "gamma",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 66048,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "beta",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 66560,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "weight",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128,
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 67072,
+    "bytes": 65536
+   },
+   "init": null
+  },
+  {
+   "name": "bias",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 132608,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "weight_1",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128,
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 133120,
+    "bytes": 65536
+   },
+   "init": null
+  },
+  {
+   "name": "bias_1",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 198656,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "weight_2",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128,
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 199168,
+    "bytes": 65536
+   },
+   "init": null
+  },
+  {
+   "name": "bias_2",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 264704,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "weight_3",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128,
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 265216,
+    "bytes": 65536
+   },
+   "init": null
+  },
+  {
+   "name": "bias_3",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 330752,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "gamma_1",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 331264,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "beta_1",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 331776,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "weight_4",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128,
+    512
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 332288,
+    "bytes": 262144
+   },
+   "init": null
+  },
+  {
+   "name": "bias_4",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    512
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 594432,
+    "bytes": 2048
+   },
+   "init": null
+  },
+  {
+   "name": "weight_5",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    512,
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 596480,
+    "bytes": 262144
+   },
+   "init": null
+  },
+  {
+   "name": "bias_5",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 858624,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "gamma_2",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 859136,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "beta_2",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 859648,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "weight_6",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128,
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 860160,
+    "bytes": 65536
+   },
+   "init": null
+  },
+  {
+   "name": "bias_6",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 925696,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "weight_7",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128,
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 926208,
+    "bytes": 65536
+   },
+   "init": null
+  },
+  {
+   "name": "bias_7",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 991744,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "weight_8",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128,
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 992256,
+    "bytes": 65536
+   },
+   "init": null
+  },
+  {
+   "name": "bias_8",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 1057792,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "weight_9",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128,
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 1058304,
+    "bytes": 65536
+   },
+   "init": null
+  },
+  {
+   "name": "bias_9",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 1123840,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "gamma_3",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 1124352,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "beta_3",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 1124864,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "weight_10",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128,
+    512
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 1125376,
+    "bytes": 262144
+   },
+   "init": null
+  },
+  {
+   "name": "bias_10",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    512
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 1387520,
+    "bytes": 2048
+   },
+   "init": null
+  },
+  {
+   "name": "weight_11",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    512,
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 1389568,
+    "bytes": 262144
+   },
+   "init": null
+  },
+  {
+   "name": "bias_11",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 1651712,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "gamma_4",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 1652224,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "beta_4",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 1652736,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "weight_12",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128,
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 1653248,
+    "bytes": 65536
+   },
+   "init": null
+  },
+  {
+   "name": "bias_12",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 1718784,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "weight_13",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128,
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 1719296,
+    "bytes": 65536
+   },
+   "init": null
+  },
+  {
+   "name": "bias_13",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 1784832,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "weight_14",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128,
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 1785344,
+    "bytes": 65536
+   },
+   "init": null
+  },
+  {
+   "name": "bias_14",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 1850880,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "weight_15",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128,
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 1851392,
+    "bytes": 65536
+   },
+   "init": null
+  },
+  {
+   "name": "bias_15",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 1916928,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "gamma_5",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 1917440,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "beta_5",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 1917952,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "weight_16",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128,
+    512
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 1918464,
+    "bytes": 262144
+   },
+   "init": null
+  },
+  {
+   "name": "bias_16",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    512
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2180608,
+    "bytes": 2048
+   },
+   "init": null
+  },
+  {
+   "name": "weight_17",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    512,
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2182656,
+    "bytes": 262144
+   },
+   "init": null
+  },
+  {
+   "name": "bias_17",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2444800,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "gamma_6",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2445312,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "beta_6",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2445824,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "weight_18",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128,
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2446336,
+    "bytes": 65536
+   },
+   "init": null
+  },
+  {
+   "name": "bias_18",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2511872,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "weight_19",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128,
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2512384,
+    "bytes": 65536
+   },
+   "init": null
+  },
+  {
+   "name": "bias_19",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2577920,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "weight_20",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128,
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2578432,
+    "bytes": 65536
+   },
+   "init": null
+  },
+  {
+   "name": "bias_20",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2643968,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "weight_21",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128,
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2644480,
+    "bytes": 65536
+   },
+   "init": null
+  },
+  {
+   "name": "bias_21",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2710016,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "gamma_7",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2710528,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "beta_7",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2711040,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "weight_22",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128,
+    512
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2711552,
+    "bytes": 262144
+   },
+   "init": null
+  },
+  {
+   "name": "bias_22",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    512
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2973696,
+    "bytes": 2048
+   },
+   "init": null
+  },
+  {
+   "name": "weight_23",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    512,
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 2975744,
+    "bytes": 262144
+   },
+   "init": null
+  },
+  {
+   "name": "bias_23",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 3237888,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "gamma_8",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 3238400,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "beta_8",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 3238912,
+    "bytes": 512
+   },
+   "init": null
+  },
+  {
+   "name": "weight_24",
+   "role": "param",
+   "dtype": "f32",
+   "shape": [
+    128,
+    65
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 3239424,
+    "bytes": 33280
+   },
+   "init": null
+  },
+  {
+   "name": "positions",
+   "role": "const",
+   "dtype": "i32",
+   "shape": [
+    1,
+    64
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 3272704,
+    "bytes": 256
+   },
+   "init": null
+  },
+  {
+   "name": "causal_mask",
+   "role": "const",
+   "dtype": "f32",
+   "shape": [
+    64,
+    64
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 3272960,
+    "bytes": 16384
+   },
+   "init": null
+  },
+  {
+   "name": "causal_mask_1",
+   "role": "const",
+   "dtype": "f32",
+   "shape": [
+    64,
+    64
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 3289344,
+    "bytes": 16384
+   },
+   "init": null
+  },
+  {
+   "name": "causal_mask_2",
+   "role": "const",
+   "dtype": "f32",
+   "shape": [
+    64,
+    64
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 3305728,
+    "bytes": 16384
+   },
+   "init": null
+  },
+  {
+   "name": "causal_mask_3",
+   "role": "const",
+   "dtype": "f32",
+   "shape": [
+    64,
+    64
+   ],
+   "slot": {
+    "region": "persistent",
+    "offset": 3322112,
+    "bytes": 16384
+   },
+   "init": null
+  }
+ ],
+ "results": [
+  {
+   "kind": "value",
+   "arg": "",
+   "dtype": "f32",
+   "shape": [],
+   "slot": {
+    "region": "transient",
+    "offset": 0,
+    "bytes": 4
+   }
+  }
+ ],
+ "launches": [
+  {
+   "kernel": 0,
+   "name": "k0_embedding",
+   "grid": [
+    512,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 0,
+   "bytes": 561664,
+   "args": [
+    {
+     "region": "persistent",
+     "offset": 0,
+     "bytes": 33280
+    },
+    {
+     "region": "transient",
+     "offset": 524288,
+     "bytes": 4096
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 1,
+   "name": "k1_embedding",
+   "grid": [
+    32,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 0,
+   "bytes": 65792,
+   "args": [
+    {
+     "region": "persistent",
+     "offset": 33280,
+     "bytes": 32768
+    },
+    {
+     "region": "persistent",
+     "offset": 3272704,
+     "bytes": 256
+    },
+    {
+     "region": "transient",
+     "offset": 524288,
+     "bytes": 32768
+    }
+   ]
+  },
+  {
+   "kernel": 2,
+   "name": "k2_add",
+   "grid": [
+    512,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 131072,
+   "bytes": 1081344,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 524288,
+     "bytes": 32768
+    },
+    {
+     "region": "transient",
+     "offset": 2097152,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 3,
+   "name": "k3_layernorm",
+   "grid": [
+    1024,
+    1,
+    1
+   ],
+   "block": [
+    32,
+    1,
+    1
+   ],
+   "flops": 1048576,
+   "bytes": 1049600,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 2097152,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 66048,
+     "bytes": 512
+    },
+    {
+     "region": "persistent",
+     "offset": 66560,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 4,
+   "name": "k4_matmul_add",
+   "grid": [
+    2,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 33685504,
+   "bytes": 1114624,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 67072,
+     "bytes": 65536
+    },
+    {
+     "region": "persistent",
+     "offset": 132608,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 5,
+   "name": "k5_transpose",
+   "grid": [
+    512,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 0,
+   "bytes": 1048576,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 1048576,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 6,
+   "name": "k6_matmul_add",
+   "grid": [
+    2,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 33685504,
+   "bytes": 1114624,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 133120,
+     "bytes": 65536
+    },
+    {
+     "region": "persistent",
+     "offset": 198656,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 7,
+   "name": "k7_transpose",
+   "grid": [
+    512,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 0,
+   "bytes": 1048576,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 1572864,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 8,
+   "name": "k8_matmul_mul_add",
+   "grid": [
+    1,
+    1,
+    64
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 17301504,
+   "bytes": 2113536,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 1048576,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 1572864,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 3272960,
+     "bytes": 16384
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 1048576
+    }
+   ]
+  },
+  {
+   "kernel": 9,
+   "name": "k9_softmax",
+   "grid": [
+    4096,
+    1,
+    1
+   ],
+   "block": [
+    32,
+    1,
+    1
+   ],
+   "flops": 1310720,
+   "bytes": 2097152,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 1048576
+    },
+    {
+     "region": "transient",
+     "offset": 1048576,
+     "bytes": 1048576
+    }
+   ]
+  },
+  {
+   "kernel": 10,
+   "name": "k10_matmul_add",
+   "grid": [
+    2,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 33685504,
+   "bytes": 1114624,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 199168,
+     "bytes": 65536
+    },
+    {
+     "region": "persistent",
+     "offset": 264704,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 11,
+   "name": "k11_transpose",
+   "grid": [
+    512,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 0,
+   "bytes": 1048576,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 524288,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 12,
+   "name": "k12_matmul",
+   "grid": [
+    1,
+    1,
+    64
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 16777216,
+   "bytes": 2097152,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 1048576,
+     "bytes": 1048576
+    },
+    {
+     "region": "transient",
+     "offset": 524288,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 13,
+   "name": "k13_transpose",
+   "grid": [
+    512,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 0,
+   "bytes": 1048576,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 524288,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 14,
+   "name": "k14_matmul_add_add",
+   "grid": [
+    2,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 33816576,
+   "bytes": 1638912,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 524288,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 265216,
+     "bytes": 65536
+    },
+    {
+     "region": "persistent",
+     "offset": 330752,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 2097152,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 15,
+   "name": "k15_layernorm",
+   "grid": [
+    1024,
+    1,
+    1
+   ],
+   "block": [
+    32,
+    1,
+    1
+   ],
+   "flops": 1048576,
+   "bytes": 1049600,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 331264,
+     "bytes": 512
+    },
+    {
+     "region": "persistent",
+     "offset": 331776,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 2097152,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 16,
+   "name": "k16_matmul_add_gelu",
+   "grid": [
+    8,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 139460608,
+   "bytes": 2885632,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 2097152,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 332288,
+     "bytes": 262144
+    },
+    {
+     "region": "persistent",
+     "offset": 594432,
+     "bytes": 2048
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 2097152
+    }
+   ]
+  },
+  {
+   "kernel": 17,
+   "name": "k17_matmul_add_add",
+   "grid": [
+    2,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 134479872,
+   "bytes": 3408384,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 2097152
+    },
+    {
+     "region": "persistent",
+     "offset": 596480,
+     "bytes": 262144
+    },
+    {
+     "region": "persistent",
+     "offset": 858624,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 2097152,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 18,
+   "name": "k18_layernorm",
+   "grid": [
+    1024,
+    1,
+    1
+   ],
+   "block": [
+    32,
+    1,
+    1
+   ],
+   "flops": 1048576,
+   "bytes": 1049600,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 2097152,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 859136,
+     "bytes": 512
+    },
+    {
+     "region": "persistent",
+     "offset": 859648,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 19,
+   "name": "k19_matmul_add",
+   "grid": [
+    2,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 33685504,
+   "bytes": 1114624,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 860160,
+     "bytes": 65536
+    },
+    {
+     "region": "persistent",
+     "offset": 925696,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 20,
+   "name": "k20_transpose",
+   "grid": [
+    512,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 0,
+   "bytes": 1048576,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 1048576,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 21,
+   "name": "k21_matmul_add",
+   "grid": [
+    2,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 33685504,
+   "bytes": 1114624,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 926208,
+     "bytes": 65536
+    },
+    {
+     "region": "persistent",
+     "offset": 991744,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 22,
+   "name": "k22_transpose",
+   "grid": [
+    512,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 0,
+   "bytes": 1048576,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 1572864,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 23,
+   "name": "k23_matmul_mul_add",
+   "grid": [
+    1,
+    1,
+    64
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 17301504,
+   "bytes": 2113536,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 1048576,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 1572864,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 3289344,
+     "bytes": 16384
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 1048576
+    }
+   ]
+  },
+  {
+   "kernel": 24,
+   "name": "k24_softmax",
+   "grid": [
+    4096,
+    1,
+    1
+   ],
+   "block": [
+    32,
+    1,
+    1
+   ],
+   "flops": 1310720,
+   "bytes": 2097152,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 1048576
+    },
+    {
+     "region": "transient",
+     "offset": 1048576,
+     "bytes": 1048576
+    }
+   ]
+  },
+  {
+   "kernel": 25,
+   "name": "k25_matmul_add",
+   "grid": [
+    2,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 33685504,
+   "bytes": 1114624,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 992256,
+     "bytes": 65536
+    },
+    {
+     "region": "persistent",
+     "offset": 1057792,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 26,
+   "name": "k26_transpose",
+   "grid": [
+    512,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 0,
+   "bytes": 1048576,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 524288,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 27,
+   "name": "k27_matmul",
+   "grid": [
+    1,
+    1,
+    64
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 16777216,
+   "bytes": 2097152,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 1048576,
+     "bytes": 1048576
+    },
+    {
+     "region": "transient",
+     "offset": 524288,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 28,
+   "name": "k28_transpose",
+   "grid": [
+    512,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 0,
+   "bytes": 1048576,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 524288,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 29,
+   "name": "k29_matmul_add_add",
+   "grid": [
+    2,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 33816576,
+   "bytes": 1638912,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 524288,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 1058304,
+     "bytes": 65536
+    },
+    {
+     "region": "persistent",
+     "offset": 1123840,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 2097152,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 30,
+   "name": "k30_layernorm",
+   "grid": [
+    1024,
+    1,
+    1
+   ],
+   "block": [
+    32,
+    1,
+    1
+   ],
+   "flops": 1048576,
+   "bytes": 1049600,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 1124352,
+     "bytes": 512
+    },
+    {
+     "region": "persistent",
+     "offset": 1124864,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 2097152,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 31,
+   "name": "k31_matmul_add_gelu",
+   "grid": [
+    8,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 139460608,
+   "bytes": 2885632,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 2097152,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 1125376,
+     "bytes": 262144
+    },
+    {
+     "region": "persistent",
+     "offset": 1387520,
+     "bytes": 2048
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 2097152
+    }
+   ]
+  },
+  {
+   "kernel": 32,
+   "name": "k32_matmul_add_add",
+   "grid": [
+    2,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 134479872,
+   "bytes": 3408384,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 2097152
+    },
+    {
+     "region": "persistent",
+     "offset": 1389568,
+     "bytes": 262144
+    },
+    {
+     "region": "persistent",
+     "offset": 1651712,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 2097152,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 33,
+   "name": "k33_layernorm",
+   "grid": [
+    1024,
+    1,
+    1
+   ],
+   "block": [
+    32,
+    1,
+    1
+   ],
+   "flops": 1048576,
+   "bytes": 1049600,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 2097152,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 1652224,
+     "bytes": 512
+    },
+    {
+     "region": "persistent",
+     "offset": 1652736,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 34,
+   "name": "k34_matmul_add",
+   "grid": [
+    2,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 33685504,
+   "bytes": 1114624,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 1653248,
+     "bytes": 65536
+    },
+    {
+     "region": "persistent",
+     "offset": 1718784,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 35,
+   "name": "k35_transpose",
+   "grid": [
+    512,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 0,
+   "bytes": 1048576,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 1048576,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 36,
+   "name": "k36_matmul_add",
+   "grid": [
+    2,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 33685504,
+   "bytes": 1114624,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 1719296,
+     "bytes": 65536
+    },
+    {
+     "region": "persistent",
+     "offset": 1784832,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 37,
+   "name": "k37_transpose",
+   "grid": [
+    512,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 0,
+   "bytes": 1048576,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 1572864,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 38,
+   "name": "k38_matmul_mul_add",
+   "grid": [
+    1,
+    1,
+    64
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 17301504,
+   "bytes": 2113536,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 1048576,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 1572864,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 3305728,
+     "bytes": 16384
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 1048576
+    }
+   ]
+  },
+  {
+   "kernel": 39,
+   "name": "k39_softmax",
+   "grid": [
+    4096,
+    1,
+    1
+   ],
+   "block": [
+    32,
+    1,
+    1
+   ],
+   "flops": 1310720,
+   "bytes": 2097152,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 1048576
+    },
+    {
+     "region": "transient",
+     "offset": 1048576,
+     "bytes": 1048576
+    }
+   ]
+  },
+  {
+   "kernel": 40,
+   "name": "k40_matmul_add",
+   "grid": [
+    2,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 33685504,
+   "bytes": 1114624,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 1785344,
+     "bytes": 65536
+    },
+    {
+     "region": "persistent",
+     "offset": 1850880,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 41,
+   "name": "k41_transpose",
+   "grid": [
+    512,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 0,
+   "bytes": 1048576,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 524288,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 42,
+   "name": "k42_matmul",
+   "grid": [
+    1,
+    1,
+    64
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 16777216,
+   "bytes": 2097152,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 1048576,
+     "bytes": 1048576
+    },
+    {
+     "region": "transient",
+     "offset": 524288,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 43,
+   "name": "k43_transpose",
+   "grid": [
+    512,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 0,
+   "bytes": 1048576,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 524288,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 44,
+   "name": "k44_matmul_add_add",
+   "grid": [
+    2,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 33816576,
+   "bytes": 1638912,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 524288,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 1851392,
+     "bytes": 65536
+    },
+    {
+     "region": "persistent",
+     "offset": 1916928,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 2097152,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 45,
+   "name": "k45_layernorm",
+   "grid": [
+    1024,
+    1,
+    1
+   ],
+   "block": [
+    32,
+    1,
+    1
+   ],
+   "flops": 1048576,
+   "bytes": 1049600,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 1917440,
+     "bytes": 512
+    },
+    {
+     "region": "persistent",
+     "offset": 1917952,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 2097152,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 46,
+   "name": "k46_matmul_add_gelu",
+   "grid": [
+    8,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 139460608,
+   "bytes": 2885632,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 2097152,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 1918464,
+     "bytes": 262144
+    },
+    {
+     "region": "persistent",
+     "offset": 2180608,
+     "bytes": 2048
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 2097152
+    }
+   ]
+  },
+  {
+   "kernel": 47,
+   "name": "k47_matmul_add_add",
+   "grid": [
+    2,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 134479872,
+   "bytes": 3408384,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 2097152
+    },
+    {
+     "region": "persistent",
+     "offset": 2182656,
+     "bytes": 262144
+    },
+    {
+     "region": "persistent",
+     "offset": 2444800,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 2097152,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 48,
+   "name": "k48_layernorm",
+   "grid": [
+    1024,
+    1,
+    1
+   ],
+   "block": [
+    32,
+    1,
+    1
+   ],
+   "flops": 1048576,
+   "bytes": 1049600,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 2097152,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 2445312,
+     "bytes": 512
+    },
+    {
+     "region": "persistent",
+     "offset": 2445824,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 49,
+   "name": "k49_matmul_add",
+   "grid": [
+    2,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 33685504,
+   "bytes": 1114624,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 2446336,
+     "bytes": 65536
+    },
+    {
+     "region": "persistent",
+     "offset": 2511872,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 50,
+   "name": "k50_transpose",
+   "grid": [
+    512,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 0,
+   "bytes": 1048576,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 1048576,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 51,
+   "name": "k51_matmul_add",
+   "grid": [
+    2,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 33685504,
+   "bytes": 1114624,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 2512384,
+     "bytes": 65536
+    },
+    {
+     "region": "persistent",
+     "offset": 2577920,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 52,
+   "name": "k52_transpose",
+   "grid": [
+    512,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 0,
+   "bytes": 1048576,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 1572864,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 53,
+   "name": "k53_matmul_mul_add",
+   "grid": [
+    1,
+    1,
+    64
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 17301504,
+   "bytes": 2113536,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 1048576,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 1572864,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 3322112,
+     "bytes": 16384
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 1048576
+    }
+   ]
+  },
+  {
+   "kernel": 54,
+   "name": "k54_softmax",
+   "grid": [
+    4096,
+    1,
+    1
+   ],
+   "block": [
+    32,
+    1,
+    1
+   ],
+   "flops": 1310720,
+   "bytes": 2097152,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 1048576
+    },
+    {
+     "region": "transient",
+     "offset": 1048576,
+     "bytes": 1048576
+    }
+   ]
+  },
+  {
+   "kernel": 55,
+   "name": "k55_matmul_add",
+   "grid": [
+    2,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 33685504,
+   "bytes": 1114624,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 2578432,
+     "bytes": 65536
+    },
+    {
+     "region": "persistent",
+     "offset": 2643968,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 56,
+   "name": "k56_transpose",
+   "grid": [
+    512,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 0,
+   "bytes": 1048576,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 524288,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 57,
+   "name": "k57_matmul",
+   "grid": [
+    1,
+    1,
+    64
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 16777216,
+   "bytes": 2097152,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 1048576,
+     "bytes": 1048576
+    },
+    {
+     "region": "transient",
+     "offset": 524288,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 58,
+   "name": "k58_transpose",
+   "grid": [
+    512,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 0,
+   "bytes": 1048576,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 524288,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 59,
+   "name": "k59_matmul_add_add",
+   "grid": [
+    2,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 33816576,
+   "bytes": 1638912,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 524288,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 2644480,
+     "bytes": 65536
+    },
+    {
+     "region": "persistent",
+     "offset": 2710016,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 2097152,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 60,
+   "name": "k60_layernorm",
+   "grid": [
+    1024,
+    1,
+    1
+   ],
+   "block": [
+    32,
+    1,
+    1
+   ],
+   "flops": 1048576,
+   "bytes": 1049600,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 2710528,
+     "bytes": 512
+    },
+    {
+     "region": "persistent",
+     "offset": 2711040,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 2097152,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 61,
+   "name": "k61_matmul_add_gelu",
+   "grid": [
+    8,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 139460608,
+   "bytes": 2885632,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 2097152,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 2711552,
+     "bytes": 262144
+    },
+    {
+     "region": "persistent",
+     "offset": 2973696,
+     "bytes": 2048
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 2097152
+    }
+   ]
+  },
+  {
+   "kernel": 62,
+   "name": "k62_matmul_add_add",
+   "grid": [
+    2,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 134479872,
+   "bytes": 3408384,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 2097152
+    },
+    {
+     "region": "persistent",
+     "offset": 2975744,
+     "bytes": 262144
+    },
+    {
+     "region": "persistent",
+     "offset": 3237888,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 2621440,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 2097152,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 63,
+   "name": "k63_layernorm",
+   "grid": [
+    1024,
+    1,
+    1
+   ],
+   "block": [
+    32,
+    1,
+    1
+   ],
+   "flops": 1048576,
+   "bytes": 1049600,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 2097152,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 3238400,
+     "bytes": 512
+    },
+    {
+     "region": "persistent",
+     "offset": 3238912,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    }
+   ]
+  },
+  {
+   "kernel": 64,
+   "name": "k64_matmul",
+   "grid": [
+    2,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "flops": 17039360,
+   "bytes": 823808,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 524288
+    },
+    {
+     "region": "persistent",
+     "offset": 3239424,
+     "bytes": 33280
+    },
+    {
+     "region": "transient",
+     "offset": 524288,
+     "bytes": 266240
+    }
+   ]
+  },
+  {
+   "kernel": 65,
+   "name": "k65_cross_entropy_zero",
+   "grid": [
+    1,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "flops": 0,
+   "bytes": 0,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 4
+    }
+   ]
+  },
+  {
+   "kernel": 66,
+   "name": "k65_cross_entropy_rows",
+   "grid": [
+    1024,
+    1,
+    1
+   ],
+   "block": [
+    32,
+    1,
+    1
+   ],
+   "flops": 332800,
+   "bytes": 270340,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 524288,
+     "bytes": 266240
+    },
+    {
+     "region": "transient",
+     "offset": 3145728,
+     "bytes": 4096
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 4
+    }
+   ]
+  }
+ ],
+ "copies": []
+}

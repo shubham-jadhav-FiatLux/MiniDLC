@@ -57,7 +57,9 @@ remaining access in bounds.
 ## Running on a GPU (Colab)
 
 The runtime needs only NumPy and the CUDA driver, so a GPU machine does not need LLVM or the compiled module: the
-artifacts are built here and committed under `artifacts/gpu/` (plan, PTX, initial weights, source graph).
+artifacts are built here and committed under `artifacts/gpu/` (plan, PTX, initial weights, source graph): a training
+step and an evaluation function per model. The Char-GPT step is 316 kernels; ptxas accepts all of them with no
+spills.
 
 1. In Colab: *Runtime → Change runtime type → T4 GPU*.
 2. In a cell:
@@ -65,8 +67,11 @@ artifacts are built here and committed under `artifacts/gpu/` (plan, PTX, initia
    ```bash
    !git clone https://github.com/shubham-jadhav-FiatLux/MiniDLC.git
    %cd MiniDLC
-   !PYTHONPATH=python python3 examples/colab_gpu.py mnist --epochs=2 --json=gpu_run.json
+   !PYTHONPATH=python python3 examples/colab_gpu.py all --epochs=2 --steps=2000 --json=gpu_run.json
    ```
+
+   `all` runs the MNIST MLP (2 epochs) and Char-GPT (d_model 128, 4 heads, 4 layers, context 64, batch 16; 2,000
+   steps with the held-out loss every 200 and the held-out bigram baseline); `mnist` or `chargpt` runs one.
 
    For each model the script checks that the artifact's initial weights are the model definition's, compares the
    first training steps' losses with the NumPy reference interpreter from the same weights and batches, trains and

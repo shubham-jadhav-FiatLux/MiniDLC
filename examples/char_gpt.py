@@ -3,7 +3,7 @@
 Example: Autoregressive Character-Level Transformer trained on TinyShakespeare using MiniDLC.
 Demonstrates:
   1. Learned token and position embeddings.
-  2. Causal self-attention with a triangular mask (single-head for now; head splitting arrives in v2, phase P6).
+  2. Causal multi-head self-attention with a triangular mask (heads split by reshape + transpose, 4-D matmuls).
   3. Pre-LN Transformer blocks with residual connections and GELU feed-forward MLPs.
   4. Automatic differentiation with cross-entropy loss and Adam optimization.
   5. Training through dl.compile(loss, optimizer, target): "cpu" (the default) compiles the whole training step with the

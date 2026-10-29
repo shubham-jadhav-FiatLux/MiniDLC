@@ -1,0 +1,137 @@
+func @step(%x: i32[16,64], %y: i32[16,64], %emb_weight: f32[65,128] {param}, %emb_weight_1: f32[64,128] {param}, %gamma: f32[128] {param}, %beta: f32[128] {param}, %weight: f32[128,128] {param}, %bias: f32[128] {param}, %weight_1: f32[128,128] {param}, %bias_1: f32[128] {param}, %weight_2: f32[128,128] {param}, %bias_2: f32[128] {param}, %weight_3: f32[128,128] {param}, %bias_3: f32[128] {param}, %gamma_1: f32[128] {param}, %beta_1: f32[128] {param}, %weight_4: f32[128,512] {param}, %bias_4: f32[512] {param}, %weight_5: f32[512,128] {param}, %bias_5: f32[128] {param}, %gamma_2: f32[128] {param}, %beta_2: f32[128] {param}, %weight_6: f32[128,128] {param}, %bias_6: f32[128] {param}, %weight_7: f32[128,128] {param}, %bias_7: f32[128] {param}, %weight_8: f32[128,128] {param}, %bias_8: f32[128] {param}, %weight_9: f32[128,128] {param}, %bias_9: f32[128] {param}, %gamma_3: f32[128] {param}, %beta_3: f32[128] {param}, %weight_10: f32[128,512] {param}, %bias_10: f32[512] {param}, %weight_11: f32[512,128] {param}, %bias_11: f32[128] {param}, %gamma_4: f32[128] {param}, %beta_4: f32[128] {param}, %weight_12: f32[128,128] {param}, %bias_12: f32[128] {param}, %weight_13: f32[128,128] {param}, %bias_13: f32[128] {param}, %weight_14: f32[128,128] {param}, %bias_14: f32[128] {param}, %weight_15: f32[128,128] {param}, %bias_15: f32[128] {param}, %gamma_5: f32[128] {param}, %beta_5: f32[128] {param}, %weight_16: f32[128,512] {param}, %bias_16: f32[512] {param}, %weight_17: f32[512,128] {param}, %bias_17: f32[128] {param}, %gamma_6: f32[128] {param}, %beta_6: f32[128] {param}, %weight_18: f32[128,128] {param}, %bias_18: f32[128] {param}, %weight_19: f32[128,128] {param}, %bias_19: f32[128] {param}, %weight_20: f32[128,128] {param}, %bias_20: f32[128] {param}, %weight_21: f32[128,128] {param}, %bias_21: f32[128] {param}, %gamma_7: f32[128] {param}, %beta_7: f32[128] {param}, %weight_22: f32[128,512] {param}, %bias_22: f32[512] {param}, %weight_23: f32[512,128] {param}, %bias_23: f32[128] {param}, %gamma_8: f32[128] {param}, %beta_8: f32[128] {param}, %weight_24: f32[128,65] {param}, %positions: i32[1,64] {const}, %causal_mask: f32[64,64] {const}, %causal_mask_1: f32[64,64] {const}, %causal_mask_2: f32[64,64] {const}, %causal_mask_3: f32[64,64] {const}) -> f32[] {
+  %0 = embedding(%emb_weight, %x) : f32[16,64,128]
+  %1 = embedding(%emb_weight_1, %positions) : f32[1,64,128]
+  %2 = add(%0, %1) : f32[16,64,128]
+  %3 = layernorm(%2, %gamma, %beta) : f32[16,64,128] {eps = 1e-05}
+  %4 = matmul(%3, %weight) : f32[16,64,128]
+  %5 = add(%4, %bias) : f32[16,64,128]
+  %6 = reshape(%5) : f32[16,64,4,32] {shape = [16, 64, 4, 32]}
+  %7 = transpose(%6) : f32[16,4,64,32] {perm = [0, 2, 1, 3]}
+  %8 = matmul(%3, %weight_1) : f32[16,64,128]
+  %9 = add(%8, %bias_1) : f32[16,64,128]
+  %10 = reshape(%9) : f32[16,64,4,32] {shape = [16, 64, 4, 32]}
+  %11 = transpose(%10) : f32[16,4,64,32] {perm = [0, 2, 1, 3]}
+  %12 = transpose(%11) : f32[16,4,32,64] {perm = [0, 1, 3, 2]}
+  %13 = matmul(%7, %12) : f32[16,4,64,64]
+  %14 = constant() : f32[] {value = 0.1767766922712326}
+  %15 = mul(%13, %14) : f32[16,4,64,64]
+  %16 = add(%15, %causal_mask) : f32[16,4,64,64]
+  %17 = softmax(%16) : f32[16,4,64,64] {axis = -1}
+  %18 = matmul(%3, %weight_2) : f32[16,64,128]
+  %19 = add(%18, %bias_2) : f32[16,64,128]
+  %20 = reshape(%19) : f32[16,64,4,32] {shape = [16, 64, 4, 32]}
+  %21 = transpose(%20) : f32[16,4,64,32] {perm = [0, 2, 1, 3]}
+  %22 = matmul(%17, %21) : f32[16,4,64,32]
+  %23 = transpose(%22) : f32[16,64,4,32] {perm = [0, 2, 1, 3]}
+  %24 = reshape(%23) : f32[16,64,128] {shape = [16, 64, 128]}
+  %25 = matmul(%24, %weight_3) : f32[16,64,128]
+  %26 = add(%25, %bias_3) : f32[16,64,128]
+  %27 = add(%2, %26) : f32[16,64,128]
+  %28 = layernorm(%27, %gamma_1, %beta_1) : f32[16,64,128] {eps = 1e-05}
+  %29 = matmul(%28, %weight_4) : f32[16,64,512]
+  %30 = add(%29, %bias_4) : f32[16,64,512]
+  %31 = gelu(%30) : f32[16,64,512]
+  %32 = matmul(%31, %weight_5) : f32[16,64,128]
+  %33 = add(%32, %bias_5) : f32[16,64,128]
+  %34 = add(%27, %33) : f32[16,64,128]
+  %35 = layernorm(%34, %gamma_2, %beta_2) : f32[16,64,128] {eps = 1e-05}
+  %36 = matmul(%35, %weight_6) : f32[16,64,128]
+  %37 = add(%36, %bias_6) : f32[16,64,128]
+  %38 = reshape(%37) : f32[16,64,4,32] {shape = [16, 64, 4, 32]}
+  %39 = transpose(%38) : f32[16,4,64,32] {perm = [0, 2, 1, 3]}
+  %40 = matmul(%35, %weight_7) : f32[16,64,128]
+  %41 = add(%40, %bias_7) : f32[16,64,128]
+  %42 = reshape(%41) : f32[16,64,4,32] {shape = [16, 64, 4, 32]}
+  %43 = transpose(%42) : f32[16,4,64,32] {perm = [0, 2, 1, 3]}
+  %44 = transpose(%43) : f32[16,4,32,64] {perm = [0, 1, 3, 2]}
+  %45 = matmul(%39, %44) : f32[16,4,64,64]
+  %46 = constant() : f32[] {value = 0.1767766922712326}
+  %47 = mul(%45, %46) : f32[16,4,64,64]
+  %48 = add(%47, %causal_mask_1) : f32[16,4,64,64]
+  %49 = softmax(%48) : f32[16,4,64,64] {axis = -1}
+  %50 = matmul(%35, %weight_8) : f32[16,64,128]
+  %51 = add(%50, %bias_8) : f32[16,64,128]
+  %52 = reshape(%51) : f32[16,64,4,32] {shape = [16, 64, 4, 32]}
+  %53 = transpose(%52) : f32[16,4,64,32] {perm = [0, 2, 1, 3]}
+  %54 = matmul(%49, %53) : f32[16,4,64,32]
+  %55 = transpose(%54) : f32[16,64,4,32] {perm = [0, 2, 1, 3]}
+  %56 = reshape(%55) : f32[16,64,128] {shape = [16, 64, 128]}
+  %57 = matmul(%56, %weight_9) : f32[16,64,128]
+  %58 = add(%57, %bias_9) : f32[16,64,128]
+  %59 = add(%34, %58) : f32[16,64,128]
+  %60 = layernorm(%59, %gamma_3, %beta_3) : f32[16,64,128] {eps = 1e-05}
+  %61 = matmul(%60, %weight_10) : f32[16,64,512]
+  %62 = add(%61, %bias_10) : f32[16,64,512]
+  %63 = gelu(%62) : f32[16,64,512]
+  %64 = matmul(%63, %weight_11) : f32[16,64,128]
+  %65 = add(%64, %bias_11) : f32[16,64,128]
+  %66 = add(%59, %65) : f32[16,64,128]
+  %67 = layernorm(%66, %gamma_4, %beta_4) : f32[16,64,128] {eps = 1e-05}
+  %68 = matmul(%67, %weight_12) : f32[16,64,128]
+  %69 = add(%68, %bias_12) : f32[16,64,128]
+  %70 = reshape(%69) : f32[16,64,4,32] {shape = [16, 64, 4, 32]}
+  %71 = transpose(%70) : f32[16,4,64,32] {perm = [0, 2, 1, 3]}
+  %72 = matmul(%67, %weight_13) : f32[16,64,128]
+  %73 = add(%72, %bias_13) : f32[16,64,128]
+  %74 = reshape(%73) : f32[16,64,4,32] {shape = [16, 64, 4, 32]}
+  %75 = transpose(%74) : f32[16,4,64,32] {perm = [0, 2, 1, 3]}
+  %76 = transpose(%75) : f32[16,4,32,64] {perm = [0, 1, 3, 2]}
+  %77 = matmul(%71, %76) : f32[16,4,64,64]
+  %78 = constant() : f32[] {value = 0.1767766922712326}
+  %79 = mul(%77, %78) : f32[16,4,64,64]
+  %80 = add(%79, %causal_mask_2) : f32[16,4,64,64]
+  %81 = softmax(%80) : f32[16,4,64,64] {axis = -1}
+  %82 = matmul(%67, %weight_14) : f32[16,64,128]
+  %83 = add(%82, %bias_14) : f32[16,64,128]
+  %84 = reshape(%83) : f32[16,64,4,32] {shape = [16, 64, 4, 32]}
+  %85 = transpose(%84) : f32[16,4,64,32] {perm = [0, 2, 1, 3]}
+  %86 = matmul(%81, %85) : f32[16,4,64,32]
+  %87 = transpose(%86) : f32[16,64,4,32] {perm = [0, 2, 1, 3]}
+  %88 = reshape(%87) : f32[16,64,128] {shape = [16, 64, 128]}
+  %89 = matmul(%88, %weight_15) : f32[16,64,128]
+  %90 = add(%89, %bias_15) : f32[16,64,128]
+  %91 = add(%66, %90) : f32[16,64,128]
+  %92 = layernorm(%91, %gamma_5, %beta_5) : f32[16,64,128] {eps = 1e-05}
+  %93 = matmul(%92, %weight_16) : f32[16,64,512]
+  %94 = add(%93, %bias_16) : f32[16,64,512]
+  %95 = gelu(%94) : f32[16,64,512]
+  %96 = matmul(%95, %weight_17) : f32[16,64,128]
+  %97 = add(%96, %bias_17) : f32[16,64,128]
+  %98 = add(%91, %97) : f32[16,64,128]
+  %99 = layernorm(%98, %gamma_6, %beta_6) : f32[16,64,128] {eps = 1e-05}
+  %100 = matmul(%99, %weight_18) : f32[16,64,128]
+  %101 = add(%100, %bias_18) : f32[16,64,128]
+  %102 = reshape(%101) : f32[16,64,4,32] {shape = [16, 64, 4, 32]}
+  %103 = transpose(%102) : f32[16,4,64,32] {perm = [0, 2, 1, 3]}
+  %104 = matmul(%99, %weight_19) : f32[16,64,128]
+  %105 = add(%104, %bias_19) : f32[16,64,128]
+  %106 = reshape(%105) : f32[16,64,4,32] {shape = [16, 64, 4, 32]}
+  %107 = transpose(%106) : f32[16,4,64,32] {perm = [0, 2, 1, 3]}
+  %108 = transpose(%107) : f32[16,4,32,64] {perm = [0, 1, 3, 2]}
+  %109 = matmul(%103, %108) : f32[16,4,64,64]
+  %110 = constant() : f32[] {value = 0.1767766922712326}
+  %111 = mul(%109, %110) : f32[16,4,64,64]
+  %112 = add(%111, %causal_mask_3) : f32[16,4,64,64]
+  %113 = softmax(%112) : f32[16,4,64,64] {axis = -1}
+  %114 = matmul(%99, %weight_20) : f32[16,64,128]
+  %115 = add(%114, %bias_20) : f32[16,64,128]
+  %116 = reshape(%115) : f32[16,64,4,32] {shape = [16, 64, 4, 32]}
+  %117 = transpose(%116) : f32[16,4,64,32] {perm = [0, 2, 1, 3]}
+  %118 = matmul(%113, %117) : f32[16,4,64,32]
+  %119 = transpose(%118) : f32[16,64,4,32] {perm = [0, 2, 1, 3]}
+  %120 = reshape(%119) : f32[16,64,128] {shape = [16, 64, 128]}
+  %121 = matmul(%120, %weight_21) : f32[16,64,128]
+  %122 = add(%121, %bias_21) : f32[16,64,128]
+  %123 = add(%98, %122) : f32[16,64,128]
+  %124 = layernorm(%123, %gamma_7, %beta_7) : f32[16,64,128] {eps = 1e-05}
+  %125 = matmul(%124, %weight_22) : f32[16,64,512]
+  %126 = add(%125, %bias_22) : f32[16,64,512]
+  %127 = gelu(%126) : f32[16,64,512]
+  %128 = matmul(%127, %weight_23) : f32[16,64,128]
+  %129 = add(%128, %bias_23) : f32[16,64,128]
+  %130 = add(%123, %129) : f32[16,64,128]
+  %131 = layernorm(%130, %gamma_8, %beta_8) : f32[16,64,128] {eps = 1e-05}
+  %132 = matmul(%131, %weight_24) : f32[16,64,65]
+  %133 = cross_entropy(%132, %y) : f32[]
+  return %133
+}

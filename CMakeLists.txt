@@ -183,7 +183,7 @@ if(DLC_BUILD_TESTS)
             COMMAND ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
                     tests/python/test_translation_validation.py tests/python/test_training_graph.py
                     tests/python/test_cpu_backend.py tests/python/test_cpu_training.py
-                    tests/python/test_gpu_backend.py
+                    tests/python/test_gpu_backend.py tests/python/test_pytorch_crosscheck.py
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
         set_tests_properties(python_compiler_tests PROPERTIES ENVIRONMENT "DLC_OPT=$<TARGET_FILE:dlc-opt>")
     else()
