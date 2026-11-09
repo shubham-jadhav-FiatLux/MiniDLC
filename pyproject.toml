@@ -5,16 +5,34 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "minidlc"
 version = "0.1.0"
-description = "MiniDLC: An end-to-end deep learning compiler from Python to LLVM and CUDA"
+description = "A small deep-learning compiler: Python models to native x86-64 code and NVIDIA PTX through LLVM"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [
     { name = "Shubh" }
 ]
+keywords = ["compiler", "deep-learning", "llvm", "autodiff", "gpu", "ptx"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Education",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Compilers",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "numpy>=1.24.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/shubham-jadhav-FiatLux/MiniDLC"
+Documentation = "https://github.com/shubham-jadhav-FiatLux/MiniDLC/tree/main/docs"
+Issues = "https://github.com/shubham-jadhav-FiatLux/MiniDLC/issues"
+Changelog = "https://github.com/shubham-jadhav-FiatLux/MiniDLC/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [

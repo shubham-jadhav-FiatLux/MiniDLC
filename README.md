@@ -69,7 +69,7 @@ MiniDLC/
 ├── pyproject.toml        # Python package; pytest configuration
 ├── .github/workflows/    # CI: sanitizer and release builds, unit and lit tests, pytest
 ├── docs/                 # walkthrough, architecture (v2 + status), IR spec, GPU path, perf report, course map, devlog
-├── include/dlc/, lib/    # C++: ir/, passes/, loopir/, backends/llvm/, runtime/, compiler/ (some v1 files remain, unbuilt)
+├── include/dlc/, lib/    # C++: ir/, passes/, loopir/, backends/llvm/, runtime/, compiler/
 ├── tools/dlc-opt/        # opt-style driver: --passes, --dot, --target=cpu|gpu, --emit-{loopir,llvm,llvm-opt,ptx}, reports
 ├── python/bindings/      # the nanobind module _minidlc: compile(ir_text, target, options) -> Executable
 ├── python/minidlc/       # frontend, reference interpreter, IR export/parse/execute (ir.py), GPU runtime (gpu.py)
@@ -152,6 +152,12 @@ end-to-end tests). All built; what remains is the run on a GPU. Details: [`docs/
 MiniDLC applies graduate coursework from IIT Madras: program analysis (CS6843), GPU programming (CS6023), computer
 architecture (CS6600/CS6400) and parallel scientific computing (ID5130). [`docs/course-map.md`](docs/course-map.md)
 maps each concept to the code and marks what is implemented and what is planned.
+
+## Contributing
+
+Bug reports and pull requests are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) for how to build, test and submit a
+change, and [CHANGELOG.md](CHANGELOG.md) for what has changed. Participation follows the
+[Code of Conduct](CODE_OF_CONDUCT.md); report security issues as described in [SECURITY.md](SECURITY.md).
 
 ## License
 

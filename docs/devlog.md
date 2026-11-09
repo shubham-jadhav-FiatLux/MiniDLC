@@ -404,3 +404,7 @@ had left out:
   and bigram 2.4819) in a nightly workflow; ctest fails, instead of skipping, when the compiled module is missing.
 - **Examples:** MNIST is evaluated on all 10,000 test images (the last batch padded); Char-GPT trains the benchmark
   configuration for 1,500 steps by default, so its samples look like the play.
+- **v1 sources removed.** The v1 files that v2 no longer built — the template CUDA and LLVM backends
+  (`lib/backends/cuda/`, `LLVMCodeGen.cpp`, `LLVMBackend.cpp`), `LoopPasses.cpp`, `ExecutionPlan.cpp`,
+  `MemoryPlanning.cpp`, their headers, `tests/unit/test_cuda.cpp` and `python/minidlc/cuda_engine.py` — are deleted.
+  The entries above that cite them describe v1; git history keeps the code.

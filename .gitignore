@@ -61,3 +61,6 @@ python/minidlc/_minidlc*.so
 
 # Output of examples/colab_gpu.py (send it for the perf report; not committed)
 gpu_run.json
+
+# Editor and tool caches (clangd)
+.cache/
