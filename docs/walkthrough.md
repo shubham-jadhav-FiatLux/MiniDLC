@@ -51,9 +51,9 @@ func @step(...) -> (f32[], f32[3,2] {donates = %weight}, f32[2] {donates = %bias
   %1 = add(%bias, %0) : f32[4,2]
   %2 = relu(%1) : f32[4,2]
   %3 = cross_entropy(%2, %y) : f32[]
-  %4 = onehot(%y) : f32[4,2] {num_classes = 2}
-  %5 = softmax(%2) : f32[4,2] {axis = -1}
-  %6 = sub(%5, %4) : f32[4,2]                        // d loss / d logits = (softmax - onehot) / N
+  %4 = softmax(%2) : f32[4,2] {axis = -1}
+  %5 = onehot(%y) : f32[4,2] {num_classes = 2}
+  %6 = sub(%4, %5) : f32[4,2]                        // d loss / d logits = (softmax - onehot) / N
   %8 = mul(%6, %7) : f32[4,2]                        // %7 = 0.25
   %10 = cmp_gt(%1, %9) : f32[4,2]                    // ReLU's mask
   %11 = select(%10, %8, %9) : f32[4,2]
@@ -85,8 +85,8 @@ the epilogue feeds the matmul.
   kernel                                   kind                  FLOPs          bytes  FLOP/byte
   k0_matmul_add_relu_cmp_gt                matmul                   72            144       0.50
   k1_cross_entropy                         row                      40             52       0.77
-  k2_onehot                                gather                    0             48       0.00
-  k3_softmax                               row                      40             64       0.62
+  k2_softmax                               row                      40             64       0.62
+  k3_onehot                                gather                    0             48       0.00
   k4_sub_mul_select                        elementwise              24            128       0.19
   k5_sum                                   reduction                 8             40       0.20
   k6_matmul_mul_sub                        matmul                   60            128       0.47
@@ -105,13 +105,13 @@ the epilogue feeds the matmul.
   in-place updates:  2, copied at the end: 0
   %weight                       persistent offset          0  size         24  live -1..8
   %bias                         persistent offset        256  size          8  live -1..8
-  %2                            transient  offset        256  size         32  live 0..3
-  %11                           transient  offset        256  size         32  live 4..6
+  %2                            transient  offset        256  size         32  live 0..2
+  %5                            transient  offset        256  size         32  live 3..4
   ...
 ```
 
 Parameters and optimizer state live in a persistent region; everything else gets an offset in a transient arena by
-interval colouring over live ranges measured in kernels (`%2` and `%11` share bytes because their lives don't
+interval colouring over live ranges measured in kernels (`%2` and `%5` share bytes because their lives don't
 overlap). Both updates are written in place: the kernel computing new weights reads `%weight` only at the element it
 writes, and after every other reader. A checker verifies every assignment.
 

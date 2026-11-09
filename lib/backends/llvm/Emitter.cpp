@@ -266,9 +266,14 @@ private:
                 b_.CreateStore(value, binding.slot);
                 break;
             }
-            case StmtKind::Store:
-                b_.CreateAlignedStore(expr(*s.value), address(s.buffer, expr(*s.index)), llvm::MaybeAlign(4));
+            case StmtKind::Store: {
+                // Operands in separate statements, here and below: argument evaluation order is unspecified, and the
+                // emitted code (the committed PTX) must not depend on the compiler that built MiniDLC.
+                llvm::Value* value = expr(*s.value);
+                llvm::Value* ptr = address(s.buffer, expr(*s.index));
+                b_.CreateAlignedStore(value, ptr, llvm::MaybeAlign(4));
                 break;
+            }
             case StmtKind::AtomicAdd:
                 if (gpu_ && k_.buffers[s.buffer].type == ScalarType::F32 && k_.buffers[s.buffer].scope == MemScope::Global) {
                     // LLVM's NVPTX backend expands `atomicrmw fadd` into a compare-and-swap loop; red.global.add.f32
@@ -279,8 +284,12 @@ private:
                     b_.CreateCall(red, {b_.CreatePtrToInt(address(s.buffer, expr(*s.index)), b_.getInt64Ty()), expr(*s.value)});
                     break;
                 }
-                b_.CreateAtomicRMW(llvm::AtomicRMWInst::FAdd, address(s.buffer, expr(*s.index)), expr(*s.value),
-                                   llvm::MaybeAlign(4), llvm::AtomicOrdering::Monotonic);
+                {
+                    llvm::Value* ptr = address(s.buffer, expr(*s.index));
+                    llvm::Value* value = expr(*s.value);
+                    b_.CreateAtomicRMW(llvm::AtomicRMWInst::FAdd, ptr, value, llvm::MaybeAlign(4),
+                                       llvm::AtomicOrdering::Monotonic);
+                }
                 break;
             case StmtKind::If: {
                 auto* thenBlock = llvm::BasicBlock::Create(ctx_, "then", func_);
@@ -315,7 +324,9 @@ private:
                 return b_.CreateFMul(b_.CreateIntrinsic(llvm::Intrinsic::nvvm_lg2_approx_f, {}, {a}), c(0.6931471805599453));
             case UnaryOp::Tanh: {
                 llvm::Value* e = ex2(b_.CreateFMul(intrinsic(llvm::Intrinsic::fabs, {a}), c(-2.8853900817779268)));
-                llvm::Value* t = b_.CreateFDiv(b_.CreateFSub(c(1.0), e), b_.CreateFAdd(c(1.0), e));
+                llvm::Value* num = b_.CreateFSub(c(1.0), e);
+                llvm::Value* den = b_.CreateFAdd(c(1.0), e);
+                llvm::Value* t = b_.CreateFDiv(num, den);
                 return intrinsic(llvm::Intrinsic::copysign, {t, a});
             }
             default: return nullptr;
@@ -355,7 +366,12 @@ private:
                 }
                 break;
             }
-            case ExprKind::Select: return b_.CreateSelect(expr(*e.args[0]), expr(*e.args[1]), expr(*e.args[2]));
+            case ExprKind::Select: {
+                llvm::Value* cond = expr(*e.args[0]);
+                llvm::Value* then = expr(*e.args[1]);
+                llvm::Value* otherwise = expr(*e.args[2]);
+                return b_.CreateSelect(cond, then, otherwise);
+            }
             case ExprKind::Compare: {
                 llvm::Value* a = expr(*e.args[0]);
                 llvm::Value* c = expr(*e.args[1]);

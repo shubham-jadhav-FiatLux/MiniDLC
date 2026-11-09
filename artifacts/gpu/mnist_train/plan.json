@@ -572,36 +572,7 @@
   },
   {
    "kernel": 4,
-   "name": "k3_onehot",
-   "grid": [
-    5,
-    1,
-    1
-   ],
-   "block": [
-    256,
-    1,
-    1
-   ],
-   "parallel_extent": 5,
-   "flops": 0,
-   "bytes": 5632,
-   "args": [
-    {
-     "region": "transient",
-     "offset": 673792,
-     "bytes": 512
-    },
-    {
-     "region": "transient",
-     "offset": 668672,
-     "bytes": 5120
-    }
-   ]
-  },
-  {
-   "kernel": 5,
-   "name": "k4_softmax",
+   "name": "k3_softmax",
    "grid": [
     128,
     1,
@@ -623,7 +594,36 @@
     },
     {
      "region": "transient",
+     "offset": 668672,
+     "bytes": 5120
+    }
+   ]
+  },
+  {
+   "kernel": 5,
+   "name": "k4_onehot",
+   "grid": [
+    5,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "parallel_extent": 5,
+   "flops": 0,
+   "bytes": 5632,
+   "args": [
+    {
+     "region": "transient",
      "offset": 673792,
+     "bytes": 512
+    },
+    {
+     "region": "transient",
+     "offset": 663552,
      "bytes": 5120
     }
    ]
@@ -647,12 +647,12 @@
    "args": [
     {
      "region": "transient",
-     "offset": 673792,
+     "offset": 668672,
      "bytes": 5120
     },
     {
      "region": "transient",
-     "offset": 668672,
+     "offset": 663552,
      "bytes": 5120
     },
     {
@@ -943,13 +943,13 @@
    "bytes": 7176,
    "args": [
     {
-     "region": "transient",
-     "offset": 532480,
+     "region": "persistent",
+     "offset": 2420480,
      "bytes": 1024
     },
     {
-     "region": "persistent",
-     "offset": 2420480,
+     "region": "transient",
+     "offset": 532480,
      "bytes": 1024
     },
     {
@@ -992,13 +992,13 @@
    "bytes": 288,
    "args": [
     {
-     "region": "transient",
-     "offset": 799744,
+     "region": "persistent",
+     "offset": 2443008,
      "bytes": 40
     },
     {
-     "region": "persistent",
-     "offset": 2443008,
+     "region": "transient",
+     "offset": 799744,
      "bytes": 40
     },
     {

@@ -8335,36 +8335,7 @@
   },
   {
    "kernel": 67,
-   "name": "k66_onehot",
-   "grid": [
-    260,
-    1,
-    1
-   ],
-   "block": [
-    256,
-    1,
-    1
-   ],
-   "parallel_extent": 260,
-   "flops": 0,
-   "bytes": 270336,
-   "args": [
-    {
-     "region": "transient",
-     "offset": 17833984,
-     "bytes": 4096
-    },
-    {
-     "region": "transient",
-     "offset": 17567744,
-     "bytes": 266240
-    }
-   ]
-  },
-  {
-   "kernel": 68,
-   "name": "k67_softmax",
+   "name": "k66_softmax",
    "grid": [
     1024,
     1,
@@ -8386,7 +8357,36 @@
     },
     {
      "region": "transient",
+     "offset": 17567744,
+     "bytes": 266240
+    }
+   ]
+  },
+  {
+   "kernel": 68,
+   "name": "k67_onehot",
+   "grid": [
+    260,
+    1,
+    1
+   ],
+   "block": [
+    256,
+    1,
+    1
+   ],
+   "parallel_extent": 260,
+   "flops": 0,
+   "bytes": 270336,
+   "args": [
+    {
+     "region": "transient",
      "offset": 17833984,
+     "bytes": 4096
+    },
+    {
+     "region": "transient",
+     "offset": 17301504,
      "bytes": 266240
     }
    ]
@@ -8410,12 +8410,12 @@
    "args": [
     {
      "region": "transient",
-     "offset": 17833984,
+     "offset": 17567744,
      "bytes": 266240
     },
     {
      "region": "transient",
-     "offset": 17567744,
+     "offset": 17301504,
      "bytes": 266240
     },
     {
@@ -8748,7 +8748,7 @@
   },
   {
    "kernel": 79,
-   "name": "k78_mul_sub_sub_mul",
+   "name": "k78_sub_mul_sub_mul",
    "grid": [
     512,
     1,
@@ -8765,22 +8765,22 @@
    "args": [
     {
      "region": "transient",
-     "offset": 17825792,
-     "bytes": 524288
-    },
-    {
-     "region": "transient",
-     "offset": 16781312,
-     "bytes": 4096
-    },
-    {
-     "region": "transient",
      "offset": 41418752,
      "bytes": 524288
     },
     {
      "region": "transient",
      "offset": 16777216,
+     "bytes": 4096
+    },
+    {
+     "region": "transient",
+     "offset": 17825792,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 16781312,
      "bytes": 4096
     },
     {
@@ -9215,7 +9215,7 @@
   },
   {
    "kernel": 92,
-   "name": "k91_mul_sub_sub_mul_x5",
+   "name": "k91_sub_mul_sub_mul_x5",
    "grid": [
     512,
     1,
@@ -9232,22 +9232,22 @@
    "args": [
     {
      "region": "transient",
-     "offset": 15728640,
-     "bytes": 524288
-    },
-    {
-     "region": "transient",
-     "offset": 14684160,
-     "bytes": 4096
-    },
-    {
-     "region": "transient",
      "offset": 41418752,
      "bytes": 524288
     },
     {
      "region": "transient",
      "offset": 14680064,
+     "bytes": 4096
+    },
+    {
+     "region": "transient",
+     "offset": 15728640,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 14684160,
      "bytes": 4096
     },
     {
@@ -10148,7 +10148,7 @@
   },
   {
    "kernel": 119,
-   "name": "k118_mul_sub_sub_mul_x5",
+   "name": "k118_sub_mul_sub_mul_x5",
    "grid": [
     512,
     1,
@@ -10165,22 +10165,22 @@
    "args": [
     {
      "region": "transient",
-     "offset": 35651584,
-     "bytes": 524288
-    },
-    {
-     "region": "transient",
-     "offset": 14684160,
-     "bytes": 4096
-    },
-    {
-     "region": "transient",
      "offset": 41418752,
      "bytes": 524288
     },
     {
      "region": "transient",
      "offset": 14680064,
+     "bytes": 4096
+    },
+    {
+     "region": "transient",
+     "offset": 35651584,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 14684160,
      "bytes": 4096
     },
     {
@@ -10620,7 +10620,7 @@
   },
   {
    "kernel": 132,
-   "name": "k131_mul_sub_sub_mul_x5",
+   "name": "k131_sub_mul_sub_mul_x5",
    "grid": [
     512,
     1,
@@ -10637,22 +10637,22 @@
    "args": [
     {
      "region": "transient",
-     "offset": 11534336,
-     "bytes": 524288
-    },
-    {
-     "region": "transient",
-     "offset": 10489856,
-     "bytes": 4096
-    },
-    {
-     "region": "transient",
      "offset": 37224448,
      "bytes": 524288
     },
     {
      "region": "transient",
      "offset": 10485760,
+     "bytes": 4096
+    },
+    {
+     "region": "transient",
+     "offset": 11534336,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 10489856,
      "bytes": 4096
     },
     {
@@ -11553,7 +11553,7 @@
   },
   {
    "kernel": 159,
-   "name": "k158_mul_sub_sub_mul_x5",
+   "name": "k158_sub_mul_sub_mul_x5",
    "grid": [
     512,
     1,
@@ -11570,22 +11570,22 @@
    "args": [
     {
      "region": "transient",
-     "offset": 31457280,
-     "bytes": 524288
-    },
-    {
-     "region": "transient",
-     "offset": 10489856,
-     "bytes": 4096
-    },
-    {
-     "region": "transient",
      "offset": 37224448,
      "bytes": 524288
     },
     {
      "region": "transient",
      "offset": 10485760,
+     "bytes": 4096
+    },
+    {
+     "region": "transient",
+     "offset": 31457280,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 10489856,
      "bytes": 4096
     },
     {
@@ -12025,7 +12025,7 @@
   },
   {
    "kernel": 172,
-   "name": "k171_mul_sub_sub_mul_x5",
+   "name": "k171_sub_mul_sub_mul_x5",
    "grid": [
     512,
     1,
@@ -12042,22 +12042,22 @@
    "args": [
     {
      "region": "transient",
-     "offset": 7340032,
-     "bytes": 524288
-    },
-    {
-     "region": "transient",
-     "offset": 6295552,
-     "bytes": 4096
-    },
-    {
-     "region": "transient",
      "offset": 33030144,
      "bytes": 524288
     },
     {
      "region": "transient",
      "offset": 6291456,
+     "bytes": 4096
+    },
+    {
+     "region": "transient",
+     "offset": 7340032,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 6295552,
      "bytes": 4096
     },
     {
@@ -12958,7 +12958,7 @@
   },
   {
    "kernel": 199,
-   "name": "k198_mul_sub_sub_mul_x5",
+   "name": "k198_sub_mul_sub_mul_x5",
    "grid": [
     512,
     1,
@@ -12975,22 +12975,22 @@
    "args": [
     {
      "region": "transient",
-     "offset": 27262976,
-     "bytes": 524288
-    },
-    {
-     "region": "transient",
-     "offset": 6295552,
-     "bytes": 4096
-    },
-    {
-     "region": "transient",
      "offset": 33030144,
      "bytes": 524288
     },
     {
      "region": "transient",
      "offset": 6291456,
+     "bytes": 4096
+    },
+    {
+     "region": "transient",
+     "offset": 27262976,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 6295552,
      "bytes": 4096
     },
     {
@@ -13430,7 +13430,7 @@
   },
   {
    "kernel": 212,
-   "name": "k211_mul_sub_sub_mul_x5",
+   "name": "k211_sub_mul_sub_mul_x5",
    "grid": [
     512,
     1,
@@ -13447,22 +13447,22 @@
    "args": [
     {
      "region": "transient",
-     "offset": 3145728,
-     "bytes": 524288
-    },
-    {
-     "region": "transient",
-     "offset": 2101248,
-     "bytes": 4096
-    },
-    {
-     "region": "transient",
      "offset": 28835840,
      "bytes": 524288
     },
     {
      "region": "transient",
      "offset": 2097152,
+     "bytes": 4096
+    },
+    {
+     "region": "transient",
+     "offset": 3145728,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 2101248,
      "bytes": 4096
     },
     {
@@ -14363,7 +14363,7 @@
   },
   {
    "kernel": 239,
-   "name": "k238_mul_sub_sub_mul_x5",
+   "name": "k238_sub_mul_sub_mul_x5",
    "grid": [
     512,
     1,
@@ -14380,22 +14380,22 @@
    "args": [
     {
      "region": "transient",
-     "offset": 23068672,
-     "bytes": 524288
-    },
-    {
-     "region": "transient",
-     "offset": 2625536,
-     "bytes": 4096
-    },
-    {
-     "region": "transient",
      "offset": 28835840,
      "bytes": 524288
     },
     {
      "region": "transient",
      "offset": 2621440,
+     "bytes": 4096
+    },
+    {
+     "region": "transient",
+     "offset": 23068672,
+     "bytes": 524288
+    },
+    {
+     "region": "transient",
+     "offset": 2625536,
      "bytes": 4096
     },
     {
@@ -15986,13 +15986,13 @@
    "bytes": 232968,
    "args": [
     {
-     "region": "transient",
-     "offset": 2621440,
+     "region": "persistent",
+     "offset": 3339008,
      "bytes": 33280
     },
     {
-     "region": "persistent",
-     "offset": 3339008,
+     "region": "transient",
+     "offset": 2621440,
      "bytes": 33280
     },
     {
@@ -16035,13 +16035,13 @@
    "bytes": 229384,
    "args": [
     {
-     "region": "transient",
-     "offset": 2654720,
+     "region": "persistent",
+     "offset": 3405568,
      "bytes": 32768
     },
     {
-     "region": "persistent",
-     "offset": 3405568,
+     "region": "transient",
+     "offset": 2654720,
      "bytes": 32768
     },
     {
@@ -16084,13 +16084,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 2688000,
+     "region": "persistent",
+     "offset": 3471104,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 3471104,
+     "region": "transient",
+     "offset": 2688000,
      "bytes": 512
     },
     {
@@ -16133,13 +16133,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 2687488,
+     "region": "persistent",
+     "offset": 3472128,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 3472128,
+     "region": "transient",
+     "offset": 2687488,
      "bytes": 512
     },
     {
@@ -16182,13 +16182,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 29373440,
+     "region": "persistent",
+     "offset": 3604224,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 3604224,
+     "region": "transient",
+     "offset": 29373440,
      "bytes": 512
     },
     {
@@ -16231,13 +16231,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 29372928,
+     "region": "persistent",
+     "offset": 3736320,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 3736320,
+     "region": "transient",
+     "offset": 29372928,
      "bytes": 512
     },
     {
@@ -16280,13 +16280,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 29372416,
+     "region": "persistent",
+     "offset": 3868416,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 3868416,
+     "region": "transient",
+     "offset": 29372416,
      "bytes": 512
     },
     {
@@ -16329,13 +16329,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 29371904,
+     "region": "persistent",
+     "offset": 4000512,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 4000512,
+     "region": "transient",
+     "offset": 29371904,
      "bytes": 512
     },
     {
@@ -16378,13 +16378,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 29371392,
+     "region": "persistent",
+     "offset": 4001536,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 4001536,
+     "region": "transient",
+     "offset": 29371392,
      "bytes": 512
     },
     {
@@ -16427,13 +16427,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 29370880,
+     "region": "persistent",
+     "offset": 4002560,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 4002560,
+     "region": "transient",
+     "offset": 29370880,
      "bytes": 512
     },
     {
@@ -16476,13 +16476,13 @@
    "bytes": 14344,
    "args": [
     {
-     "region": "transient",
-     "offset": 29368320,
+     "region": "persistent",
+     "offset": 4527872,
      "bytes": 2048
     },
     {
-     "region": "persistent",
-     "offset": 4527872,
+     "region": "transient",
+     "offset": 29368320,
      "bytes": 2048
     },
     {
@@ -16525,13 +16525,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 29370368,
+     "region": "persistent",
+     "offset": 5056256,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 5056256,
+     "region": "transient",
+     "offset": 29370368,
      "bytes": 512
     },
     {
@@ -16574,13 +16574,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 33554944,
+     "region": "persistent",
+     "offset": 5057280,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 5057280,
+     "region": "transient",
+     "offset": 33554944,
      "bytes": 512
     },
     {
@@ -16623,13 +16623,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 33554432,
+     "region": "persistent",
+     "offset": 5058304,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 5058304,
+     "region": "transient",
+     "offset": 33554432,
      "bytes": 512
     },
     {
@@ -16672,13 +16672,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 33567744,
+     "region": "persistent",
+     "offset": 5190400,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 5190400,
+     "region": "transient",
+     "offset": 33567744,
      "bytes": 512
     },
     {
@@ -16721,13 +16721,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 33567232,
+     "region": "persistent",
+     "offset": 5322496,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 5322496,
+     "region": "transient",
+     "offset": 33567232,
      "bytes": 512
     },
     {
@@ -16770,13 +16770,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 33566720,
+     "region": "persistent",
+     "offset": 5454592,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 5454592,
+     "region": "transient",
+     "offset": 33566720,
      "bytes": 512
     },
     {
@@ -16819,13 +16819,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 33566208,
+     "region": "persistent",
+     "offset": 5586688,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 5586688,
+     "region": "transient",
+     "offset": 33566208,
      "bytes": 512
     },
     {
@@ -16868,13 +16868,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 33565696,
+     "region": "persistent",
+     "offset": 5587712,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 5587712,
+     "region": "transient",
+     "offset": 33565696,
      "bytes": 512
     },
     {
@@ -16917,13 +16917,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 33565184,
+     "region": "persistent",
+     "offset": 5588736,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 5588736,
+     "region": "transient",
+     "offset": 33565184,
      "bytes": 512
     },
     {
@@ -16966,13 +16966,13 @@
    "bytes": 14344,
    "args": [
     {
-     "region": "transient",
-     "offset": 33562624,
+     "region": "persistent",
+     "offset": 6114048,
      "bytes": 2048
     },
     {
-     "region": "persistent",
-     "offset": 6114048,
+     "region": "transient",
+     "offset": 33562624,
      "bytes": 2048
     },
     {
@@ -17015,13 +17015,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 33564672,
+     "region": "persistent",
+     "offset": 6642432,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 6642432,
+     "region": "transient",
+     "offset": 33564672,
      "bytes": 512
     },
     {
@@ -17064,13 +17064,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 37749248,
+     "region": "persistent",
+     "offset": 6643456,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 6643456,
+     "region": "transient",
+     "offset": 37749248,
      "bytes": 512
     },
     {
@@ -17113,13 +17113,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 37748736,
+     "region": "persistent",
+     "offset": 6644480,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 6644480,
+     "region": "transient",
+     "offset": 37748736,
      "bytes": 512
     },
     {
@@ -17162,13 +17162,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 37762048,
+     "region": "persistent",
+     "offset": 6776576,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 6776576,
+     "region": "transient",
+     "offset": 37762048,
      "bytes": 512
     },
     {
@@ -17211,13 +17211,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 37761536,
+     "region": "persistent",
+     "offset": 6908672,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 6908672,
+     "region": "transient",
+     "offset": 37761536,
      "bytes": 512
     },
     {
@@ -17260,13 +17260,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 37761024,
+     "region": "persistent",
+     "offset": 7040768,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 7040768,
+     "region": "transient",
+     "offset": 37761024,
      "bytes": 512
     },
     {
@@ -17309,13 +17309,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 37760512,
+     "region": "persistent",
+     "offset": 7172864,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 7172864,
+     "region": "transient",
+     "offset": 37760512,
      "bytes": 512
     },
     {
@@ -17358,13 +17358,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 37760000,
+     "region": "persistent",
+     "offset": 7173888,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 7173888,
+     "region": "transient",
+     "offset": 37760000,
      "bytes": 512
     },
     {
@@ -17407,13 +17407,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 37759488,
+     "region": "persistent",
+     "offset": 7174912,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 7174912,
+     "region": "transient",
+     "offset": 37759488,
      "bytes": 512
     },
     {
@@ -17456,13 +17456,13 @@
    "bytes": 14344,
    "args": [
     {
-     "region": "transient",
-     "offset": 37756928,
+     "region": "persistent",
+     "offset": 7700224,
      "bytes": 2048
     },
     {
-     "region": "persistent",
-     "offset": 7700224,
+     "region": "transient",
+     "offset": 37756928,
      "bytes": 2048
     },
     {
@@ -17505,13 +17505,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 37758976,
+     "region": "persistent",
+     "offset": 8228608,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 8228608,
+     "region": "transient",
+     "offset": 37758976,
      "bytes": 512
     },
     {
@@ -17554,13 +17554,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 42213888,
+     "region": "persistent",
+     "offset": 8229632,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 8229632,
+     "region": "transient",
+     "offset": 42213888,
      "bytes": 512
     },
     {
@@ -17603,13 +17603,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 42213376,
+     "region": "persistent",
+     "offset": 8230656,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 8230656,
+     "region": "transient",
+     "offset": 42213376,
      "bytes": 512
     },
     {
@@ -17652,13 +17652,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 42227712,
+     "region": "persistent",
+     "offset": 8362752,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 8362752,
+     "region": "transient",
+     "offset": 42227712,
      "bytes": 512
     },
     {
@@ -17701,13 +17701,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 42227200,
+     "region": "persistent",
+     "offset": 8494848,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 8494848,
+     "region": "transient",
+     "offset": 42227200,
      "bytes": 512
     },
     {
@@ -17750,13 +17750,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 42226688,
+     "region": "persistent",
+     "offset": 8626944,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 8626944,
+     "region": "transient",
+     "offset": 42226688,
      "bytes": 512
     },
     {
@@ -17799,13 +17799,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 42226176,
+     "region": "persistent",
+     "offset": 8759040,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 8759040,
+     "region": "transient",
+     "offset": 42226176,
      "bytes": 512
     },
     {
@@ -17848,13 +17848,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 42225664,
+     "region": "persistent",
+     "offset": 8760064,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 8760064,
+     "region": "transient",
+     "offset": 42225664,
      "bytes": 512
     },
     {
@@ -17897,13 +17897,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 42225152,
+     "region": "persistent",
+     "offset": 8761088,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 8761088,
+     "region": "transient",
+     "offset": 42225152,
      "bytes": 512
     },
     {
@@ -17946,13 +17946,13 @@
    "bytes": 14344,
    "args": [
     {
-     "region": "transient",
-     "offset": 42221568,
+     "region": "persistent",
+     "offset": 9286400,
      "bytes": 2048
     },
     {
-     "region": "persistent",
-     "offset": 9286400,
+     "region": "transient",
+     "offset": 42221568,
      "bytes": 2048
     },
     {
@@ -17995,13 +17995,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 42224640,
+     "region": "persistent",
+     "offset": 9814784,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 9814784,
+     "region": "transient",
+     "offset": 42224640,
      "bytes": 512
     },
     {
@@ -18044,13 +18044,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 42224128,
+     "region": "persistent",
+     "offset": 9815808,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 9815808,
+     "region": "transient",
+     "offset": 42224128,
      "bytes": 512
     },
     {
@@ -18093,13 +18093,13 @@
    "bytes": 3592,
    "args": [
     {
-     "region": "transient",
-     "offset": 42223616,
+     "region": "persistent",
+     "offset": 9816832,
      "bytes": 512
     },
     {
-     "region": "persistent",
-     "offset": 9816832,
+     "region": "transient",
+     "offset": 42223616,
      "bytes": 512
     },
     {

@@ -48,7 +48,7 @@ class JitRunner : public runtime::KernelRunner {
 public:
     explicit JitRunner(std::unique_ptr<backends::llvm_emit::CpuJit> jit) : jit_(std::move(jit)) {}
 
-    void run(int kernel, void** args, int64_t begin, int64_t end) override { jit_->function(kernel)(args, begin, end); }
+    void run(int kernel, void** args, int64_t begin, int64_t end) override { jit_->run(static_cast<size_t>(kernel), args, begin, end); }
     std::string name() const override { return "cpu"; }
 
 private:

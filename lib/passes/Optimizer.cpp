@@ -82,13 +82,19 @@ bool OptimizerPass::runOnFunction(Function& func) {
             std::string name = names.name(theta.get());
             ValuePtr m = addState(theta->getType(), name + ".m", 0.0);
             ValuePtr v = addState(theta->getType(), name + ".v", 0.0);
-            ValuePtr mNext = b.createAdd(b.createMul(m, scalar(c.beta1)), b.createMul(g, scalar(1.0 - c.beta1)));
-            ValuePtr vNext = b.createAdd(b.createMul(v, scalar(c.beta2)),
-                                         b.createMul(b.createMul(g, g), scalar(1.0 - c.beta2)));
+            // One op per statement: argument evaluation order is unspecified, and the op order must not depend on
+            // the compiler.
+            ValuePtr mDecay = b.createMul(m, scalar(c.beta1));
+            ValuePtr mNew = b.createMul(g, scalar(1.0 - c.beta1));
+            ValuePtr mNext = b.createAdd(mDecay, mNew);
+            ValuePtr vDecay = b.createMul(v, scalar(c.beta2));
+            ValuePtr vNew = b.createMul(b.createMul(g, g), scalar(1.0 - c.beta2));
+            ValuePtr vNext = b.createAdd(vDecay, vNew);
             ValuePtr mHat = b.createDiv(mNext, correction1);
             ValuePtr vHat = b.createDiv(vNext, correction2);
-            ValuePtr step = b.createDiv(b.createMul(mHat, scalar(c.lr)),
-                                        b.createAdd(b.createUnary("sqrt", vHat), scalar(c.eps)));
+            ValuePtr scaled = b.createMul(mHat, scalar(c.lr));
+            ValuePtr denom = b.createAdd(b.createUnary("sqrt", vHat), scalar(c.eps));
+            ValuePtr step = b.createDiv(scaled, denom);
             donate(b.createSub(theta, step), theta);
             donate(mNext, m);
             donate(vNext, v);

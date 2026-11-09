@@ -31,6 +31,11 @@ each phase.
   `tests/unit/test_cuda.cpp` and `python/minidlc/cuda_engine.py`.
 
 ### Fixed
+- The graph passes and the LLVM emitter emitted ops in an order that depended on the C++ compiler (unspecified
+  argument evaluation order), so builds with GCC and Clang produced different kernel orders and PTX. Operands are
+  now built in separate statements; both compilers produce identical plans, loop IR and PTX.
+- Calls into JIT-compiled kernels are exempt from Clang's `-fsanitize=function`, which read a type signature in front
+  of the kernel and crashed when that address was unmapped.
 - The thread pool waits for every chunk before rethrowing an exception.
 - MNIST accuracy is measured on all 10,000 test images.
 

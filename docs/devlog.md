@@ -408,3 +408,13 @@ had left out:
   (`lib/backends/cuda/`, `LLVMCodeGen.cpp`, `LLVMBackend.cpp`), `LoopPasses.cpp`, `ExecutionPlan.cpp`,
   `MemoryPlanning.cpp`, their headers, `tests/unit/test_cuda.cpp` and `python/minidlc/cuda_engine.py` — are deleted.
   The entries above that cite them describe v1; git history keeps the code.
+- **Deterministic output across compilers.** CI (Clang) found that the plans of the committed artifacts differed from
+  a GCC build: VJP rules and the Adam update passed two op-creating calls as arguments of one call
+  (`createSub(createSoftmax(z), createOneHot(y))`), and C++ leaves their order unspecified — GCC evaluates right to
+  left, Clang left to right — so the op order, the kernel order after fusion and the launch order differed. The LLVM
+  emitter had the same pattern (store, atomic add, select, the GPU tanh). All such operands are now built in separate
+  statements; GCC and Clang builds produce byte-identical graph IR, loop IR, LLVM IR and PTX for the committed
+  artifacts, which were regenerated.
+- **Clang's `-fsanitize=function`** checks a type signature stored in front of an indirect callee; JIT-compiled
+  kernels have none, and one that started at a page boundary crashed the sanitizer build. `CpuJit::run` calls kernels
+  with that check disabled.

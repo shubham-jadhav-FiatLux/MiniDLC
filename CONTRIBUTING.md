@@ -38,6 +38,11 @@ cmake --build build-asan -j4 && ctest --test-dir build-asan --output-on-failure
 
 - C++20; follow the surrounding code (4-space indentation, lines of about 120 columns). Errors are reported with
   `dlc::IRError` (or a subclass) and a message that names the op or kernel.
+- Output must not depend on the compiler that builds MiniDLC. Never pass two arguments that each create an IR op
+  or emit an LLVM instruction to one call (`b.createSub(b.createSoftmax(x), b.createOneHot(y))`): C++ leaves their
+  evaluation order unspecified, so GCC and Clang would emit the ops in different orders, and with them the kernel
+  order and the PTX. Build such operands in separate statements (braced initializer lists are evaluated in order).
+  CI builds with Clang; build with GCC too if you can.
 - Python: type hints on public functions, docstrings on public modules and classes, NumPy for numerics.
 - No new runtime dependencies in the core: PyTorch is used only as a reference in tests and benchmarks.
 

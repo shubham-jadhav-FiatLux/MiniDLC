@@ -528,7 +528,7 @@ TEST(CpuJit, CompiledKernelMatchesTheInterpreter) {
         b[i] = std::sin(static_cast<float>(i));
     }
     void* args[] = {a.data(), b.data(), viaJit.data()};
-    jit.function(0)(args, 0, 1);
+    jit.run(0, args, 0, 1);
     interpret(kernels[0], {a.data(), b.data(), viaInterp.data()});
     EXPECT_EQ(viaJit, viaInterp);
 }

@@ -30,7 +30,9 @@ std::vector<int64_t> reducedAxes(const Operation& op, size_t rank) {
 using Accumulate = std::function<void(const ValuePtr&, ValuePtr)>;
 
 // Builds the vector-Jacobian products of one op. Result types are inferred, so a rule that builds an ill-typed op
-// fails with an error instead of producing invalid IR.
+// fails with an error instead of producing invalid IR. No call may have two arguments that each create an op:
+// argument evaluation order is unspecified in C++, so the order of the emitted ops (and every kernel name and
+// launch order after fusion) would depend on the compiler. Such operands are built in separate statements.
 class VJPBuilder {
 public:
     VJPBuilder(IRBuilder& b, const ActivityAnalysis& activity, Accumulate accumulate)
@@ -95,7 +97,11 @@ void VJPBuilder::apply(Operation& op, const ValuePtr& dY) {
         if (needs(op, 0)) add(x(0), unbroadcast(b_.createDiv(dY, x(1)), shapeOf(x(0))));
         if (needs(op, 1)) add(x(1), unbroadcast(neg(b_.createMul(dY, b_.createDiv(Y, x(1)))), shapeOf(x(1))));
     } else if (name == "relu") {
-        if (needs(op, 0)) add(x(0), b_.createSelect(b_.createBinary("cmp_gt", x(0), scalar(0.0)), dY, scalar(0.0)));
+        if (needs(op, 0)) {
+            ValuePtr positive = b_.createBinary("cmp_gt", x(0), scalar(0.0));
+            ValuePtr zero = scalar(0.0);
+            add(x(0), b_.createSelect(positive, dY, zero));
+        }
     } else if (name == "gelu") {
         // y = x/2 (1 + t), t = tanh(c (x + k x^3)): dy/dx = (1 + t)/2 + x/2 (1 - t^2) c (1 + 3k x^2)
         if (needs(op, 0)) {
@@ -103,12 +109,16 @@ void VJPBuilder::apply(Operation& op, const ValuePtr& dY) {
             const double k = 0.044715;
             ValuePtr in = x(0);
             ValuePtr x2 = b_.createMul(in, in);
-            ValuePtr t = b_.createUnary("tanh", b_.createMul(b_.createAdd(in, b_.createMul(b_.createMul(x2, in),
-                                                                                           scalar(k))),
-                                                             scalar(c)));
-            ValuePtr left = b_.createMul(b_.createAdd(t, scalar(1.0)), scalar(0.5));
-            ValuePtr oneMinusT2 = b_.createSub(scalar(1.0), b_.createMul(t, t));
-            ValuePtr poly = b_.createAdd(b_.createMul(x2, scalar(3.0 * k)), scalar(1.0));
+            ValuePtr x3 = b_.createMul(x2, in);
+            ValuePtr kx3 = b_.createMul(x3, scalar(k));
+            ValuePtr inner = b_.createAdd(in, kx3);
+            ValuePtr t = b_.createUnary("tanh", b_.createMul(inner, scalar(c)));
+            ValuePtr onePlusT = b_.createAdd(t, scalar(1.0));
+            ValuePtr left = b_.createMul(onePlusT, scalar(0.5));
+            ValuePtr one = scalar(1.0);
+            ValuePtr oneMinusT2 = b_.createSub(one, b_.createMul(t, t));
+            ValuePtr x2k = b_.createMul(x2, scalar(3.0 * k));
+            ValuePtr poly = b_.createAdd(x2k, scalar(1.0));
             ValuePtr right = b_.createMul(b_.createMul(b_.createMul(in, scalar(0.5 * c)), oneMinusT2), poly);
             add(in, b_.createMul(dY, b_.createAdd(left, right)));
         }
@@ -117,12 +127,19 @@ void VJPBuilder::apply(Operation& op, const ValuePtr& dY) {
     } else if (name == "log") {
         if (needs(op, 0)) add(x(0), b_.createDiv(dY, x(0)));
     } else if (name == "tanh") {
-        if (needs(op, 0)) add(x(0), b_.createMul(dY, b_.createSub(scalar(1.0), b_.createMul(Y, Y))));
+        if (needs(op, 0)) {
+            ValuePtr one = scalar(1.0);
+            ValuePtr y2 = b_.createMul(Y, Y);
+            add(x(0), b_.createMul(dY, b_.createSub(one, y2)));
+        }
     } else if (name == "sqrt") {
         if (needs(op, 0)) add(x(0), b_.createDiv(b_.createMul(dY, scalar(0.5)), Y));
     } else if (name == "rsqrt") {
         // y = x^(-1/2): dy/dx = -y^3 / 2
-        if (needs(op, 0)) add(x(0), b_.createMul(dY, b_.createMul(b_.createMul(b_.createMul(Y, Y), Y), scalar(-0.5))));
+        if (needs(op, 0)) {
+            ValuePtr y3 = b_.createMul(b_.createMul(Y, Y), Y);
+            add(x(0), b_.createMul(dY, b_.createMul(y3, scalar(-0.5))));
+        }
     } else if (name == "matmul") {
         matmul(op, dY);
     } else if (name == "softmax") {
@@ -145,7 +162,9 @@ void VJPBuilder::apply(Operation& op, const ValuePtr& dY) {
             const Shape zs = shapeOf(x(0));
             int64_t classes = zs.back();
             int64_t rows = classes == 0 ? 0 : product(zs) / classes;
-            ValuePtr diff = b_.createSub(b_.createSoftmax(x(0), -1), b_.createOneHot(x(1), classes));
+            ValuePtr probs = b_.createSoftmax(x(0), -1);
+            ValuePtr labels = b_.createOneHot(x(1), classes);
+            ValuePtr diff = b_.createSub(probs, labels);
             add(x(0), b_.createMul(diff, b_.createMul(dY, scalar(rows == 0 ? 0.0 : 1.0 / rows))));
         }
     } else if (name == "layernorm") {
@@ -162,9 +181,13 @@ void VJPBuilder::apply(Operation& op, const ValuePtr& dY) {
                 grad = b_.createMul(grad, scalar(n == 0 ? 0.0 : 1.0 / static_cast<double>(n)));
             } else if (name == "reduce_max") {
                 // Ties share the gradient equally.
-                ValuePtr mask = b_.createSelect(b_.createBinary("cmp_gt", expand(Y, xs, axes, keepdims), x(0)),
-                                                scalar(0.0), scalar(1.0));
-                grad = b_.createDiv(b_.createMul(grad, mask), b_.createReduce("sum", mask, axes, /*keepdims=*/true));
+                ValuePtr below = b_.createBinary("cmp_gt", expand(Y, xs, axes, keepdims), x(0));
+                ValuePtr zero = scalar(0.0);
+                ValuePtr one = scalar(1.0);
+                ValuePtr mask = b_.createSelect(below, zero, one);
+                ValuePtr masked = b_.createMul(grad, mask);
+                ValuePtr ties = b_.createReduce("sum", mask, axes, /*keepdims=*/true);
+                grad = b_.createDiv(masked, ties);
             }
             add(x(0), grad);
         }
@@ -246,7 +269,8 @@ void VJPBuilder::layernorm(Operation& op, const ValuePtr& dY) {
         ValuePtr g = b_.createMul(dY, gamma);
         ValuePtr sumG = b_.createReduce("sum", g, {last}, /*keepdims=*/true);
         ValuePtr sumGX = b_.createReduce("sum", b_.createMul(g, xhat), {last}, /*keepdims=*/true);
-        ValuePtr inner = b_.createSub(b_.createSub(b_.createMul(g, scalar(d)), sumG), b_.createMul(xhat, sumGX));
+        ValuePtr dg = b_.createSub(b_.createMul(g, scalar(d)), sumG);
+        ValuePtr inner = b_.createSub(dg, b_.createMul(xhat, sumGX));
         add(x, b_.createMul(b_.createMul(rstd, scalar(d == 0 ? 0.0 : 1.0 / d)), inner));
     }
 }
