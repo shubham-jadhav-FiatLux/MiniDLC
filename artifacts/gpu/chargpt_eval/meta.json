@@ -82,5 +82,6 @@
   "bias_18": 53,
   "weight_18": 52
  },
- "options": {}
+ "options": {},
+ "loop_ir_sha256": "345e3e421060d52018a6a461b4d24dbeac9f083f17d340b719ef2efb6fc26552"
 }

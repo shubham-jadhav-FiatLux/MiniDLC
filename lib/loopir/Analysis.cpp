@@ -533,6 +533,8 @@ void verifyLoops(const Kernel& k, const Body& stmts, RangeEnv& env) {
 
 } // namespace
 
+bool refineRange(RangeEnv& env, const ExprPtr& cond, bool taken) { return refine(env, cond, taken); }
+
 BoundsReport checkBounds(Kernel& kernel) {
     BoundsReport report;
     BoundsChecker(kernel, report).run();

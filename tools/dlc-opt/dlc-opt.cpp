@@ -39,6 +39,8 @@ void printUsage(const char* prog) {
               << "  --emit-llvm            ... then emit the LLVM IR (host CPU, or nvptx64-nvidia-cuda; before optimization)\n"
               << "  --emit-llvm-opt        ... after LLVM's O3 pipeline\n"
               << "  --emit-ptx             ... the PTX assembly (--target=gpu; --arch=sm_XX, default sm_75)\n"
+              << "  --print-gpu-report     --print-loop-report plus, per GPU kernel: resources, shared-memory padding, and\n"
+              << "                         per access: bank conflicts (shared) or sectors per request (global)\n"
               << "  --print-loop-report    Per loop kernel: accesses proven in bounds, guarded (indexed by data), guards\n"
               << "                         eliminated; then the parallel extent (CPU) or the launch configuration (GPU)\n"
               << "  --print-cost           Print the kernels with their FLOPs, bytes and arithmetic intensity\n"
@@ -151,6 +153,7 @@ int main(int argc, char* argv[]) {
     bool gpuTarget = false;
     std::string arch = "sm_75";
     bool printLoopReport = false;
+    bool printGpuReport = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -170,6 +173,9 @@ int main(int argc, char* argv[]) {
             arch = arg.substr(7);
         } else if (arg == "--print-loop-report") {
             printLoopReport = true;
+        } else if (arg == "--print-gpu-report") {
+            printLoopReport = true;
+            printGpuReport = true;
         } else if (arg == "--print-cost") {
             printCost = true;
         } else if (arg == "--print-mem-report") {
@@ -262,7 +268,9 @@ int main(int argc, char* argv[]) {
             std::vector<dlc::loopir::Kernel> all;
             for (const auto& func : module->getFunctions()) {
                 auto target = gpuTarget ? dlc::loopir::Target::GPU : dlc::loopir::Target::CPU;
-                for (auto& l : dlc::compiler::lowerForInspection(*func, target)) {
+                dlc::loopir::LoweringOptions lowering;
+                lowering.analyzeAccesses = printGpuReport;
+                for (auto& l : dlc::compiler::lowerForInspection(*func, target, lowering)) {
                     if (printLoopReport) {
                         std::cout << l.kernel.name << ": " << l.bounds.accesses << " accesses, " << l.bounds.proven
                                   << " proven in bounds, " << l.bounds.guarded << " guarded, " << l.bounds.eliminated
@@ -275,6 +283,12 @@ int main(int argc, char* argv[]) {
                         } else {
                             std::cout << "parallel extent " << l.kernel.parallelExtent() << "\n";
                         }
+                        const auto& sr = l.simplified;
+                        if (sr.propagated || sr.folded || sr.hoisted) {
+                            std::cout << "    simplified: " << sr.propagated << " constants propagated, " << sr.folded
+                                      << " divisions folded, " << sr.hoisted << " invariant lets hoisted\n";
+                        }
+                        if (printGpuReport && l.kernel.gpu) std::cout << dlc::loopir::toString(l.gpu, l.kernel);
                     }
                     all.push_back(std::move(l.kernel));
                 }

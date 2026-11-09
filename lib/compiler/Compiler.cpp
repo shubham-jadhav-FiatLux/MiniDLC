@@ -14,6 +14,7 @@
 #include "dlc/passes/DCE.h"
 #include "dlc/passes/Fusion.h"
 #include "dlc/passes/ShapeInference.h"
+#include <llvm/Support/JSON.h>
 
 namespace dlc::compiler {
 
@@ -23,16 +24,24 @@ class InterpreterRunner : public runtime::KernelRunner {
 public:
     InterpreterRunner(std::vector<loopir::Kernel> kernels, std::string name) : kernels_(std::move(kernels)), name_(std::move(name)) {}
 
+    // A GPU launch's blocks run in chunks on the pool's threads; one race check spans them all.
+    void beginLaunch(int kernel) override {
+        const loopir::Kernel& k = kernels_.at(kernel);
+        launch_ = k.gpu ? std::make_unique<loopir::GpuLaunchCheck>(k) : nullptr;
+    }
+    void endLaunch(int) override { launch_.reset(); }
+
     void run(int kernel, void** args, int64_t begin, int64_t end) override {
         const loopir::Kernel& k = kernels_.at(kernel);
         std::vector<void*> buffers(args, args + k.globalBuffers().size());
-        loopir::interpret(k, buffers, begin, end);
+        loopir::interpret(k, buffers, begin, end, launch_.get());
     }
     std::string name() const override { return name_; }
 
 private:
     std::vector<loopir::Kernel> kernels_;
     std::string name_;
+    std::unique_ptr<loopir::GpuLaunchCheck> launch_;
 };
 
 class JitRunner : public runtime::KernelRunner {
@@ -152,10 +161,11 @@ std::unique_ptr<runtime::Executable> compile(const std::string& irText, const Co
     if (options.target == "interp" || gpu) {
         runner = std::make_unique<InterpreterRunner>(loopKernels, options.target);
     } else {
-        auto jit = std::make_unique<backends::llvm_emit::CpuJit>(loopKernels);
+        auto jit = std::make_unique<backends::llvm_emit::CpuJit>(loopKernels, options.llvmDumps);
         if (dumps) {
             dumps->llvmIR = jit->emittedIR();
             dumps->llvmIROpt = jit->optimizedIR();
+            dumps->fromCache = jit->fromCache();
         }
         runner = std::make_unique<JitRunner>(std::move(jit));
     }
@@ -170,14 +180,157 @@ GpuArtifact compileGpu(const std::string& irText, const CompileOptions& options,
     out.kernels = std::move(kernels);
     out.arch = arch;
     if (ptx) {
-        auto module = backends::llvm_emit::compilePtx(out.kernels, arch);
+        auto module = backends::llvm_emit::compilePtx(out.kernels, arch, options.llvmDumps);
         out.ptx = std::move(module.ptx);
         if (dumps) {
             dumps->llvmIR = std::move(module.emittedIR);
             dumps->llvmIROpt = std::move(module.optimizedIR);
+            dumps->fromCache = module.fromCache;
         }
     }
     return out;
+}
+
+CpuArtifact compileCpu(const std::string& irText, const CompileOptions& options, CompileDumps* dumps) {
+    auto [plan, kernels] = lowerToPlan(irText, options, loopir::Target::CPU, dumps);
+    auto object = backends::llvm_emit::compileCpuObject(kernels, options.llvmDumps);
+    if (dumps) {
+        dumps->llvmIR = std::move(object.emittedIR);
+        dumps->llvmIROpt = std::move(object.optimizedIR);
+        dumps->fromCache = object.fromCache;
+    }
+    CpuArtifact out;
+    out.plan = std::move(plan);
+    out.object = std::move(object.object);
+    for (const auto& k : kernels) out.kernelNames.push_back(k.name);
+    out.triple = std::move(object.triple);
+    out.cpu = std::move(object.cpu);
+    out.features = std::move(object.features);
+    return out;
+}
+
+std::unique_ptr<runtime::Executable> loadCpu(const runtime::Plan& plan, const std::string& object,
+                                             const std::vector<std::string>& kernelNames, const std::string& triple,
+                                             const std::string& features, size_t threads) {
+    std::string problem = backends::llvm_emit::hostIncompatibility(triple, features);
+    if (!problem.empty()) throw IRError("CPU artifact: " + problem + "; recompile it on this machine");
+    for (const auto& l : plan.launches) {
+        if (l.kernel < 0 || static_cast<size_t>(l.kernel) >= kernelNames.size()) {
+            throw IRError("CPU artifact: launch " + l.name + " refers to a missing kernel");
+        }
+    }
+    auto jit = std::make_unique<backends::llvm_emit::CpuJit>(object, kernelNames);
+    return std::make_unique<runtime::Executable>(plan, std::make_unique<JitRunner>(std::move(jit)), threads);
+}
+
+namespace {
+
+[[noreturn]] void badPlan(const std::string& what) { throw IRError("plan JSON: " + what); }
+
+const llvm::json::Object& objectAt(const llvm::json::Value& v, const char* what) {
+    const auto* o = v.getAsObject();
+    if (!o) badPlan(std::string(what) + " is not an object");
+    return *o;
+}
+
+int64_t integer(const llvm::json::Object& o, const char* key) {
+    auto v = o.getInteger(key);
+    if (!v) badPlan(std::string("missing integer '") + key + "'");
+    return *v;
+}
+
+std::string text(const llvm::json::Object& o, const char* key) {
+    auto v = o.getString(key);
+    if (!v) badPlan(std::string("missing string '") + key + "'");
+    return v->str();
+}
+
+const llvm::json::Array& array(const llvm::json::Object& o, const char* key) {
+    const auto* a = o.getArray(key);
+    if (!a) badPlan(std::string("missing array '") + key + "'");
+    return *a;
+}
+
+std::vector<int64_t> integers(const llvm::json::Object& o, const char* key) {
+    std::vector<int64_t> out;
+    for (const auto& v : array(o, key)) {
+        auto i = v.getAsInteger();
+        if (!i) badPlan(std::string("'") + key + "' holds a non-integer");
+        out.push_back(*i);
+    }
+    return out;
+}
+
+runtime::Slot slotFrom(const llvm::json::Value& v) {
+    const auto& o = objectAt(v, "slot");
+    std::string region = text(o, "region");
+    if (region != "persistent" && region != "transient") badPlan("unknown region '" + region + "'");
+    return {region == "persistent" ? Region::Persistent : Region::Transient, integer(o, "offset"), integer(o, "bytes")};
+}
+
+DataType dtypeFrom(const std::string& s) {
+    if (s == "f32") return DataType::Float32;
+    if (s == "i32") return DataType::Int32;
+    badPlan("unknown dtype '" + s + "'");
+}
+
+} // namespace
+
+runtime::Plan planFromJson(const std::string& json) {
+    auto parsed = llvm::json::parse(json);
+    if (!parsed) badPlan(llvm::toString(parsed.takeError()));
+    const auto& root = objectAt(*parsed, "the plan");
+    runtime::Plan plan;
+    plan.function = text(root, "function");
+    plan.persistentBytes = integer(root, "persistent_bytes");
+    plan.transientBytes = integer(root, "transient_bytes");
+    for (const auto& v : array(root, "args")) {
+        const auto& o = objectAt(v, "an argument");
+        runtime::PlanArg a;
+        a.name = text(o, "name");
+        if (!parseArgRole(text(o, "role"), a.role)) badPlan("unknown role of '" + a.name + "'");
+        a.dtype = dtypeFrom(text(o, "dtype"));
+        auto shape = integers(o, "shape");
+        a.shape = Shape(shape.begin(), shape.end());
+        a.slot = slotFrom(*o.get("slot"));
+        if (auto init = o.getNumber("init")) a.init = *init;
+        plan.args.push_back(std::move(a));
+    }
+    for (const auto& v : array(root, "results")) {
+        const auto& o = objectAt(v, "a result");
+        runtime::PlanResult r;
+        std::string kind = text(o, "kind");
+        if (kind == "value") r.kind = ResultKind::Value;
+        else if (kind == "grad") r.kind = ResultKind::Grad;
+        else if (kind == "donates") r.kind = ResultKind::Donates;
+        else badPlan("unknown result kind '" + kind + "'");
+        r.arg = text(o, "arg");
+        r.dtype = dtypeFrom(text(o, "dtype"));
+        auto shape = integers(o, "shape");
+        r.shape = Shape(shape.begin(), shape.end());
+        r.slot = slotFrom(*o.get("slot"));
+        plan.results.push_back(std::move(r));
+    }
+    for (const auto& v : array(root, "launches")) {
+        const auto& o = objectAt(v, "a launch");
+        runtime::Launch l;
+        l.kernel = static_cast<int>(integer(o, "kernel"));
+        l.name = text(o, "name");
+        l.parallelExtent = integer(o, "parallel_extent");
+        auto grid = integers(o, "grid"), block = integers(o, "block");
+        if (grid.size() != 3 || block.size() != 3) badPlan("grid and block need three dimensions");
+        std::copy(grid.begin(), grid.end(), l.grid.begin());
+        std::copy(block.begin(), block.end(), l.block.begin());
+        l.flops = o.getNumber("flops").value_or(0.0);
+        l.bytes = integer(o, "bytes");
+        for (const auto& s : array(o, "args")) l.args.push_back(slotFrom(s));
+        plan.launches.push_back(std::move(l));
+    }
+    for (const auto& v : array(root, "copies")) {
+        const auto& o = objectAt(v, "a copy");
+        plan.copies.push_back({slotFrom(*o.get("from")), slotFrom(*o.get("to"))});
+    }
+    return plan;
 }
 
 void simulateLaunch(const GpuArtifact& artifact, int kernel, const std::vector<void*>& args) {
@@ -186,12 +339,13 @@ void simulateLaunch(const GpuArtifact& artifact, int kernel, const std::vector<v
     loopir::interpret(k, args, 0, g[0] * g[1] * g[2]);
 }
 
-std::vector<loopir::LoweredKernel> lowerForInspection(Function& func, loopir::Target target) {
+std::vector<loopir::LoweredKernel> lowerForInspection(Function& func, loopir::Target target,
+                                                      const loopir::LoweringOptions& options) {
     FusionPass fusion(/*annotate=*/false);
     fusion.runOnFunction(func);
     BufferAssignment buffers(func, fusion.getKernels());
     buffers.verify();
-    auto lowered = loopir::lowerFunction(func, fusion.getKernels(), buffers, target);
+    auto lowered = loopir::lowerFunction(func, fusion.getKernels(), buffers, target, options);
     for (auto& l : lowered) l.args.clear(); // the buffers belong to this call's assignment
     return lowered;
 }

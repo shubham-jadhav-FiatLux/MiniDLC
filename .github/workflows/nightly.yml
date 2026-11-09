@@ -1,0 +1,46 @@
+name: Nightly
+
+# The end-to-end tests: MNIST and Char-GPT trained through the compiled CPU code, against an accuracy threshold, the
+# held-out bigram baseline and PyTorch trained from the same weights on the same batches (tests/python/
+# test_end_to_end.py). They download the datasets and train for a few minutes, so they run once a day, not per push.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  end-to-end:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libgtest-dev
+          wget -qO llvm.sh https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 23
+          sudo apt-get install -y llvm-23-dev llvm-23-tools libzstd-dev libedit-dev libcurl4-openssl-dev libxml2-dev
+          pip install lit numpy pytest nanobind
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Configure and build (Release)
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-23 -DCMAKE_CXX_COMPILER=clang++-23 \
+            -DLLVM_DIR=/usr/lib/llvm-23/lib/cmake/llvm -DPython_EXECUTABLE=$(which python) -DPython3_EXECUTABLE=$(which python)
+          cmake --build build
+      - name: Cache datasets
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/minidlc/mnist
+            ~/.cache/minidlc/tinyshakespeare
+          key: datasets-v1
+      - name: End-to-end tests
+        env:
+          MINIDLC_E2E: "1"
+          MINIDLC_REQUIRE_COMPILED: "1"
+          DLC_OPT: build/dlc-opt
+        run: python -m pytest -q -s -p no:cacheprovider tests/python/test_end_to_end.py

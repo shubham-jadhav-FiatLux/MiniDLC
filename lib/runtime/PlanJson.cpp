@@ -67,8 +67,8 @@ std::string toJson(const Plan& plan) {
     for (size_t i = 0; i < plan.launches.size(); ++i) {
         const Launch& l = plan.launches[i];
         os << (i ? "," : "") << "\n    {\"kernel\": " << l.kernel << ", \"name\": " << quote(l.name) << ", \"grid\": " << list(l.grid)
-           << ", \"block\": " << list(l.block) << ", \"flops\": " << number(l.flops) << ", \"bytes\": " << l.bytes
-           << ", \"args\": [";
+           << ", \"block\": " << list(l.block) << ", \"parallel_extent\": " << l.parallelExtent << ", \"flops\": " << number(l.flops)
+           << ", \"bytes\": " << l.bytes << ", \"args\": [";
         for (size_t j = 0; j < l.args.size(); ++j) os << (j ? ", " : "") << slot(l.args[j]);
         os << "]}";
     }

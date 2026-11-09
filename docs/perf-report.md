@@ -7,7 +7,8 @@ average is recorded with each run. Every number comes from a script in this repo
 
 **What is being measured.** Since P4 the `cpu` target runs code the MiniDLC compiler generates: the training step is
 one graph (forward, backward, optimizer), fused, scheduled, emitted through LLVM and JIT-compiled. No MiniDLC code has
-run on a GPU yet (Section 6). The 2026-10-17 audit withdrew several earlier claims (Section 9).
+run on a GPU yet (Section 6). The 2026-10-17 audit withdrew several earlier claims (Section 10). P8 (2026-11-04)
+re-measured the CPU numbers and added compile times (end of Section 8).
 
 ## 1. Hardware baseline
 
@@ -86,18 +87,27 @@ average 2.5 → 2.8):
 | v1 hand-written AVX2 kernels (one thread, scalar backward GEMM) | 64.8 ± 1.2 | 34× slower |
 
 **Two epochs** (936 steps, data loading included; `examples/mnist_mlp.py 2 [--target=...]`; single runs, so ranges):
-`cpu` 0.9–2.0 s and 96.81–96.92% test accuracy; `reference` 5.4 s, 96.84%; `handwritten` 31.6–64.8 s, 96.88%. Test
-accuracy is on 9,984 of the 10,000 test images (the last partial batch is dropped).
+`cpu` 0.9–2.0 s and **96.92% on all 10,000 test images** (2026-11-04; the nightly end-to-end test requires ≥ 96.5%);
+`reference` 5.4 s, 96.84%; `handwritten` 31.6–64.8 s, 96.88%. The `reference` and `handwritten` accuracies, and the
+earlier `cpu` range of 96.81–96.92%, were measured before P8 on 9,984 of the test images (the example dropped the last
+partial batch; it now pads it).
 
 Single-threaded, PyTorch's step is 1.3× faster than MiniDLC's (its GEMMs come from a tuned BLAS — Section 8's GEMM
 ladder); with threads, MiniDLC's whole-step fusion and in-place updates make up for that.
 
 ## 6. GPU
 
-**No MiniDLC code has run on a GPU yet.** The GPU path is built and checked without one (`docs/gpu.md`): every op and
-two training models match the reference on the lockstep GPU interpreter, and ptxas (sm_75) accepts every kernel with
-no spills — the MNIST matmul kernels use 64 registers and 8,256 bytes of shared memory per block. GPU timings will come
-from `examples/colab_gpu.py`, which writes them to `gpu_run.json`.
+**No MiniDLC code has run on a GPU yet.** The GPU path is built and checked without one (`docs/gpu.md`): every op,
+two training models and the fuzzer's random models match the reference on the lockstep GPU interpreter (which also
+detects races), and ptxas (sm_75) accepts every kernel of the committed artifacts with no spills — the MNIST matmul
+kernels use 55–72 registers and 8,320 bytes of shared memory per block (the A tile padded to 66 words by the
+bank-conflict pass), the Char-GPT step's 316 kernels at most 79 registers.
+
+GPU timings will come from `examples/colab_gpu.py all --json=gpu_run.json` on a T4: per model, the wall-clock time per
+training step (loss fetched every step) and the kernels' time per step (CUDA events), with the same models trained in
+PyTorch on the same GPU from the same weights; and MiniDLC's GEMM kernels against cuBLAS (`torch.matmul`) on the MNIST
+first layer (128×784×256 with bias and ReLU fused) and on 1024³ — GFLOP/s and the share of the T4's 8.1 TFLOP/s.
+This section will hold those numbers once the run has happened.
 
 `docs/roofline_gpu.svg` (from `python3 benchmarks/roofline_gpu.py`) shows theoretical ceilings only: datasheet
 rooflines for the T4 and A100, and for each kernel of the MNIST training step the ceiling its arithmetic intensity
@@ -185,17 +195,60 @@ parallel loop has only 32 row blocks to split.
 11.06 ± 0.12 ms; PyTorch CPU 14.31 ± 0.05 ms with 4 threads and 22.59 ± 0.04 ms with 1. Here the many small ops
 favour a compiler that fuses them and plans memory once over an eager framework.
 
+### Re-measured after P8 (2026-11-04)
+
+P8 changed the generated CPU code only through loop simplification (constant propagation, division folding, LICM) and
+the way it is loaded (an object file linked by the JIT, so that it can be cached). The same script ran twice, with
+a new row, the MNIST step without loop simplification (`--json` output kept in the run log, not committed):
+
+| | Run A (load 0.9 → 2.8) | Run B (load 1.5 → 3.6) | P7 (Section 8 above) |
+|---|:---:|:---:|:---:|
+| MiniDLC `cpu`, 8 threads | 1.28 ± 0.46 (min 0.79) | 0.95 ± 0.37 (min 0.82) | 1.88 ± 0.10 |
+| no loop simplification | — | 1.18 ± 0.58 (min 0.83) | — |
+| MiniDLC `cpu`, 1 thread | 1.99 ± 0.05 | 2.22 ± 0.01 | 5.29 ± 0.15 |
+| PyTorch CPU, 1 thread | 2.06 ± 0.04 | 2.28 ± 0.08 | 4.11 ± 0.14 |
+| PyTorch CPU, 4 threads | 1.38 ± 0.19 | 1.34 ± 0.07 | 2.23 ± 0.08 |
+| v1 hand-written kernels | 30.0 ± 0.2 | 29.3 ± 0.2 | 64.8 ± 1.2 |
+| GEMM ladder: MiniDLC tiles, 8 threads | 88 GFLOP/s | 97 GFLOP/s | 56 GFLOP/s |
+| GEMM ladder: OpenBLAS / PyTorch 4 threads | 117 / 189 GFLOP/s | 144 / 206 GFLOP/s | 102 / 118 GFLOP/s |
+| Char-GPT step: MiniDLC / PyTorch 4 threads | 12.1 ± 3.1 / 22.7 ± 4.9 ms | 8.7 ± 0.2 / 9.1 ± 0.2 ms | 11.1 / 14.3 ms |
+
+Everything ran about twice as fast as in P7, including code P8 did not touch (PyTorch, the v1 kernels, OpenBLAS): the
+laptop's power state differed (P7's runs were power-limited, Section 1), so these runs are not comparable with
+Section 8's, and their multi-threaded rows are noisy (other load rose during both runs). What they do show, within a
+run: loop simplification changes nothing measurable (the fastest steps with and without it are 0.82 and 0.83 ms —
+LLVM's O3 does the same work); single-threaded, MiniDLC and PyTorch are now level on the MNIST step; the headline
+comparisons of Section 8 hold. Section 8's numbers stay the reference set, from one consistent run.
+
+**Compile time and the kernel cache** (`PYTHONPATH=python python3 benchmarks/compile_time.py`; median of 3,
+2026-11-04, load average 1.4). Each step is compiled with an empty cache (LLVM's O3 and code generation run), then
+again (the object file or PTX comes from the cache; the graph passes, fusion, buffer assignment and loop passes run
+both times):
+
+| Step | Cold | From the cache |
+|---|:---:|:---:|
+| MNIST MLP, `cpu` | 0.32 s | 0.009 s |
+| Char-GPT (171 kernels), `cpu` | 4.41 s | 0.093 s |
+| MNIST MLP, PTX | 0.23 s | 0.090 s |
+| Char-GPT (174 kernels), PTX | 2.79 s | 0.97 s |
+
+The GPU compile keeps 0.9 s of lowering: the bank-conflict pass probes each of the 51 matmul kernels at up to three
+pitches.
+
 ## 9. Correctness tests
 
 | Suite | Count | What it checks |
 |---|:---:|---|
-| GoogleTest (`tests/unit`) | 96 | IR round trips, malformed input, a mutation fuzzer, the passes, loop IR analyses, the CPU JIT, the GPU interpreter's SIMT semantics, the compiler |
-| lit + FileCheck (`tests/lit`) | 19 | `dlc-opt` after passes, reports, loop IR, LLVM IR, PTX |
+| GoogleTest (`tests/unit`) | 107 | IR round trips, malformed input, a mutation fuzzer, the passes, loop IR analyses and simplification, the GPU passes, the CPU JIT, the GPU interpreter's SIMT semantics and race detection, plan JSON, the thread pool, the compiler |
+| lit + FileCheck (`tests/lit`) | 21 | `dlc-opt` after passes, reports (loop, GPU), loop IR, LLVM IR, PTX, errors |
 | Translation validation, C++ training graph (`tests/python`) | 207 | Every graph pass in float64; every C++ VJP against finite differences; step graphs vs eager training |
-| Generated code (`test_cpu_backend.py`) | 63 | Every op through the generated code on `cpu`, `interp` and `gpu-sim`, against the reference |
+| Generated code (`test_cpu_backend.py`) | 73 | Every op through the generated code on `cpu`, `interp` and `gpu-sim`, against the reference (partial tiles, long rows) |
 | Compiled training (`test_cpu_training.py`) | 15 | Compiled trajectories (`cpu`, `gpu-sim`) vs eager training |
-| GPU runtime and PTX (`test_gpu_backend.py`) | 8 | The CUDA runtime on the simulated device, artifacts, PTX contents, ptxas; a real-GPU test that runs when a GPU is present |
+| Pipeline fuzzer (`test_pipeline_fuzzer.py`) | 48 | 24 random models: training on `cpu`, `gpu-sim`, `interp` vs eager training; forward vs the reference |
+| GPU runtime and PTX (`test_gpu_backend.py`) | 15 | The CUDA runtime on the simulated device, event profiling, artifacts (and that the committed ones are current), PTX contents, ptxas; a real-GPU test that runs when a GPU is present |
+| Runtime features (`test_runtime_features.py`) | 13 | Kernel cache, checkpoints on and across every target, CPU artifacts |
 | PyTorch cross-check (`test_pytorch_crosscheck.py`) | 3 | Char-GPT loss and gradients (float64) and compiled Adam trajectories against PyTorch |
+| End to end, nightly (`test_end_to_end.py`) | 2 | MNIST ≥ 96.5% on the test set (96.92%); Char-GPT held-out loss vs the bigram baseline and PyTorch (1.9306 vs 1.9329) |
 
 ## 10. Withdrawn claims (2026-10-17 audit)
 

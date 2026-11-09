@@ -186,6 +186,15 @@ inside a pass is prefixed `pass 'autodiff': ...`.
 - `StepRunner(func, bindings)` runs a training-step function repeatedly: it keeps the param, const and state values
   between steps and writes each donated result back into its argument.
 
+`dl.compile_cpu(loss, optimizer)` returns a `minidlc.cpu.CpuArtifact` — the plan as JSON (the format of
+`runtime::toJson`, read back by `compiler::planFromJson`), the kernels' object file, the initial values, the target
+triple and CPU features — which `save(dir)` writes and `minidlc.cpu.load(dir)` links and runs without compiling.
+
+`python/minidlc/checkpoint.py`: `step.save_checkpoint(path)` / `step.load_checkpoint(path)` on the result of
+`dl.compile` (every target) and on `minidlc.gpu.GpuFunction` write and read a `.npz` of the step's `param` and `state`
+arguments, by argument name (`%fc1.weight`, `%fc1.weight.m`, `%adam.beta1_pow`, …) — the names are the contract, so a
+checkpoint from one target loads on any other. Loading checks every name, shape and dtype.
+
 ### Translation validation
 
 `tests/python/test_translation_validation.py` exports 16 graphs (softmax regression, an MLP, a two-layer Char-GPT, a
@@ -219,8 +228,13 @@ schedule per kernel class and target; the emitters translate it without making d
   `shfl_down(v, d)` (lane + d; past the warp's end a lane keeps its value) and `shfl_xor(v, m)` (lane XOR m).
 - **GPU kernels** print their launch configuration, `grid(x,y,z) block(x,y,z)`; their bound loops have exactly those
   extents and run in parallel. Within a block, `barrier` must be reached by every thread, and a shuffle must read an
-  active lane — the lockstep interpreter (target `gpu-sim`) rejects anything else. A block or thread axis of extent 1
-  has no loop; its index, if used, is the constant 0.
+  active lane. Two threads must not touch an element, one of them writing, unless a barrier orders them (shared
+  memory) or both add atomically; global memory is not used to communicate within a launch at all. The lockstep
+  interpreter (target `gpu-sim`) rejects anything else, races included. A block or thread axis of extent 1 has no
+  loop; its index, if used, is the constant 0.
+- **Shared tiles with a variable pitch:** a schedule may index a two-dimensional shared buffer `X` through a local
+  `X_pitch` (bound by a `let`) instead of its row length; the bank-conflict pass picks the pitch and substitutes it
+  (`docs/passes/gpu_passes.md`).
 
 ### The first layer of the MNIST MLP on the CPU
 
@@ -274,10 +288,11 @@ kernel @k0_softmax(%x: f32[37,100], %0: f32[37,100]) grid(37,1,1) block(32,1,1) 
 The matmul schedule (shared-memory tiles, barriers, 4×4 register tiles) is in `docs/gpu.md` and
 `tests/lit/cuda_tiled_matmul.dlc`.
 
-### Loop passes (`lib/loopir/Analysis.cpp`)
+### Loop passes (`lib/loopir/Analysis.cpp`, `Transforms.cpp`, `GpuPasses.cpp`)
 
 Run on every lowered kernel:
 
+0. **(GPU) Bank-conflict padding** of shared tiles with a variable pitch.
 1. **Range analysis:** interval arithmetic over loop variables, integer locals and branch conditions (inside
    `if (x < c)`, x ≤ c − 1).
 2. **Bounds checking with guard insertion:** every load and store is proven in bounds, or, if its index is read from
@@ -288,8 +303,13 @@ Run on every lowered kernel:
    read nothing another iteration writes (checked by enumerating the loop with range analysis over the inner loops);
    a vectorized loop must not carry a dependence through global memory (register-buffer reductions may be
    reassociated).
+5. **Simplification:** constant propagation, division folding with range facts, loop-invariant code motion
+   (`docs/passes/simplify.md`).
+6. **(GPU) Resource check** against the sm_75 limits.
 
-`dlc-opt --print-loop-report` prints, per kernel, the accesses proven in bounds, guarded and eliminated.
+`dlc-opt --print-loop-report` prints, per kernel, the accesses proven in bounds, guarded and eliminated, and what
+simplification changed; `--print-gpu-report` adds, per GPU kernel, its resources, the padding decisions and each
+access's bank conflicts or sectors per request.
 
 ### Code generation (`lib/backends/llvm/`)
 
@@ -297,8 +317,10 @@ Each loop kernel becomes `void @name(ptr %args, i64 %begin, i64 %end)`. It unpac
 always-inline body that takes them as `noalias` parameters; the outermost parallel loop runs `[begin, end)`. `unroll`
 loops are expanded by the emitter, so register tiles become SSA values. `vectorize(w)` becomes
 `llvm.loop.vectorize.width` metadata, plus `reassoc` on that loop's reduction updates only. `fma` becomes
-`llvm.fmuladd`, `max_nan` `llvm.maximum`. The module goes through LLVM's O3 pipeline with the host's TargetMachine and
-is compiled in-process by ORC LLJIT (`--emit-llvm`, `--emit-llvm-opt` print it). The loop vectorizer and the SLP
+`llvm.fmuladd`, `max_nan` `llvm.maximum`. The module goes through LLVM's O3 pipeline with the host's TargetMachine,
+is compiled to an object file, and ORC LLJIT links it into the process (`--emit-llvm`, `--emit-llvm-opt` print the
+IR). The object file — and, for the GPU, the PTX — is kept in the kernel cache, keyed by a SHA-256 of the kernels' loop
+IR, the target and the code generator's build. The loop vectorizer and the SLP
 vectorizer turn the schedule's `vectorize(8)` loops and unrolled register tiles into `<8 x float>` code. The loop IR
 interpreter (`lib/loopir/Interpreter.cpp`, target `interp`) runs the same kernels one iteration at a time,
 bounds-checking every access.

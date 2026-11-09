@@ -489,6 +489,8 @@ void optimizeModule(llvm::Module& module, llvm::TargetMachine& machine) {
     mpm.run(module, mam);
 }
 
+std::string codegenBuildId() { return "minidlc-codegen-2 " __DATE__ " " __TIME__; }
+
 std::string moduleText(const llvm::Module& module) {
     std::string text;
     llvm::raw_string_ostream os(text);

@@ -7,21 +7,26 @@ MiniDLC is a learning project: a deep-learning compiler built from scratch in C+
 own Python frontend is traced into an SSA graph IR, differentiated, optimized, lowered to a loop IR, and compiled through
 LLVM — for x86-64 CPUs and, via LLVM's NVPTX backend, for NVIDIA GPUs.
 
-> **Status (2026-10-29): v2 rebuild, phases P0–P5 built.** A model traced in Python is exported as IR text and compiled
-> by the C++ compiler — autodiff, the Adam/SGD update, fusion, buffer assignment, loop IR with CPU schedules, LLVM,
-> ORC JIT — into one native training step. MNIST and a character-level Transformer train through the generated code
-> and match the NumPy reference. The GPU path (GPU schedules, NVPTX → PTX, a CUDA driver runtime) is built and checked
-> on a lockstep GPU interpreter and by ptxas, but **has not yet run on a GPU** ([`docs/gpu.md`](docs/gpu.md)). The v2
-> design and the status of each component are in [`docs/architecture.md`](docs/architecture.md); for a tour of one
-> training step through every stage, read [`docs/walkthrough.md`](docs/walkthrough.md).
+> **Status (2026-11-04): v2 rebuild, every phase (P0–P7) built, plus a completion pass (P8) after a second audit.**
+> A model traced in Python is exported as IR text and compiled by the C++ compiler — autodiff, the Adam/SGD update,
+> fusion, buffer assignment, loop IR with CPU and GPU schedules, loop passes, LLVM — into one native training step.
+> MNIST and a character-level Transformer train through the generated CPU code, match the NumPy reference and track
+> PyTorch. The GPU path (GPU schedules and loop passes, NVPTX → PTX, a CUDA driver runtime) is built and checked on a
+> lockstep GPU interpreter that also detects races, and by ptxas, but **has not yet run on a GPU**
+> ([`docs/gpu.md`](docs/gpu.md)). The v2 design and the status of each component are in
+> [`docs/architecture.md`](docs/architecture.md); for a tour of one training step through every stage, read
+> [`docs/walkthrough.md`](docs/walkthrough.md).
 
 ## What works today
 
 - **Compiled training on the CPU.** `dl.compile(loss, optimizer, target="cpu")` builds forward, backward and the update
   as one graph and compiles it in-process. The MNIST MLP (784 → 256 → 10) trains 2 epochs in about 1–2 s on a 4-core
-  laptop and reaches 96.8–96.9% test accuracy. Char-GPT (multi-head attention) reaches 1.93 nats held-out after
-  2,000 steps, against 1.93 for PyTorch from the same weights and batches and 2.48 for a bigram model
-  ([`docs/perf-report.md`](docs/perf-report.md)).
+  laptop and reaches 96.9% accuracy on the 10,000 test images. Char-GPT (multi-head attention) reaches 1.93 nats
+  held-out after 2,000 steps, against 1.93 for PyTorch from the same weights and batches and 2.48 for a bigram model
+  ([`docs/perf-report.md`](docs/perf-report.md)). Compiled code is cached on disk: the Char-GPT step compiles in
+  4.4 s the first time and 0.09 s after; `dl.compile_cpu` saves a step (plan + object file) to run later without
+  recompiling. Checkpoints (`step.save_checkpoint(path)`) carry parameters and optimizer state between runs and between
+  targets.
 - **The C++ compiler.**
   - An SSA graph IR with an op registry, a round-tripping parser and printer, and a verifier that runs after every
     pass.
@@ -30,18 +35,23 @@ LLVM — for x86-64 CPUs and, via LLVM's NVPTX backend, for NVIDIA GPUs.
     model, and buffer assignment with a checker.
   - A loop IR with per-kernel-class CPU schedules (4×16 register-tiled matmul, vectorized elementwise and row
     kernels, parallel outer loops), and loop passes: range analysis, bounds checking with guards for data-dependent
-    indices, bounds-check elimination, and a dependence check of every parallel and vectorized loop.
+    indices, bounds-check elimination, a dependence check of every parallel and vectorized loop, and simplification
+    (constant propagation, range-based division folding, LICM).
   - An LLVM emitter (`IRBuilder`, O3, ORC LLJIT) whose output LLVM vectorizes into `<8 x float>` FMAs.
-  - GPU schedules (shared-memory tiled matmul with register tiles, warp-per-row kernels with shuffles, atomics) and
-    NVPTX emission to PTX; a lockstep GPU interpreter that rejects divergent barriers and checks every op and both
-    training models against the reference (`target="gpu-sim"`).
+  - GPU schedules (shared-memory tiled matmul with register tiles and versioned partial tiles, warp- and block-per-row
+    reductions with shuffles, atomics), GPU loop passes (bank-conflict analysis and padding, coalescing statistics, a
+    resource check) and NVPTX emission to PTX; a lockstep GPU interpreter that rejects divergent barriers, detects
+    races and checks every op and both training models against the reference (`target="gpu-sim"`).
 - **GPU runtime.** `minidlc/gpu.py` runs compiled artifacts (plan JSON + PTX) through the CUDA driver API with
-  ctypes; `examples/colab_gpu.py` runs the committed MNIST artifacts on Colab and checks them against the reference.
+  ctypes and times kernels with CUDA events; `examples/colab_gpu.py` runs the committed MNIST and Char-GPT artifacts on
+  Colab, checks them against the reference, and compares them with PyTorch on the same GPU and with cuBLAS.
 - **Python frontend and reference interpreter.** Tensors with operator overloading, `nn` modules (Linear, LayerNorm,
   Embedding, causal self-attention, a character-level Transformer), SGD and Adam, MNIST/TinyShakespeare loaders, and a
   NumPy interpreter with its own autodiff — the oracle every compiled result is compared with.
 - **Testing.** Translation validation of every graph pass; differential tests of every op through the generated code
-  (odd shapes, broadcasting, zero-size dimensions, NaN/Inf); a mutation fuzzer for the parser and passes; ASan/UBSan.
+  (odd shapes, broadcasting, zero-size dimensions, NaN/Inf); a whole-pipeline fuzzer that trains random models on
+  every target against the reference; a mutation fuzzer for the parser and passes; end-to-end tests (MNIST accuracy,
+  Char-GPT against PyTorch) nightly; ASan/UBSan.
 
 ## Known limitations
 
@@ -67,7 +77,7 @@ MiniDLC/
 ├── tests/
 │   ├── unit/             # GoogleTest; test_known_bugs.cpp records known defects as disabled tests
 │   ├── lit/              # golden IR tests run by lit with LLVM's FileCheck
-│   └── python/           # gradient checks, contracts, fuzzer, Transformer tests, translation validation of the passes
+│   └── python/           # gradient checks, contracts, fuzzers, backends, training, checkpoints, end-to-end (nightly)
 ├── examples/             # mnist_mlp.py, char_gpt.py, export_ir.py, gpu_artifacts.py, colab_gpu.py
 └── benchmarks/           # baselines and ablations, rooflines, Char-GPT held-out evaluation vs PyTorch, memory plans
 ```
@@ -88,8 +98,11 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DPython_EXECUTABLE=$(which pytho
 cmake --build build -j4          # also builds the _minidlc module into python/minidlc/
 ctest --test-dir build --output-on-failure   # GoogleTest, lit/FileCheck, and the Python compiler and backend tests
 pytest                                       # all Python tests (the compiler ones need build/dlc-opt and _minidlc)
+MINIDLC_E2E=1 pytest tests/python/test_end_to_end.py   # the end-to-end tests (download data, train; minutes)
 pip install -e .                             # optional: the minidlc package, with the compiled module
 ```
+
+Compiled code is cached in `~/.cache/minidlc` (`MINIDLC_CACHE_DIR` moves it, `MINIDLC_CACHE=off` disables it).
 
 For a sanitizer build, configure with `-DCMAKE_BUILD_TYPE=Debug -DDLC_SANITIZE=ON -DDLC_BUILD_PYTHON=OFF`
 (AddressSanitizer and UndefinedBehaviorSanitizer); CI runs both configurations.
@@ -115,22 +128,24 @@ PYTHONPATH=python python3 examples/export_ir.py mlp > mlp.dlc          # the tra
 ./build/dlc-opt step.dlc --print-loop-report   # accesses proven in bounds / guarded
 ./build/dlc-opt step.dlc --emit-llvm-opt       # LLVM IR after O3
 ./build/dlc-opt step.dlc --target=gpu --emit-loopir   # the GPU schedules
+./build/dlc-opt step.dlc --target=gpu --print-gpu-report  # resources, padding, bank conflicts, coalescing
 ./build/dlc-opt step.dlc --target=gpu --emit-ptx      # PTX for sm_75
 ```
 
 ### On a GPU
 
-See [`docs/gpu.md`](docs/gpu.md): on Colab, `PYTHONPATH=python python3 examples/colab_gpu.py mnist` runs the committed
-artifacts with only NumPy and the CUDA driver.
+See [`docs/gpu.md`](docs/gpu.md): on Colab, `PYTHONPATH=python python3 examples/colab_gpu.py all --json=gpu_run.json`
+runs the committed artifacts with only NumPy and the CUDA driver, and the PyTorch/cuBLAS baselines.
 
 ## Roadmap
 
 v2 keeps the Python frontend, makes the textual graph IR the contract with the C++ compiler, adds a GPU-aware loop IR
 with per-target schedules, and generates code through one LLVM emitter for x86-64 (ORC JIT) and NVIDIA GPUs (NVPTX →
-PTX). Phases: **P0** truthful docs and real tests (done) → **P1** IR and Python↔C++ bridge (done) → **P2** training
-graph in C++ (done) → **P3** fusion and buffer assignment (done) → **P4** CPU backend (done) → **P5** GPU backend (built; GPU run
-pending) → **P6** Transformer on both
-targets → **P7** measurements and write-up. Details: [`docs/architecture.md`](docs/architecture.md).
+PTX). Phases: **P0** truthful docs and real tests → **P1** IR and Python↔C++ bridge → **P2** training graph in C++ →
+**P3** fusion and buffer assignment → **P4** CPU backend → **P5** GPU backend (built; GPU run pending) → **P6**
+Transformer on both targets → **P7** measurements and write-up → **P8** completion: the parts of the design still
+missing after a second audit (GPU loop passes, race detection, simplification, kernel cache, checkpoints, fuzzing,
+end-to-end tests). All built; what remains is the run on a GPU. Details: [`docs/architecture.md`](docs/architecture.md).
 
 ## Course mapping
 

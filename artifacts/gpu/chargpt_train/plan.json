@@ -5933,6 +5933,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 561664,
    "args": [
@@ -5966,6 +5967,7 @@
     1,
     1
    ],
+   "parallel_extent": 32,
    "flops": 0,
    "bytes": 65792,
    "args": [
@@ -5999,6 +6001,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 131072,
    "bytes": 1081344,
    "args": [
@@ -6032,6 +6035,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 1048576,
    "bytes": 1049600,
    "args": [
@@ -6070,6 +6074,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33685504,
    "bytes": 1114624,
    "args": [
@@ -6108,6 +6113,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -6136,6 +6142,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33685504,
    "bytes": 1114624,
    "args": [
@@ -6174,6 +6181,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -6202,6 +6210,7 @@
     16,
     1
    ],
+   "parallel_extent": 64,
    "flops": 17301504,
    "bytes": 2113536,
    "args": [
@@ -6240,6 +6249,7 @@
     1,
     1
    ],
+   "parallel_extent": 4096,
    "flops": 1310720,
    "bytes": 2097152,
    "args": [
@@ -6268,6 +6278,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33685504,
    "bytes": 1114624,
    "args": [
@@ -6306,6 +6317,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -6334,6 +6346,7 @@
     16,
     1
    ],
+   "parallel_extent": 64,
    "flops": 16777216,
    "bytes": 2097152,
    "args": [
@@ -6367,6 +6380,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -6395,6 +6409,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33816576,
    "bytes": 1638912,
    "args": [
@@ -6438,6 +6453,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 1048576,
    "bytes": 1049600,
    "args": [
@@ -6476,6 +6492,7 @@
     16,
     1
    ],
+   "parallel_extent": 128,
    "flops": 147849216,
    "bytes": 4982784,
    "args": [
@@ -6519,6 +6536,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 134479872,
    "bytes": 3408384,
    "args": [
@@ -6562,6 +6580,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 1048576,
    "bytes": 1049600,
    "args": [
@@ -6600,6 +6619,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33685504,
    "bytes": 1114624,
    "args": [
@@ -6638,6 +6658,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -6666,6 +6687,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33685504,
    "bytes": 1114624,
    "args": [
@@ -6704,6 +6726,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -6732,6 +6755,7 @@
     16,
     1
    ],
+   "parallel_extent": 64,
    "flops": 17301504,
    "bytes": 2113536,
    "args": [
@@ -6770,6 +6794,7 @@
     1,
     1
    ],
+   "parallel_extent": 4096,
    "flops": 1310720,
    "bytes": 2097152,
    "args": [
@@ -6798,6 +6823,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33685504,
    "bytes": 1114624,
    "args": [
@@ -6836,6 +6862,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -6864,6 +6891,7 @@
     16,
     1
    ],
+   "parallel_extent": 64,
    "flops": 16777216,
    "bytes": 2097152,
    "args": [
@@ -6897,6 +6925,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -6925,6 +6954,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33816576,
    "bytes": 1638912,
    "args": [
@@ -6968,6 +6998,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 1048576,
    "bytes": 1049600,
    "args": [
@@ -7006,6 +7037,7 @@
     16,
     1
    ],
+   "parallel_extent": 128,
    "flops": 147849216,
    "bytes": 4982784,
    "args": [
@@ -7049,6 +7081,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 134479872,
    "bytes": 3408384,
    "args": [
@@ -7092,6 +7125,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 1048576,
    "bytes": 1049600,
    "args": [
@@ -7130,6 +7164,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33685504,
    "bytes": 1114624,
    "args": [
@@ -7168,6 +7203,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -7196,6 +7232,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33685504,
    "bytes": 1114624,
    "args": [
@@ -7234,6 +7271,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -7262,6 +7300,7 @@
     16,
     1
    ],
+   "parallel_extent": 64,
    "flops": 17301504,
    "bytes": 2113536,
    "args": [
@@ -7300,6 +7339,7 @@
     1,
     1
    ],
+   "parallel_extent": 4096,
    "flops": 1310720,
    "bytes": 2097152,
    "args": [
@@ -7328,6 +7368,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33685504,
    "bytes": 1114624,
    "args": [
@@ -7366,6 +7407,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -7394,6 +7436,7 @@
     16,
     1
    ],
+   "parallel_extent": 64,
    "flops": 16777216,
    "bytes": 2097152,
    "args": [
@@ -7427,6 +7470,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -7455,6 +7499,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33816576,
    "bytes": 1638912,
    "args": [
@@ -7498,6 +7543,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 1048576,
    "bytes": 1049600,
    "args": [
@@ -7536,6 +7582,7 @@
     16,
     1
    ],
+   "parallel_extent": 128,
    "flops": 147849216,
    "bytes": 4982784,
    "args": [
@@ -7579,6 +7626,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 134479872,
    "bytes": 3408384,
    "args": [
@@ -7622,6 +7670,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 1048576,
    "bytes": 1049600,
    "args": [
@@ -7660,6 +7709,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33685504,
    "bytes": 1114624,
    "args": [
@@ -7698,6 +7748,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -7726,6 +7777,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33685504,
    "bytes": 1114624,
    "args": [
@@ -7764,6 +7816,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -7792,6 +7845,7 @@
     16,
     1
    ],
+   "parallel_extent": 64,
    "flops": 17301504,
    "bytes": 2113536,
    "args": [
@@ -7830,6 +7884,7 @@
     1,
     1
    ],
+   "parallel_extent": 4096,
    "flops": 1310720,
    "bytes": 2097152,
    "args": [
@@ -7858,6 +7913,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33685504,
    "bytes": 1114624,
    "args": [
@@ -7896,6 +7952,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -7924,6 +7981,7 @@
     16,
     1
    ],
+   "parallel_extent": 64,
    "flops": 16777216,
    "bytes": 2097152,
    "args": [
@@ -7957,6 +8015,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -7985,6 +8044,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33816576,
    "bytes": 1638912,
    "args": [
@@ -8028,6 +8088,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 1048576,
    "bytes": 1049600,
    "args": [
@@ -8066,6 +8127,7 @@
     16,
     1
    ],
+   "parallel_extent": 128,
    "flops": 147849216,
    "bytes": 4982784,
    "args": [
@@ -8109,6 +8171,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 134479872,
    "bytes": 3408384,
    "args": [
@@ -8152,6 +8215,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 1048576,
    "bytes": 1049600,
    "args": [
@@ -8190,6 +8254,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 17039360,
    "bytes": 823808,
    "args": [
@@ -8223,6 +8288,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 0,
    "bytes": 0,
    "args": [
@@ -8246,6 +8312,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 332800,
    "bytes": 270340,
    "args": [
@@ -8279,6 +8346,7 @@
     1,
     1
    ],
+   "parallel_extent": 260,
    "flops": 0,
    "bytes": 270336,
    "args": [
@@ -8307,6 +8375,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 332800,
    "bytes": 532480,
    "args": [
@@ -8335,6 +8404,7 @@
     1,
     1
    ],
+   "parallel_extent": 260,
    "flops": 133120,
    "bytes": 798720,
    "args": [
@@ -8368,6 +8438,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -8396,6 +8467,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 262144,
    "bytes": 1576960,
    "args": [
@@ -8434,6 +8506,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -8462,6 +8535,7 @@
     1,
     1
    ],
+   "parallel_extent": 4,
    "flops": 3072,
    "bytes": 12288,
    "args": [
@@ -8495,6 +8569,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 17694720,
    "bytes": 3974144,
    "args": [
@@ -8568,6 +8643,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -8596,6 +8672,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -8624,6 +8701,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -8652,6 +8730,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -8680,6 +8759,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 524288,
    "bytes": 1585152,
    "args": [
@@ -8728,6 +8808,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -8756,6 +8837,7 @@
     16,
     1
    ],
+   "parallel_extent": 128,
    "flops": 134742016,
    "bytes": 4980736,
    "args": [
@@ -8794,6 +8876,7 @@
     1,
     1
    ],
+   "parallel_extent": 2,
    "flops": 524288,
    "bytes": 2099200,
    "args": [
@@ -8822,6 +8905,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -8850,6 +8934,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 262144,
    "bytes": 1576960,
    "args": [
@@ -8888,6 +8973,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -8916,6 +9002,7 @@
     1,
     1
    ],
+   "parallel_extent": 4,
    "flops": 3072,
    "bytes": 12288,
    "args": [
@@ -8949,6 +9036,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 134873088,
    "bytes": 6033920,
    "args": [
@@ -9022,6 +9110,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -9050,6 +9139,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -9078,6 +9168,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -9106,6 +9197,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -9134,6 +9226,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 655360,
    "bytes": 2109440,
    "args": [
@@ -9187,6 +9280,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -9215,6 +9309,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33554432,
    "bytes": 1114112,
    "args": [
@@ -9248,6 +9343,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -9276,6 +9372,7 @@
     16,
     1
    ],
+   "parallel_extent": 64,
    "flops": 17039360,
    "bytes": 4194304,
    "args": [
@@ -9319,6 +9416,7 @@
     16,
     1
    ],
+   "parallel_extent": 64,
    "flops": 16777216,
    "bytes": 2097152,
    "args": [
@@ -9352,6 +9450,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -9380,6 +9479,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -9408,6 +9508,7 @@
     1,
     1
    ],
+   "parallel_extent": 4096,
    "flops": 262144,
    "bytes": 1064960,
    "args": [
@@ -9436,6 +9537,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 786432,
    "bytes": 3162112,
    "args": [
@@ -9474,6 +9576,7 @@
     16,
     1
    ],
+   "parallel_extent": 64,
    "flops": 16777216,
    "bytes": 2097152,
    "args": [
@@ -9507,6 +9610,7 @@
     16,
     1
    ],
+   "parallel_extent": 64,
    "flops": 16777216,
    "bytes": 2097152,
    "args": [
@@ -9540,6 +9644,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -9568,6 +9673,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -9596,6 +9702,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33554432,
    "bytes": 1114112,
    "args": [
@@ -9629,6 +9736,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -9657,6 +9765,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -9685,6 +9794,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33554432,
    "bytes": 1114112,
    "args": [
@@ -9718,6 +9828,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -9746,6 +9857,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 262144,
    "bytes": 1576960,
    "args": [
@@ -9784,6 +9896,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -9812,6 +9925,7 @@
     1,
     1
    ],
+   "parallel_extent": 4,
    "flops": 3072,
    "bytes": 12288,
    "args": [
@@ -9845,6 +9959,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 34471936,
    "bytes": 5313024,
    "args": [
@@ -9928,6 +10043,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -9956,6 +10072,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -9984,6 +10101,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -10012,6 +10130,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -10040,6 +10159,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 655360,
    "bytes": 2109440,
    "args": [
@@ -10093,6 +10213,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -10121,6 +10242,7 @@
     16,
     1
    ],
+   "parallel_extent": 128,
    "flops": 134742016,
    "bytes": 4980736,
    "args": [
@@ -10159,6 +10281,7 @@
     1,
     1
    ],
+   "parallel_extent": 2,
    "flops": 524288,
    "bytes": 2099200,
    "args": [
@@ -10187,6 +10310,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -10215,6 +10339,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 262144,
    "bytes": 1576960,
    "args": [
@@ -10253,6 +10378,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -10281,6 +10407,7 @@
     1,
     1
    ],
+   "parallel_extent": 4,
    "flops": 3072,
    "bytes": 12288,
    "args": [
@@ -10314,6 +10441,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 134873088,
    "bytes": 6033920,
    "args": [
@@ -10387,6 +10515,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -10415,6 +10544,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -10443,6 +10573,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -10471,6 +10602,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -10499,6 +10631,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 655360,
    "bytes": 2109440,
    "args": [
@@ -10552,6 +10685,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -10580,6 +10714,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33554432,
    "bytes": 1114112,
    "args": [
@@ -10613,6 +10748,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -10641,6 +10777,7 @@
     16,
     1
    ],
+   "parallel_extent": 64,
    "flops": 17039360,
    "bytes": 4194304,
    "args": [
@@ -10684,6 +10821,7 @@
     16,
     1
    ],
+   "parallel_extent": 64,
    "flops": 16777216,
    "bytes": 2097152,
    "args": [
@@ -10717,6 +10855,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -10745,6 +10884,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -10773,6 +10913,7 @@
     1,
     1
    ],
+   "parallel_extent": 4096,
    "flops": 262144,
    "bytes": 1064960,
    "args": [
@@ -10801,6 +10942,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 786432,
    "bytes": 3162112,
    "args": [
@@ -10839,6 +10981,7 @@
     16,
     1
    ],
+   "parallel_extent": 64,
    "flops": 16777216,
    "bytes": 2097152,
    "args": [
@@ -10872,6 +11015,7 @@
     16,
     1
    ],
+   "parallel_extent": 64,
    "flops": 16777216,
    "bytes": 2097152,
    "args": [
@@ -10905,6 +11049,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -10933,6 +11078,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -10961,6 +11107,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33554432,
    "bytes": 1114112,
    "args": [
@@ -10994,6 +11141,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -11022,6 +11170,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -11050,6 +11199,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33554432,
    "bytes": 1114112,
    "args": [
@@ -11083,6 +11233,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -11111,6 +11262,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 262144,
    "bytes": 1576960,
    "args": [
@@ -11149,6 +11301,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -11177,6 +11330,7 @@
     1,
     1
    ],
+   "parallel_extent": 4,
    "flops": 3072,
    "bytes": 12288,
    "args": [
@@ -11210,6 +11364,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 34471936,
    "bytes": 5313024,
    "args": [
@@ -11293,6 +11448,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -11321,6 +11477,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -11349,6 +11506,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -11377,6 +11535,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -11405,6 +11564,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 655360,
    "bytes": 2109440,
    "args": [
@@ -11458,6 +11618,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -11486,6 +11647,7 @@
     16,
     1
    ],
+   "parallel_extent": 128,
    "flops": 134742016,
    "bytes": 4980736,
    "args": [
@@ -11524,6 +11686,7 @@
     1,
     1
    ],
+   "parallel_extent": 2,
    "flops": 524288,
    "bytes": 2099200,
    "args": [
@@ -11552,6 +11715,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -11580,6 +11744,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 262144,
    "bytes": 1576960,
    "args": [
@@ -11618,6 +11783,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -11646,6 +11812,7 @@
     1,
     1
    ],
+   "parallel_extent": 4,
    "flops": 3072,
    "bytes": 12288,
    "args": [
@@ -11679,6 +11846,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 134873088,
    "bytes": 6033920,
    "args": [
@@ -11752,6 +11920,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -11780,6 +11949,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -11808,6 +11978,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -11836,6 +12007,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -11864,6 +12036,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 655360,
    "bytes": 2109440,
    "args": [
@@ -11917,6 +12090,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -11945,6 +12119,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33554432,
    "bytes": 1114112,
    "args": [
@@ -11978,6 +12153,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -12006,6 +12182,7 @@
     16,
     1
    ],
+   "parallel_extent": 64,
    "flops": 17039360,
    "bytes": 4194304,
    "args": [
@@ -12049,6 +12226,7 @@
     16,
     1
    ],
+   "parallel_extent": 64,
    "flops": 16777216,
    "bytes": 2097152,
    "args": [
@@ -12082,6 +12260,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -12110,6 +12289,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -12138,6 +12318,7 @@
     1,
     1
    ],
+   "parallel_extent": 4096,
    "flops": 262144,
    "bytes": 1064960,
    "args": [
@@ -12166,6 +12347,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 786432,
    "bytes": 3162112,
    "args": [
@@ -12204,6 +12386,7 @@
     16,
     1
    ],
+   "parallel_extent": 64,
    "flops": 16777216,
    "bytes": 2097152,
    "args": [
@@ -12237,6 +12420,7 @@
     16,
     1
    ],
+   "parallel_extent": 64,
    "flops": 16777216,
    "bytes": 2097152,
    "args": [
@@ -12270,6 +12454,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -12298,6 +12483,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -12326,6 +12512,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33554432,
    "bytes": 1114112,
    "args": [
@@ -12359,6 +12546,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -12387,6 +12575,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -12415,6 +12604,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33554432,
    "bytes": 1114112,
    "args": [
@@ -12448,6 +12638,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -12476,6 +12667,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 262144,
    "bytes": 1576960,
    "args": [
@@ -12514,6 +12706,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -12542,6 +12735,7 @@
     1,
     1
    ],
+   "parallel_extent": 4,
    "flops": 3072,
    "bytes": 12288,
    "args": [
@@ -12575,6 +12769,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 34471936,
    "bytes": 5313024,
    "args": [
@@ -12658,6 +12853,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -12686,6 +12882,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -12714,6 +12911,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -12742,6 +12940,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -12770,6 +12969,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 655360,
    "bytes": 2109440,
    "args": [
@@ -12823,6 +13023,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -12851,6 +13052,7 @@
     16,
     1
    ],
+   "parallel_extent": 128,
    "flops": 134742016,
    "bytes": 4980736,
    "args": [
@@ -12889,6 +13091,7 @@
     1,
     1
    ],
+   "parallel_extent": 2,
    "flops": 524288,
    "bytes": 2099200,
    "args": [
@@ -12917,6 +13120,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -12945,6 +13149,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 262144,
    "bytes": 1576960,
    "args": [
@@ -12983,6 +13188,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -13011,6 +13217,7 @@
     1,
     1
    ],
+   "parallel_extent": 4,
    "flops": 3072,
    "bytes": 12288,
    "args": [
@@ -13044,6 +13251,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 134873088,
    "bytes": 6033920,
    "args": [
@@ -13117,6 +13325,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -13145,6 +13354,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -13173,6 +13383,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -13201,6 +13412,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -13229,6 +13441,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 655360,
    "bytes": 2109440,
    "args": [
@@ -13282,6 +13495,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -13310,6 +13524,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33554432,
    "bytes": 1114112,
    "args": [
@@ -13343,6 +13558,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -13371,6 +13587,7 @@
     16,
     1
    ],
+   "parallel_extent": 64,
    "flops": 17039360,
    "bytes": 4194304,
    "args": [
@@ -13414,6 +13631,7 @@
     16,
     1
    ],
+   "parallel_extent": 64,
    "flops": 16777216,
    "bytes": 2097152,
    "args": [
@@ -13447,6 +13665,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -13475,6 +13694,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -13503,6 +13723,7 @@
     1,
     1
    ],
+   "parallel_extent": 4096,
    "flops": 262144,
    "bytes": 1064960,
    "args": [
@@ -13531,6 +13752,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 786432,
    "bytes": 3162112,
    "args": [
@@ -13569,6 +13791,7 @@
     16,
     1
    ],
+   "parallel_extent": 64,
    "flops": 16777216,
    "bytes": 2097152,
    "args": [
@@ -13602,6 +13825,7 @@
     16,
     1
    ],
+   "parallel_extent": 64,
    "flops": 16777216,
    "bytes": 2097152,
    "args": [
@@ -13635,6 +13859,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -13663,6 +13888,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -13691,6 +13917,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33554432,
    "bytes": 1114112,
    "args": [
@@ -13724,6 +13951,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 0,
    "bytes": 1048576,
    "args": [
@@ -13752,6 +13980,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -13780,6 +14009,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 33554432,
    "bytes": 1114112,
    "args": [
@@ -13813,6 +14043,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -13841,6 +14072,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 262144,
    "bytes": 1576960,
    "args": [
@@ -13879,6 +14111,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -13907,6 +14140,7 @@
     1,
     1
    ],
+   "parallel_extent": 4,
    "flops": 3072,
    "bytes": 12288,
    "args": [
@@ -13940,6 +14174,7 @@
     16,
     1
    ],
+   "parallel_extent": 32,
    "flops": 34471936,
    "bytes": 5313024,
    "args": [
@@ -14023,6 +14258,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -14051,6 +14287,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 131072,
    "bytes": 524800,
    "args": [
@@ -14079,6 +14316,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -14107,6 +14345,7 @@
     1,
     1
    ],
+   "parallel_extent": 1024,
    "flops": 131072,
    "bytes": 528384,
    "args": [
@@ -14135,6 +14374,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 655360,
    "bytes": 2109440,
    "args": [
@@ -14188,6 +14428,7 @@
     1,
     1
    ],
+   "parallel_extent": 32,
    "flops": 131072,
    "bytes": 557056,
    "args": [
@@ -14216,6 +14457,7 @@
     1,
     1
    ],
+   "parallel_extent": 32,
    "flops": 0,
    "bytes": 0,
    "args": [
@@ -14239,6 +14481,7 @@
     1,
     1
    ],
+   "parallel_extent": 32,
    "flops": 8192,
    "bytes": 65792,
    "args": [
@@ -14272,6 +14515,7 @@
     1,
     1
    ],
+   "parallel_extent": 33,
    "flops": 0,
    "bytes": 0,
    "args": [
@@ -14295,6 +14539,7 @@
     1,
     1
    ],
+   "parallel_extent": 512,
    "flops": 131072,
    "bytes": 561664,
    "args": [
@@ -14328,6 +14573,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 2,
    "bytes": 12,
    "args": [
@@ -14356,6 +14602,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 2,
    "bytes": 12,
    "args": [
@@ -14384,6 +14631,7 @@
     16,
     1
    ],
+   "parallel_extent": 4,
    "flops": 17155840,
    "bytes": 990216,
    "args": [
@@ -14437,6 +14685,7 @@
     16,
     1
    ],
+   "parallel_extent": 16,
    "flops": 135135232,
    "bytes": 4194312,
    "args": [
@@ -14490,6 +14739,7 @@
     16,
     1
    ],
+   "parallel_extent": 16,
    "flops": 135135232,
    "bytes": 4194312,
    "args": [
@@ -14543,6 +14793,7 @@
     16,
     1
    ],
+   "parallel_extent": 4,
    "flops": 33783808,
    "bytes": 1441800,
    "args": [
@@ -14596,6 +14847,7 @@
     16,
     1
    ],
+   "parallel_extent": 4,
    "flops": 33783808,
    "bytes": 1441800,
    "args": [
@@ -14649,6 +14901,7 @@
     16,
     1
    ],
+   "parallel_extent": 4,
    "flops": 33783808,
    "bytes": 1441800,
    "args": [
@@ -14702,6 +14955,7 @@
     16,
     1
    ],
+   "parallel_extent": 4,
    "flops": 33783808,
    "bytes": 1441800,
    "args": [
@@ -14755,6 +15009,7 @@
     16,
     1
    ],
+   "parallel_extent": 16,
    "flops": 135135232,
    "bytes": 4194312,
    "args": [
@@ -14808,6 +15063,7 @@
     16,
     1
    ],
+   "parallel_extent": 16,
    "flops": 135135232,
    "bytes": 4194312,
    "args": [
@@ -14861,6 +15117,7 @@
     16,
     1
    ],
+   "parallel_extent": 4,
    "flops": 33783808,
    "bytes": 1441800,
    "args": [
@@ -14914,6 +15171,7 @@
     16,
     1
    ],
+   "parallel_extent": 4,
    "flops": 33783808,
    "bytes": 1441800,
    "args": [
@@ -14967,6 +15225,7 @@
     16,
     1
    ],
+   "parallel_extent": 4,
    "flops": 33783808,
    "bytes": 1441800,
    "args": [
@@ -15020,6 +15279,7 @@
     16,
     1
    ],
+   "parallel_extent": 4,
    "flops": 33783808,
    "bytes": 1441800,
    "args": [
@@ -15073,6 +15333,7 @@
     16,
     1
    ],
+   "parallel_extent": 16,
    "flops": 135135232,
    "bytes": 4194312,
    "args": [
@@ -15126,6 +15387,7 @@
     16,
     1
    ],
+   "parallel_extent": 16,
    "flops": 135135232,
    "bytes": 4194312,
    "args": [
@@ -15179,6 +15441,7 @@
     16,
     1
    ],
+   "parallel_extent": 4,
    "flops": 33783808,
    "bytes": 1441800,
    "args": [
@@ -15232,6 +15495,7 @@
     16,
     1
    ],
+   "parallel_extent": 4,
    "flops": 33783808,
    "bytes": 1441800,
    "args": [
@@ -15285,6 +15549,7 @@
     16,
     1
    ],
+   "parallel_extent": 4,
    "flops": 33783808,
    "bytes": 1441800,
    "args": [
@@ -15338,6 +15603,7 @@
     16,
     1
    ],
+   "parallel_extent": 4,
    "flops": 33783808,
    "bytes": 1441800,
    "args": [
@@ -15391,6 +15657,7 @@
     16,
     1
    ],
+   "parallel_extent": 16,
    "flops": 135135232,
    "bytes": 4194312,
    "args": [
@@ -15444,6 +15711,7 @@
     16,
     1
    ],
+   "parallel_extent": 16,
    "flops": 135135232,
    "bytes": 4194312,
    "args": [
@@ -15497,6 +15765,7 @@
     16,
     1
    ],
+   "parallel_extent": 4,
    "flops": 33783808,
    "bytes": 1441800,
    "args": [
@@ -15550,6 +15819,7 @@
     16,
     1
    ],
+   "parallel_extent": 4,
    "flops": 33783808,
    "bytes": 1441800,
    "args": [
@@ -15603,6 +15873,7 @@
     16,
     1
    ],
+   "parallel_extent": 4,
    "flops": 33783808,
    "bytes": 1441800,
    "args": [
@@ -15656,6 +15927,7 @@
     16,
     1
    ],
+   "parallel_extent": 4,
    "flops": 33783808,
    "bytes": 1441800,
    "args": [
@@ -15709,6 +15981,7 @@
     1,
     1
    ],
+   "parallel_extent": 33,
    "flops": 116480,
    "bytes": 232968,
    "args": [
@@ -15757,6 +16030,7 @@
     1,
     1
    ],
+   "parallel_extent": 32,
    "flops": 114688,
    "bytes": 229384,
    "args": [
@@ -15805,6 +16079,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -15853,6 +16128,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -15901,6 +16177,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -15949,6 +16226,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -15997,6 +16275,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -16045,6 +16324,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -16093,6 +16373,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -16141,6 +16422,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -16189,6 +16471,7 @@
     1,
     1
    ],
+   "parallel_extent": 2,
    "flops": 7168,
    "bytes": 14344,
    "args": [
@@ -16237,6 +16520,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -16285,6 +16569,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -16333,6 +16618,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -16381,6 +16667,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -16429,6 +16716,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -16477,6 +16765,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -16525,6 +16814,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -16573,6 +16863,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -16621,6 +16912,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -16669,6 +16961,7 @@
     1,
     1
    ],
+   "parallel_extent": 2,
    "flops": 7168,
    "bytes": 14344,
    "args": [
@@ -16717,6 +17010,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -16765,6 +17059,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -16813,6 +17108,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -16861,6 +17157,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -16909,6 +17206,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -16957,6 +17255,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -17005,6 +17304,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -17053,6 +17353,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -17101,6 +17402,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -17149,6 +17451,7 @@
     1,
     1
    ],
+   "parallel_extent": 2,
    "flops": 7168,
    "bytes": 14344,
    "args": [
@@ -17197,6 +17500,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -17245,6 +17549,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -17293,6 +17598,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -17341,6 +17647,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -17389,6 +17696,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -17437,6 +17745,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -17485,6 +17794,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -17533,6 +17843,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -17581,6 +17892,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -17629,6 +17941,7 @@
     1,
     1
    ],
+   "parallel_extent": 2,
    "flops": 7168,
    "bytes": 14344,
    "args": [
@@ -17677,6 +17990,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -17725,6 +18039,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [
@@ -17773,6 +18088,7 @@
     1,
     1
    ],
+   "parallel_extent": 1,
    "flops": 1792,
    "bytes": 3592,
    "args": [

@@ -1,6 +1,8 @@
-# Building a Deep-Learning Compiler from Scratch: What Worked, What Didn't, and the Redesign
+# Building a Deep-Learning Compiler from Scratch, Twice
 
-*Draft. A retrospective on MiniDLC v1 and on the audit that reshaped it into v2.*
+*Draft for publication. A retrospective on MiniDLC: a v1 that looked finished and was not, the audit that showed it,
+and the v2 that compiles a whole training step — forward, backward and optimizer — to native CPU code and to PTX.
+Every number here comes from a script in the repository; [`docs/perf-report.md`](perf-report.md) has the details.*
 
 ---
 
@@ -8,87 +10,94 @@
 
 Frameworks make training look effortless: write a model, call `.backward()`, and the runtime does the rest. Production
 compilers such as XLA, TVM and `torch.compile` are large enough that the computer science inside them is hard to see.
-MiniDLC is a learning project that builds the whole stack once — Python frontend, SSA graph IR, autodiff, optimization
-passes, a loop-nest IR, code generation through LLVM, a runtime — with one rule: no PyTorch in the core.
+MiniDLC builds the whole stack once — a Python frontend, an SSA graph IR, automatic differentiation, optimization
+passes, a loop-nest IR, code generation through LLVM for x86-64 and NVIDIA GPUs, a runtime — with one rule: no
+PyTorch in the core. PyTorch appears only as the reference the results are checked against.
 
-## 2. Two levels of IR
+## 2. The first version, and the audit
 
-A tensor graph is the right place for whole-program rewrites: algebraic simplification, dead-code elimination, automatic
-differentiation, deciding which ops share a kernel, planning memory. It is the wrong place to talk about cache blocking,
-vector registers or GPU threads. A loop-nest IR is the opposite. MiniDLC therefore lowers each group of fused graph ops
-into a loop nest, and code generation works from the loops.
+v1 had all the boxes ticked: a tracing frontend, a C++ graph IR with passes, a loop IR with range analysis, LLVM and
+CUDA backends, a trained MNIST MLP and a small Transformer. A systematic audit — a sanitizer build, small programs
+aimed at each pass, re-measurement — found that the pieces did not add up:
 
-## 3. What worked
-
-- **Autodiff in the reference interpreter.** The NumPy interpreter implements reverse-mode autodiff for 18 ops,
-  including batched matmul, numerically stable cross-entropy, LayerNorm and an embedding scatter-add. Every VJP is
-  checked against float64 central finite differences, a seeded fuzzer differentiates random graphs, and contract tests
-  pin down NaN/Inf behaviour and overflow. It trains an MNIST MLP to 96.93% and a small character-level Transformer to
-  2.10 nats held-out cross-entropy on TinyShakespeare, below the 2.45-nat bigram baseline.
-- **LLVM IR by hand.** The MNIST training step runs on AVX2 kernels written directly in LLVM IR: `<8 x float>` vectors,
-  `llvm.fmuladd`, and `llvm.maximum` so that `relu(NaN)` stays NaN, as in PyTorch. Compiled at run time with Clang and
-  called through ctypes, they reach 96.88% test accuracy.
-- **Compiler infrastructure.** A C++ SSA graph IR with a builder, printer, parser and verifier; graph passes; a loop IR
-  with interval range analysis that proves accesses in bounds and peels vector remainders; and `dlc-opt`, which prints
-  the IR after every pass.
-
-## 4. What the audit found
-
-v1 was marked complete after its six milestones. A systematic review — a sanitizer build, small programs aimed at
-each pass, re-measurement — showed otherwise.
-
-- **The two halves never met.** The Python frontend and the C++ compiler did not talk to each other.
-  `dl.compile(target="cpu")` ran the hand-written kernels for a fixed two-layer ReLU MLP whatever the model was: given a
-  GELU network, a network with scaled logits, or a three-layer network, it silently computed the fixed MLP.
+- **The two halves never met.** `dl.compile(target="cpu")` ran hand-written kernels for a fixed two-layer MLP whatever
+  the model was: given a GELU network or a three-layer one, it silently computed the fixed MLP.
 - **Code generation by template.** The loop IR could not say which GPU thread runs a loop, which memory a buffer lives
-  in, where a barrier goes, or where a bounds check is needed. So the backends recognised kernels by name and pasted
-  templates; a division kernel came out as an addition.
-- **Tests that could not fail.** The unit tests were built in Release mode, where `assert` compiles to nothing. Most
-  tests checked that a pass reported a change, not what it produced; the autodiff golden test checked only forward ops,
-  so it missed that the C++ ReLU gradient multiplied by the input instead of masking it.
-- **The wrong baselines.** The 2.27× "speedup over the interpreter" and the 2.77× "fusion speedup" were measured against
-  a NumPy linked to the netlib reference BLAS. With a standard NumPy the interpreter is 2.3× faster than the hand-written
-  kernels, and fusing the epilogue into the same GEMM changes nothing measurable at this size (1.00×).
-- **Memory planning at the wrong level.** Liveness was computed op by op, but a fused kernel runs several ops at once, so
-  its output was placed inside the weight matrix it was still reading. Running the C++ pipeline end to end on the
-  simplest fused layer gave errors of 4.7×10⁷.
+  in, or where a barrier goes, so the backends recognised kernels by name and pasted templates.
+- **Tests that could not fail.** Release builds compiled every `assert` away; most tests checked that a pass reported a
+  change, not what it produced. The C++ ReLU gradient multiplied by the input instead of masking it, unnoticed.
+- **The wrong baselines.** A claimed 2.77× fusion speedup had been measured against a NumPy linked to the netlib
+  reference BLAS; against a standard NumPy, fusing the epilogue into the same GEMM changed nothing measurable.
+- **Memory planning at the wrong level.** Liveness op by op placed a fused kernel's output inside the weight matrix it
+  was still reading: errors of 4.7×10⁷ on the simplest fused layer.
 
-## 5. Lessons
+The lessons became the rules for v2: connect the pipeline end to end first; a test that cannot fail is not a test; the
+IR must express every decision a backend needs; compare like with like; an analysis matters only when a
+transformation uses it.
 
-1. **Connect the pipeline end to end first,** even with trivial passes. A compiler whose output never runs cannot be
-   validated, and every later number inherits that.
-2. **A test that cannot fail is not a test.** Assertions must survive Release builds, tests must check outcomes, and
-   known bugs belong in the test suite — as disabled tests and expected failures — rather than in prose.
-3. **The IR must express every decision the backend needs.** Otherwise the backend makes those decisions itself, by
-   pattern matching.
-4. **Compare like with like, against standard baselines.** A fusion ablation must use the same kernel with and without
-   fusion; a speedup must be measured against a NumPy with an optimized BLAS.
-5. **An analysis matters only when a transformation uses it.** Bounds-check elimination without bounds checks is an
-   attribute in a printout.
+## 3. The v2 pipeline
 
-## 6. The v2 design
+- **A textual graph IR is the contract** between Python and C++. The NumPy reference interpreter executes the same
+  text, so every graph pass is checked by running the graph before and after it (translation validation).
+- **The training step is one graph.** Reverse-mode autodiff with activity analysis (no gradient for the input batch:
+  half the backward FLOPs of the MNIST step), then the Adam or SGD update appended as ops whose results take over the
+  parameters' buffers.
+- **Fusion and buffer assignment.** Elementwise ops merge; a matmul absorbs its epilogue — bias, ReLU, even the Adam
+  update of the weight it computes the gradient of. Buffer assignment works per fused kernel, keeps parameters and
+  optimizer state in a persistent region, updates them in place when that is provably safe, and a checker proves that
+  no two live buffers overlap.
+- **A loop IR that can express both targets.** Loops are serial, parallel, vectorized, unrolled, or bound to GPU blocks
+  and threads; buffers live in global, shared or register memory; barriers, warp shuffles, atomics and guards are
+  statements. Per-target schedules decide everything; the LLVM emitter only translates.
+- **Loop passes.** Range analysis proves accesses in bounds and deletes guards; a dependence check verifies every
+  parallel and vectorized loop; a simplifier propagates constants and hoists invariants. On the GPU, a warp probe
+  measures bank conflicts and coalescing, a padding pass removes the conflicts, partial tiles are versioned so that
+  interior blocks run without guards, and a resource check rejects launches the hardware could not run.
+- **One emitter, two targets.** x86-64 through LLVM's O3 pipeline and ORC LLJIT, with compiled code cached on disk; NVIDIA
+  GPUs through LLVM's NVPTX backend, which produces PTX without a GPU or a CUDA toolkit.
 
-- **The textual graph IR is the contract** between the Python frontend and the C++ compiler. Because the reference
-  interpreter executes the same text, every pass can be validated by running the graph before and after it.
-- **A loop IR that can express GPUs:** loops bound to blocks and threads, buffers in global, shared or register memory,
-  barriers, warp shuffles, atomics, and explicit guards for range analysis to delete. Each fused kernel gets a per-target
-  schedule; no backend decides anything on its own.
-- **One LLVM emitter, two targets:** x86-64 through ORC JIT, and NVIDIA GPUs through LLVM's NVPTX backend, which emits
-  PTX that the CUDA driver compiles at load time. PTX needs no GPU or CUDA toolkit to produce — Clang 23 on the
-  development laptop already turns a hand-written NVPTX kernel into `shfl.sync.down`, `bar.sync` and `max.NaN.f32`
-  instructions — so GPU code is generated and golden-tested locally and run on a Colab T4.
-- **Phases,** each ending in a tested state: truthful docs and real tests (P0, done) → IR and Python↔C++ bridge (P1, done) →
-  training graph in C++ (P2) → fusion and buffer assignment (P3) → CPU backend (P4) → GPU backend (P5) → Transformer
-  on both targets (P6) → measurements and write-up (P7).
+## 4. Results on the CPU
 
-## 7. Where things stand
+On a 4-core laptop (i7-8550U), the compiled MNIST training step (784-256-10, batch 128, Adam) takes **1.88 ms**,
+against 2.23 ms for PyTorch on the CPU and 6.1 ms for the NumPy interpreter; two epochs reach 96.9% test accuracy.
+Ablations of the same compiler: without fusion the step takes 1.6× longer, with run-time checks instead of
+range-analysis proofs 2.1×, and with untiled matmuls 22×. The first-layer GEMM reaches 56 GFLOP/s, about half of
+OpenBLAS (102): a single 4×16 register-tile schedule is not a tuned BLAS, and the report says so.
 
-The tests now fail when they should, and the frontend and the compiler share a textual IR. A traced model is exported
-as IR text; `dlc-opt` parses, verifies and optimizes it and prints it back; the reference interpreter runs the result.
-That makes translation validation cheap: every graph pass runs on 16 exported graphs — softmax regression, an MLP, a
-small Char-GPT, random DAGs — and must produce the same outputs in float64. The suite reproduces two known miscompiles
-end to end (CSE merging `0.1000001` with `0.1000002`, and `x * 0` changing a result type) as strict expected failures.
-Underneath are 55 unit tests with assertions in every build (including a parser fuzzer), 8 remaining known bugs
-recorded as disabled tests, lit tests checked by LLVM's FileCheck, gradient checks for all 18 ops, and CI with
-AddressSanitizer and UndefinedBehaviorSanitizer. The next step is the training graph in C++: backward primitives and
-correct VJPs (P2).
+The character-level Transformer (2 blocks, d_model 64, 4 heads) trains through the generated code to **1.93 nats**
+held-out on TinyShakespeare after 2,000 steps — PyTorch from the same weights on the same batches: 1.93; a bigram
+model: 2.48 — with a step of 11.1 ms against PyTorch's 14.3 ms. In float64, the reference's loss and every gradient
+match PyTorch's to 1e-7.
+
+## 5. The GPU without a GPU
+
+The development laptop has no NVIDIA GPU, so the GPU path was built to be checked without one:
+
+- **A lockstep interpreter** runs the GPU loop IR with SIMT semantics: branches split the active threads, a barrier
+  reached by part of a block is an error, shuffles must read active lanes, shared memory starts as NaN. A second audit
+  found the gap in this design: executing a block in lockstep hides a missing barrier, since every statement finishes
+  for all threads before the next. The interpreter now records every access and reports any two threads that touch an
+  element without a barrier between them, one of them writing — in shared memory between barriers, in global memory
+  across the whole launch.
+- **ptxas** assembles every kernel: the Char-GPT training step is 316 kernels with no register spills.
+- **Artifacts** — the plan as JSON plus the PTX — run on any NVIDIA GPU through a 400-line ctypes runtime, so a Colab T4
+  needs neither LLVM nor the compiler. The script checks the GPU's losses against the reference, trains, evaluates,
+  times kernels with CUDA events, and compares with PyTorch and cuBLAS on the same GPU.
+
+The bank-conflict pass is a small example of why analyses should drive transformations. The hand-written schedule
+padded the matmul's transposed shared tile from 64 to 65 words, the textbook fix. The pass measured each candidate
+pitch with the warp probe and chose 66: with 65, a warp's stores still collide two to a bank.
+
+## 6. How it is checked
+
+Translation validation of every graph pass; every VJP against float64 finite differences; every op through the
+generated code on every target against the reference, with odd shapes, NaN and Inf; a fuzzer that builds random
+models and trains them through the whole compiler against eager training in the reference; end-to-end tests nightly;
+AddressSanitizer and UndefinedBehaviorSanitizer in CI. Checkpoints written by one target resume on any other, which
+tests the runtime's state handling across all of them.
+
+## 7. What is left
+
+The run on a real GPU: until `examples/colab_gpu.py` has run on a T4, the GPU path is verified only by simulation and by
+ptxas, and the GPU numbers do not exist. Beyond that, the stretch goals: a CUDA-C emitter as a second GPU path,
+tensor cores through inline PTX, an autotuner for tile sizes.

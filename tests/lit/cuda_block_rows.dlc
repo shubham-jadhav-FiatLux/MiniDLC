@@ -1,0 +1,41 @@
+// Long rows on the GPU target. From 1024 elements on, a row gets a block of 256 threads instead of one warp. Each warp
+// reduces with five butterfly shuffles; lane 0 of each warp writes its result to a shared array of 8 partials; after a
+// barrier every thread combines the partials in warp order (all threads get the same value), and a second barrier
+// protects the array before the next reduction reuses it. Cross-entropy: thread 0 adds the row's share of the loss.
+// RUN: %dlc-opt --target=gpu --emit-loopir %s | FileCheck %s
+// RUN: %dlc-opt --target=gpu --print-gpu-report %s | FileCheck %s --check-prefix=GPU
+// RUN: %dlc-opt --target=gpu --emit-ptx %s | FileCheck %s --check-prefix=PTX
+
+// CHECK-LABEL: kernel @k0_softmax(%x: f32[3,1500], %0: f32[3,1500]) grid(3,1,1) block(256,1,1) {
+// CHECK:     alloc partials0: f32[8] shared
+// CHECK:           i64 l = ((t * 256) + tx);
+// CHECK:           if (l < 1500) {
+// CHECK:         m = max_nan(m, shfl_xor(m, 1));
+// CHECK-NEXT:    if ((tx % 32) == 0) {
+// CHECK-NEXT:      partials0[(tx / 32)] = m;
+// CHECK-NEXT:    }
+// CHECK-NEXT:    barrier;
+// CHECK-NEXT:    m = partials0[0];
+// CHECK-NEXT:    for w in 0..7 unroll {
+// CHECK-NEXT:      m = max_nan(m, partials0[(w + 1)]);
+// CHECK-NEXT:    }
+// CHECK-NEXT:    barrier;
+// CHECK-LABEL: kernel @k1_cross_entropy_rows(%x: f32[3,1500], %t: i32[3], %1: f32[]) grid(3,1,1) block(256,1,1) {
+// CHECK:         if (tx == 0) {
+// CHECK:             atomic_add(%1[0], (((log(s) + m) - %x[((bx * 1500) + target)]) * 0.333333333));
+
+// GPU: k0_softmax: {{.*}} grid (3, 1, 1), block (256, 1, 1)
+// GPU:     resources: 256 threads, 32 bytes of shared memory, 0 register words per thread
+// GPU:     shared store partials0  (tx / 32) {{.*}} 1-way worst
+// GPU:     global load  %x         ((o * 1500) + l) {{.*}} 4.0 sectors, 100% of fetched bytes used
+
+// PTX-LABEL: .entry k0_softmax(
+// PTX: .shared .align 16 .b8 k0_softmax_$_partials0[32];
+// PTX: shfl.sync.bfly.b32
+// PTX: bar.sync 0;
+
+func @f(%x: f32[3,1500], %t: i32[3]) -> (f32[3,1500], f32[]) {
+  %0 = softmax(%x) : f32[3,1500]
+  %1 = cross_entropy(%x, %t) : f32[]
+  return %0, %1
+}

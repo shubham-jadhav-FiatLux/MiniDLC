@@ -32,4 +32,8 @@ void optimizeModule(llvm::Module& module, llvm::TargetMachine& machine);
 
 std::string moduleText(const llvm::Module& module);
 
+// Identifies this build of the code generator (a version and the build time of the emitter), for the kernel cache:
+// rebuilding the emitter, or changing the O3 pipeline here, invalidates cached code.
+std::string codegenBuildId();
+
 } // namespace dlc::backends::llvm_emit

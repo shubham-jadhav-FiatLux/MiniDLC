@@ -58,3 +58,6 @@ ResumeProjectsToBuild.md
 
 # The compiled Python module, built by CMake into the package
 python/minidlc/_minidlc*.so
+
+# Output of examples/colab_gpu.py (send it for the perf report; not committed)
+gpu_run.json

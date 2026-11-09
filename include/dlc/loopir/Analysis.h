@@ -32,6 +32,10 @@ private:
 // A conservative interval of an integer expression. Values loaded from memory are unknown.
 Interval rangeOf(const ExprPtr& expr, const RangeEnv& env);
 
+// Narrows the range of `var OP constant` (either side) on the branch of an `if` that `taken` selects; false if that
+// branch cannot run.
+bool refineRange(RangeEnv& env, const ExprPtr& cond, bool taken);
+
 // Σ coeffs[var]·var + constant, when the expression is affine in its variables (div/mod/loads make it non-affine).
 struct Affine {
     std::map<std::string, int64_t> coeffs;

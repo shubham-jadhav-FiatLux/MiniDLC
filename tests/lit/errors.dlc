@@ -12,6 +12,7 @@
 // RUN: not %dlc-opt %S/Inputs/return_type_mismatch.dlc 2>&1 | FileCheck %s --check-prefix=RETURN
 // RUN: not %dlc-opt %S/Inputs/missing_return.dlc 2>&1 | FileCheck %s --check-prefix=NO-RETURN
 // RUN: not %dlc-opt %S/Inputs/duplicate_function.dlc 2>&1 | FileCheck %s --check-prefix=DUP-FUNC
+// RUN: not %dlc-opt --target=gpu --emit-loopir %S/Inputs/gpu_grid_too_large.dlc 2>&1 | FileCheck %s --check-prefix=GRID
 
 // UNDEF: error: 2:16: use of undefined value '%typo'
 // UNKNOWN-OP: error: 2:8: unknown op 'frobnicate'
@@ -29,3 +30,6 @@
 // NO-RETURN: error: input failed verification:
 // NO-RETURN: function has no 'return'
 // DUP-FUNC: error: 4:6: redefinition of function '@f'
+
+// The GPU resource check rejects launches the hardware cannot run, at compile time.
+// GRID: error: resource check: k0_matmul: grid.z = 70000 is outside [1, 65535]

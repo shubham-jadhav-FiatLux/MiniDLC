@@ -1,5 +1,6 @@
 // The compiled half of the minidlc package: compile(ir_text, target, options) -> Executable. The graph crosses the
 // boundary as IR text; NumPy arrays cross as borrowed buffers (inputs) and new arrays (outputs).
+#include "dlc/backends/llvm/KernelCache.h"
 #include "dlc/compiler/Compiler.h"
 #include "dlc/ir/Error.h"
 #include <cstring>
@@ -72,8 +73,10 @@ dlc::compiler::CompileOptions parseOptions(const std::string& target, nb::dict o
     dlc::compiler::CompileOptions opts;
     opts.target = target;
     if (options.contains("threads")) opts.threads = nb::cast<size_t>(options["threads"]);
+    if (options.contains("llvm_dumps")) opts.llvmDumps = nb::cast<bool>(options["llvm_dumps"]);
     if (options.contains("fuse")) opts.fuse = nb::cast<bool>(options["fuse"]);
     if (options.contains("check_all")) opts.lowering.checkEveryAccess = nb::cast<bool>(options["check_all"]);
+    if (options.contains("simplify")) opts.lowering.simplify = nb::cast<bool>(options["simplify"]);
     if (options.contains("matmul_schedule")) {
         std::string schedule = nb::cast<std::string>(options["matmul_schedule"]);
         if (schedule != "tiled" && schedule != "naive") throw nb::value_error("matmul_schedule must be 'tiled' or 'naive'");
@@ -106,6 +109,7 @@ nb::dict dumpsDict(const dlc::compiler::CompileDumps& dumps) {
     d["llvm_opt"] = dumps.llvmIROpt;
     d["cost"] = dumps.costReport;
     d["memory"] = dumps.memoryReport;
+    d["from_cache"] = dumps.fromCache;
     return d;
 }
 
@@ -184,8 +188,69 @@ NB_MODULE(_minidlc, m) {
         },
         nb::arg("ir"), nb::arg("target") = "cpu", nb::arg("options") = nb::dict(),
         "Compiles the first function of `ir` for `target` ('cpu', 'interp' or 'gpu-sim'). Options: optimizer ('adam' or 'sgd'), "
-        "lr, momentum, beta1, beta2, eps, threads; ablations: fuse (bool), check_all (bool), matmul_schedule "
-        "('tiled' or 'naive'). Returns (Executable, dumps).");
+        "lr, momentum, beta1, beta2, eps, threads; llvm_dumps (bool: keep the LLVM IR in the dumps); ablations: fuse "
+        "(bool), check_all (bool), matmul_schedule ('tiled' or 'naive'), simplify (bool). Returns (Executable, dumps).");
+
+    m.def(
+        "cache_info",
+        [] {
+            auto& cache = dlc::backends::llvm_emit::KernelCache::instance();
+            auto s = cache.stats();
+            nb::dict d;
+            d["enabled"] = cache.enabled();
+            d["directory"] = cache.directory();
+            d["hits"] = s.hits;
+            d["misses"] = s.misses;
+            d["entries"] = s.entries;
+            d["bytes"] = s.bytes;
+            return d;
+        },
+        "The kernel cache: its directory, this process's hits and misses, and the entries and bytes on disk.");
+    m.def("clear_cache", [] { dlc::backends::llvm_emit::KernelCache::instance().clear(); },
+          "Deletes every entry of the kernel cache.");
+    m.def("configure_cache", [] { dlc::backends::llvm_emit::KernelCache::instance().configure(); },
+          "Re-reads MINIDLC_CACHE and MINIDLC_CACHE_DIR.");
+
+    using dlc::compiler::CpuArtifact;
+    nb::class_<CpuArtifact>(m, "CpuArtifact")
+        .def_prop_ro("plan_json", [](const CpuArtifact& a) { return dlc::runtime::toJson(a.plan); })
+        .def_prop_ro("object", [](const CpuArtifact& a) { return nb::bytes(a.object.data(), a.object.size()); })
+        .def_prop_ro("kernel_names", [](const CpuArtifact& a) { return a.kernelNames; })
+        .def_prop_ro("triple", [](const CpuArtifact& a) { return a.triple; })
+        .def_prop_ro("cpu", [](const CpuArtifact& a) { return a.cpu; })
+        .def_prop_ro("features", [](const CpuArtifact& a) { return a.features; });
+
+    m.def(
+        "compile_cpu",
+        [](const std::string& ir, nb::dict options) {
+            dlc::compiler::CompileOptions opts = parseOptions("cpu", options);
+            dlc::compiler::CompileDumps dumps;
+            CpuArtifact artifact;
+            {
+                nb::gil_scoped_release release;
+                artifact = dlc::compiler::compileCpu(ir, opts, &dumps);
+            }
+            return nb::make_tuple(std::move(artifact), dumpsDict(dumps));
+        },
+        nb::arg("ir"), nb::arg("options") = nb::dict(),
+        "Compiles the first function of `ir` for this CPU into a CpuArtifact (plan JSON + object file) that can be "
+        "saved and loaded without recompiling: (CpuArtifact, dumps).");
+    m.def(
+        "load_cpu",
+        [](const std::string& planJson, nb::bytes object, const std::vector<std::string>& names, const std::string& triple,
+           const std::string& features, size_t threads) {
+            dlc::runtime::Plan plan = dlc::compiler::planFromJson(planJson);
+            std::string bytes(static_cast<const char*>(object.data()), object.size());
+            std::unique_ptr<Executable> exe;
+            {
+                nb::gil_scoped_release release;
+                exe = dlc::compiler::loadCpu(plan, bytes, names, triple, features, threads);
+            }
+            return exe;
+        },
+        nb::arg("plan_json"), nb::arg("object"), nb::arg("kernel_names"), nb::arg("triple"), nb::arg("features"),
+        nb::arg("threads") = 0,
+        "An Executable from a saved CPU artifact; raises ValueError if this CPU cannot run it.");
 
     using dlc::compiler::GpuArtifact;
     nb::class_<GpuArtifact>(m, "GpuArtifact")

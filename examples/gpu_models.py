@@ -49,3 +49,19 @@ def chargpt_graphs(vocab_size: int):
     xe = dl.placeholder((c["batch"], c["block"]), dtype="i32", name="x")
     ye = dl.placeholder((c["batch"], c["block"]), dtype="i32", name="y")
     return model, loss, optimizer, dl.cross_entropy(model(xe), ye)
+
+
+# GEMMs for the comparison with cuBLAS: the MNIST first layer with its fused epilogue, and a square 1024^3 product.
+GEMMS = {"gemm_layer": {"m": 128, "k": 784, "n": 256, "epilogue": True},
+         "gemm_1024": {"m": 1024, "k": 1024, "n": 1024, "epilogue": False}}
+
+
+def gemm_graph(name: str):
+    """relu(a @ b + bias) or a @ b, every operand a placeholder (the artifact carries no data)."""
+    g = GEMMS[name]
+    a = dl.placeholder((g["m"], g["k"]), name="a")
+    b = dl.placeholder((g["k"], g["n"]), name="b")
+    out = dl.matmul(a, b)
+    if g["epilogue"]:
+        out = dl.relu(out + dl.placeholder((g["n"],), name="bias"))
+    return out

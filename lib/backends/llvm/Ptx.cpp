@@ -1,5 +1,6 @@
 #include "dlc/backends/llvm/Ptx.h"
 #include "dlc/backends/llvm/Emitter.h"
+#include "dlc/backends/llvm/KernelCache.h"
 #include "dlc/ir/Error.h"
 #include <llvm/ADT/SmallString.h>
 #include <llvm/IR/LLVMContext.h>
@@ -23,7 +24,7 @@ void LLVMInitializeNVPTXAsmPrinter();
 
 namespace dlc::backends::llvm_emit {
 
-PtxModule compilePtx(const std::vector<loopir::Kernel>& kernels, const std::string& arch) {
+PtxModule compilePtx(const std::vector<loopir::Kernel>& kernels, const std::string& arch, bool keepIR) {
     static std::once_flag once;
     std::call_once(once, [] {
         LLVMInitializeNVPTXTargetInfo();
@@ -40,13 +41,25 @@ PtxModule compilePtx(const std::vector<loopir::Kernel>& kernels, const std::stri
                                     llvm::CodeGenOptLevel::Aggressive));
     if (!machine) throw IRError("PTX: no target machine for " + arch);
 
-    llvm::LLVMContext context;
-    auto module = emitGpuModule(kernels, context, *machine);
     PtxModule out;
     out.arch = arch;
-    out.emittedIR = moduleText(*module);
+    std::string content = triple.str() + "\n" + arch + "\n" __DATE__ " " __TIME__ "\n"; // and this file's build
+    for (const auto& k : kernels) content += loopir::toString(k);
+    KernelCache& cache = KernelCache::instance();
+    const std::string key = cache.key("ptx", content);
+    if (!keepIR) {
+        if (auto cached = cache.load(key)) {
+            out.ptx = std::move(*cached);
+            out.fromCache = true;
+            return out;
+        }
+    }
+
+    llvm::LLVMContext context;
+    auto module = emitGpuModule(kernels, context, *machine);
+    if (keepIR) out.emittedIR = moduleText(*module);
     optimizeModule(*module, *machine);
-    out.optimizedIR = moduleText(*module);
+    if (keepIR) out.optimizedIR = moduleText(*module);
 
     llvm::SmallString<0> ptx;
     llvm::raw_svector_ostream os(ptx);
@@ -56,6 +69,7 @@ PtxModule compilePtx(const std::vector<loopir::Kernel>& kernels, const std::stri
     }
     pm.run(*module);
     out.ptx = ptx.str().str();
+    cache.store(key, out.ptx);
     return out;
 }
 

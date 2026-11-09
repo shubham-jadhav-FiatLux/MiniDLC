@@ -152,7 +152,9 @@ kernel @k6_matmul_mul_sub(%x: f32[4,3], %11: f32[4,2], %weight: f32[3,2]) {
 On the MNIST layers the same schedule uses 4×16 tiles and a parallel outer loop. Then the loop passes run
 (`lib/loopir/Analysis.cpp`): range analysis proves every access above in bounds (`--print-loop-report`), indices
 read from memory (embedding ids, labels) get explicit guards, and a dependence check confirms that parallel iterations
-write disjoint elements and vectorized loops carry no dependence.
+write disjoint elements and vectorized loops carry no dependence. Last, simplification (`lib/loopir/Transforms.cpp`)
+propagates integer constants, folds divisions that the loop ranges decide, and hoists loop-invariant `let`s; this tiny
+kernel gives it nothing to do.
 
 ## 6. LLVM and the JIT
 
@@ -174,10 +176,13 @@ define void @k7_mul_sub(ptr nofree readonly captures(none) %0, i64 %1, i64 %2) {
 }
 ```
 
-ORC LLJIT compiles the module in-process. The runtime (`lib/runtime/Executable.cpp`) allocates the two regions,
+The optimized module is compiled to an object file, which ORC LLJIT links into the process. The object file is
+also written to the kernel cache, keyed by a hash of the loop IR and the host CPU: compiling the same step again loads
+it and skips LLVM (`minidlc.cache_info()`). The runtime (`lib/runtime/Executable.cpp`) allocates the two regions,
 copies the inputs into their slots, launches the kernels in order — splitting each parallel loop across a thread
 pool — and returns the loss; the parameters stay in the executable for the next step (`step.sync_params()` copies
-them back into the `nn.Parameter`s).
+them back into the `nn.Parameter`s; `step.save_checkpoint(path)` writes them and the optimizer state to a file any
+target can resume from).
 
 ## 7. The GPU path
 
@@ -187,9 +192,13 @@ them back into the `nn.Parameter`s).
 ```
 
 The GPU schedules bind loops to blocks and threads: matmuls stage tiles through shared memory with barriers, row
-kernels reduce across a warp with shuffles, scatters and the loss use atomics. The lockstep interpreter runs them on
-the host with SIMT semantics (`target="gpu-sim"`), and LLVM's NVPTX backend turns them into PTX. A GPU artifact — the
-plan as JSON plus the PTX — runs on any NVIDIA GPU through `minidlc/gpu.py` and the CUDA driver. See `docs/gpu.md`.
+kernels reduce across a warp with shuffles (and across a block's warps through shared memory, for long rows),
+scatters and the loss use atomics. GPU loop passes pad shared tiles against the bank conflicts a warp probe measures,
+version partial tiles so that interior blocks run without guards, and check each launch against the hardware's limits
+(`--print-gpu-report`). The lockstep interpreter runs the kernels on the host with SIMT semantics
+(`target="gpu-sim"`), detecting races that lockstep execution would otherwise hide, and LLVM's NVPTX backend turns
+them into PTX. A GPU artifact — the plan as JSON plus the PTX — runs on any NVIDIA GPU through `minidlc/gpu.py` and the
+CUDA driver. See `docs/gpu.md` and `docs/passes/gpu_passes.md`.
 
 ## 8. How it is checked
 
@@ -197,6 +206,10 @@ plan as JSON plus the PTX — runs on any NVIDIA GPU through `minidlc/gpu.py` an
 - Every VJP: float64 finite differences; whole-model gradients against PyTorch (`test_pytorch_crosscheck.py`).
 - Every op through the generated code, on `cpu`, `interp` and `gpu-sim`: differential tests against the reference,
   with odd shapes, broadcasting, empty dimensions, NaN and Inf.
-- Training: compiled trajectories against eager training in the reference interpreter and against PyTorch.
+- Training: compiled trajectories against eager training in the reference interpreter and against PyTorch; random
+  models from the pipeline fuzzer trained on every target against the reference; checkpoints resumed across targets.
+- End to end, nightly: MNIST accuracy on the test set, Char-GPT's held-out loss against the bigram baseline and
+  PyTorch.
 - The compiler's own invariants: the IR verifier after every pass, the buffer-assignment checker, the bounds and
-  dependence checks of every loop kernel, ASan/UBSan in CI.
+  dependence checks of every loop kernel, race detection on every simulated GPU launch, the GPU resource check,
+  ASan/UBSan in CI.

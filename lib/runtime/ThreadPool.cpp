@@ -1,4 +1,5 @@
 #include "dlc/runtime/ThreadPool.h"
+#include <exception>
 
 namespace dlc::runtime {
 
@@ -38,6 +39,23 @@ ThreadPool::~ThreadPool() {
     }
 }
 
+namespace {
+
+// Waits for every future, then rethrows the first exception (if any) — after `first`, the caller's own. A task must
+// not outlive the call: the tasks refer to the caller's function and stack.
+void waitAll(std::vector<std::future<void>>& futures, std::exception_ptr first = nullptr) {
+    for (auto& f : futures) {
+        try {
+            f.get();
+        } catch (...) {
+            if (!first) first = std::current_exception();
+        }
+    }
+    if (first) std::rethrow_exception(first);
+}
+
+} // namespace
+
 void ThreadPool::parallelFor(int64_t start, int64_t end, const std::function<void(int64_t)>& func) {
     if (start >= end) return;
     int64_t total = end - start;
@@ -63,10 +81,7 @@ void ThreadPool::parallelFor(int64_t start, int64_t end, const std::function<voi
             }
         }));
     }
-
-    for (auto& fut : futures) {
-        fut.get();
-    }
+    waitAll(futures);
 }
 
 void ThreadPool::parallelChunks(int64_t extent, const std::function<void(int64_t, int64_t)>& func) {
@@ -80,17 +95,22 @@ void ThreadPool::parallelChunks(int64_t extent, const std::function<void(int64_t
     int64_t base = extent / chunks;
     int64_t extra = extent % chunks;
     std::vector<std::future<void>> futures;
+    std::exception_ptr own;
     int64_t begin = 0;
     for (int64_t c = 0; c < chunks; ++c) {
         int64_t end = begin + base + (c < extra ? 1 : 0);
         if (c == chunks - 1) {
-            func(begin, end); // the calling thread takes the last chunk
+            try {
+                func(begin, end); // the calling thread takes the last chunk
+            } catch (...) {
+                own = std::current_exception();
+            }
         } else {
             futures.push_back(enqueue([begin, end, &func]() { func(begin, end); }));
         }
         begin = end;
     }
-    for (auto& f : futures) f.get();
+    waitAll(futures, own);
 }
 
 } // namespace dlc::runtime

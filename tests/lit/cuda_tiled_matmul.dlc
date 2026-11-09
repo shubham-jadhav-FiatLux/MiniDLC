@@ -1,14 +1,17 @@
 // The GPU schedule of a matmul with its epilogue: 64x64 output tiles per block of 16x16 threads, k in steps of 16
-// staged through shared memory (A transposed and padded to 65 columns), a 4x4 register tile per thread, barriers
-// around each stage. With M, N divisible by 64 and K by 16, bounds-check elimination removes every edge guard. The
-// NVPTX backend keeps the tile in registers (no .local) and turns the bound loops into %ctaid/%tid reads.
+// staged through shared memory, a 4x4 register tile per thread, barriers around each stage. The A tile is stored
+// transposed; unpadded (pitch 64), a warp's stores to it fall in two banks (16-way conflicts), and the padding pass
+// picks the smallest conflict-free pitch, 66. With M, N divisible by 64 and K by 16, bounds-check elimination removes
+// every edge guard; LICM moves `row` out of the column loop. The NVPTX backend keeps the tile in registers (no .local)
+// and turns the bound loops into %ctaid/%tid reads.
 // RUN: %dlc-opt --target=gpu --emit-loopir %s | FileCheck %s
 // RUN: %dlc-opt --target=gpu --print-loop-report %s | FileCheck %s --check-prefix=REPORT
+// RUN: %dlc-opt --target=gpu --print-gpu-report %s | FileCheck %s --check-prefix=GPU
 // RUN: %dlc-opt --target=gpu --emit-llvm %s | FileCheck %s --check-prefix=LLVM
 // RUN: %dlc-opt --target=gpu --emit-ptx %s | FileCheck %s --check-prefix=PTX
 
 // CHECK-LABEL: kernel @k0_matmul_add_relu(%a: f32[128,64], %b: f32[64,128], %c: f32[128], %2: f32[128,128]) grid(2,2,1) block(16,16,1) {
-// CHECK:   alloc As0: f32[16,65] shared
+// CHECK:   alloc As0: f32[16,66] shared
 // CHECK:   alloc Bs1: f32[16,64] shared
 // CHECK:   alloc acc2: f32[4,4] register
 // CHECK:   for by in 0..2 bind(blockIdx.y) {
@@ -16,16 +19,29 @@
 // CHECK:       for ty in 0..16 bind(threadIdx.y) {
 // CHECK:         for tx in 0..16 bind(threadIdx.x) {
 // CHECK:           for kt in 0..4 {
-// CHECK:             As0[(((e % 16) * 65) + (e / 16))] = %a[((ar * 64) + ak)];
+// CHECK:             As0[(((e % 16) * 66) + (e / 16))] = %a[((ar * 64) + ak)];
 // CHECK:             barrier;
+// CHECK:                 f32 a = As0[((kk * 66) + (ty + (i * 16)))];
 // CHECK:                   acc2[((i * 4) + j)] = fma(a, Bs1[((kk * 64) + (tx + (j * 16)))], acc2[((i * 4) + j)]);
 // CHECK:             barrier;
 // CHECK-NOT: if (
+// CHECK:           for i in 0..4 unroll {
+// CHECK-NEXT:        i64 row = ((by * 64) + (ty + (i * 16)));
+// CHECK-NEXT:        for j in 0..4 unroll {
 // CHECK:               %2[((row * 128) + col)] = v6;
 
 // REPORT: k0_matmul_add_relu: 12 accesses, 12 proven in bounds, 0 guarded, 4 guards eliminated; grid (2, 2, 1), block (16, 16, 1)
+// REPORT-NEXT: simplified: 0 constants propagated, 0 divisions folded, 1 invariant lets hoisted
 
-// LLVM: @k0_matmul_add_relu.As0 = internal addrspace(3) global [1040 x float] undef, align 16
+// GPU: resources: 256 threads, 8320 bytes of shared memory, 16 register words per thread
+// GPU-NEXT: padding: As0 rows 64 -> 66 words (bank conflicts 16-way -> 1-way)
+// GPU: global load  %a {{.*}} 4.0 sectors, 100% of fetched bytes used
+// GPU: shared store As0 {{.*}} 1-way worst
+// GPU: shared load  As0 {{.*}} 1-way worst
+// GPU: shared load  Bs1 {{.*}} 1-way worst
+// GPU: global store %2 {{.*}} 4.0 sectors, 100% of fetched bytes used
+
+// LLVM: @k0_matmul_add_relu.As0 = internal addrspace(3) global [1056 x float] undef, align 16
 // LLVM: define ptx_kernel void @k0_matmul_add_relu(ptr addrspace(1) noalias %a, ptr addrspace(1) noalias %b
 // LLVM: call i32 @llvm.nvvm.read.ptx.sreg.ctaid.y()
 // LLVM: call i32 @llvm.nvvm.read.ptx.sreg.tid.x()
@@ -34,7 +50,7 @@
 // PTX: .target sm_75
 // PTX: .visible .entry k0_matmul_add_relu(
 // PTX-NOT: .local
-// PTX: .shared .align 16 .b8 k0_matmul_add_relu_$_As0[4160];
+// PTX: .shared .align 16 .b8 k0_matmul_add_relu_$_As0[4224];
 // PTX: .shared .align 16 .b8 k0_matmul_add_relu_$_Bs1[4096];
 // PTX: mov.u32 {{.*}}, %ctaid.y;
 // PTX: st.shared.b32

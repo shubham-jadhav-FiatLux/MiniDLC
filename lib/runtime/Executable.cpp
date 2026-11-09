@@ -100,11 +100,13 @@ std::vector<HostTensor> Executable::run(const std::unordered_map<std::string, Te
         args.clear();
         for (const Slot& s : l.args) args.push_back(address(s));
         auto start = std::chrono::steady_clock::now();
+        runner_->beginLaunch(l.kernel);
         if (l.parallelExtent > 1) {
             pool_->parallelChunks(l.parallelExtent, [&](int64_t b, int64_t e) { runner_->run(l.kernel, args.data(), b, e); });
         } else {
             runner_->run(l.kernel, args.data(), 0, 1);
         }
+        runner_->endLaunch(l.kernel);
         if (profiling_) {
             double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
             for (auto& p : profile_) {

@@ -63,8 +63,9 @@ struct Plan {
     std::vector<Copy> copies;
 };
 
-// The plan as JSON, for runtimes outside this process (the CUDA runtime in python/minidlc/gpu.py): every field above;
-// slots as {"region": "persistent"|"transient", "offset", "bytes"}.
+// The plan as JSON, for runtimes outside this process (the CUDA runtime in python/minidlc/gpu.py) and for saved CPU
+// artifacts: every field above; slots as {"region": "persistent"|"transient", "offset", "bytes"}. The compiler reads
+// it back with compiler::planFromJson.
 std::string toJson(const Plan& plan);
 
 } // namespace dlc::runtime

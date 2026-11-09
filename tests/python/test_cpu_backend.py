@@ -112,6 +112,11 @@ MATMULS = {
     "4x4": ("%a: f32[2,2,5,7], %b: f32[2,2,7,6]", "", "f32[2,2,5,6]"),
     "large": ("%a: f32[130,70], %b: f32[70,33]", "", "f32[130,33]"),
     "large_tb": ("%a: f32[130,70], %b: f32[33,70]", "{transpose_b = 1}", "f32[130,33]"),
+    # Partial tiles in M and N with full tiles before them: the GPU schedule's versioned body (interior blocks
+    # unguarded, edge blocks guarded), and a k tail.
+    "partial_mn": ("%a: f32[130,70], %b: f32[70,97]", "", "f32[130,97]"),
+    "partial_mn_tab": ("%a: f32[70,130], %b: f32[97,70]", "{transpose_a = 1, transpose_b = 1}", "f32[130,97]"),
+    "partial_n_batched": ("%a: f32[2,64,16], %b: f32[2,16,80]", "", "f32[2,64,80]"),
 }
 
 
@@ -137,6 +142,10 @@ REDUCTIONS = {
     "max_rows": ("f32[6,10]", "reduce_max", "{axes = [-1]}", "f32[6]"),
     "max_columns": ("f32[6,10]", "reduce_max", "{axes = [0], keepdims = 1}", "f32[1,10]"),
     "large": ("f32[257,129]", "sum", "{axes = [1]}", "f32[257]"),
+    # Suffixes of 1024 or more: a block per output on the GPU, its warps combined through shared memory.
+    "long_rows": ("f32[3,2500]", "sum", "{axes = [1]}", "f32[3]"),
+    "long_max": ("f32[2,1100]", "reduce_max", "{axes = [1]}", "f32[2]"),
+    "long_suffix_mean": ("f32[2,3,700]", "mean", "{axes = [1, 2]}", "f32[2]"),
 }
 
 
@@ -154,6 +163,11 @@ ROWS = {
     "layernorm": ("%a: f32[3,4,10], %g: f32[10], %b: f32[10]", "  %0 = layernorm(%a, %g, %b)", "f32[3,4,10]"),
     "cross_entropy_2d": ("%a: f32[9,5], %t: i32[9]", "  %0 = cross_entropy(%a, %t)", "f32[]"),
     "cross_entropy_3d": ("%a: f32[2,3,5], %t: i32[2,3]", "  %0 = cross_entropy(%a, %t)", "f32[]"),
+    # Rows of 1024 or more: a block of 256 threads per row on the GPU.
+    "softmax_long": ("%a: f32[3,1500]", "  %0 = softmax(%a)", "f32[3,1500]"),
+    "log_softmax_long": ("%a: f32[2,1030]", "  %0 = log_softmax(%a)", "f32[2,1030]"),
+    "layernorm_long": ("%a: f32[2,2048], %g: f32[2048], %b: f32[2048]", "  %0 = layernorm(%a, %g, %b)", "f32[2,2048]"),
+    "cross_entropy_long": ("%a: f32[4,1100], %t: i32[4]", "  %0 = cross_entropy(%a, %t)", "f32[]"),
 }
 
 

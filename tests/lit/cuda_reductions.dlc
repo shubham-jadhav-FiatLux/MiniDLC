@@ -9,11 +9,11 @@
 // CHECK:       for t in 0..4 {
 // CHECK:         i64 l = ((t * 32) + tx);
 // CHECK:         if (l < 100) {
-// CHECK:           m = max_nan(m, %x[(((o * 100) + l) + q)]);
+// CHECK:           m = max_nan(m, %x[((o * 100) + l)]);
 // CHECK:       m = max_nan(m, shfl_xor(m, 16));
 // CHECK:       m = max_nan(m, shfl_xor(m, 1));
 // CHECK:       s = (s + shfl_xor(s, 16));
-// CHECK:           %0[(((o * 100) + l) + q)] = (exp((%x[(((o * 100) + l) + q)] - m)) / s);
+// CHECK:           %0[((o * 100) + l)] = (exp((%x[((o * 100) + l)] - m)) / s);
 // CHECK-LABEL: kernel @k1_sum(%x: f32[37,100], %1: f32[37]) grid(37,1,1) block(32,1,1) {
 // CHECK:       acc = (acc + shfl_xor(acc, 16));
 // CHECK:       if (tx == 0) {

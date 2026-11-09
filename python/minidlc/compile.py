@@ -7,6 +7,9 @@ from .tensor import Tensor
 from .optim import Optimizer, Adam, SGD
 from .reference import ReferenceInterpreter
 from .llvm_engine import LLVMCPUEngine
+from . import checkpoint
+
+_NP_DTYPES = {"f32": np.float32, "i32": np.int32}
 
 class AlignedArena:
     """Contiguous memory arena with 64-byte alignment for AVX2 execution."""
@@ -47,7 +50,13 @@ def compile(
       other models get wrong results).
 
     `options` passes compiler switches for ablations: {"fuse": False} (a kernel per op), {"check_all": True} (run-time
-    bounds checks on every access instead of proofs), {"matmul_schedule": "naive"} (untiled CPU matmuls).
+    bounds checks on every access instead of proofs), {"matmul_schedule": "naive"} (untiled CPU matmuls),
+    {"simplify": False} (no loop simplification); and
+    {"llvm_dumps": True} keeps the LLVM IR in `.dumps` (compiled code otherwise comes from the kernel cache when it
+    can: minidlc.cache_info()).
+
+    Every target's result has `save_checkpoint(path)` and `load_checkpoint(path)`: parameters and optimizer state in
+    a .npz file that any target can load (minidlc/checkpoint.py).
     """
     if target in ("cpu", "interp", "gpu-sim", "cuda"):
         return CompiledFunction(loss, optimizer, target, profile=profile, threads=threads, options=options)
@@ -86,6 +95,38 @@ def compile(
 
             return loss_val
 
+        # Checkpoints under the compiled step's argument names (computed on first use).
+        names_cache: Dict[str, Any] = {}
+
+        def arg_names():
+            if not names_cache:
+                function, _, param_tensors, _ = _export(loss, optimizer)
+                names_cache.update(function=function.name, params=param_tensors,
+                                   ids={id(t): n for n, t in param_tensors.items()})
+            return names_cache
+
+        def expected_arrays():
+            names = arg_names()
+            arrays = {n: t.data.astype(np.float32) for n, t in names["params"].items()}
+            if optimizer is not None:
+                arrays.update(optimizer.state_arrays(names["ids"]))
+            return arrays
+
+        def save_checkpoint(path: str) -> None:
+            checkpoint.save(path, expected_arrays(), "reference", arg_names()["function"])
+
+        def load_checkpoint(path: str, strict: bool = True) -> None:
+            arrays, _ = checkpoint.load(path)
+            expected = {n: (np.shape(a), np.asarray(a).dtype) for n, a in expected_arrays().items()}
+            checkpoint.check(arrays, expected, path, strict)
+            names = arg_names()
+            for n, t in names["params"].items():
+                t.data[...] = arrays[n]
+            if optimizer is not None:
+                optimizer.load_state_arrays(arrays, names["ids"])
+
+        setattr(step_fn, "save_checkpoint", save_checkpoint)
+        setattr(step_fn, "load_checkpoint", load_checkpoint)
         return step_fn
 
     elif target == "handwritten":
@@ -400,6 +441,7 @@ class CompiledFunction:
     def __init__(self, outputs, optimizer: Optional[Optimizer], target: str, profile: bool = False, threads: int = 0,
                  options: Optional[Dict[str, Any]] = None):
         _minidlc = _compiler_module(target)
+        self.target = target
         self.function, self.training, self._params, self._inputs = _export(outputs, optimizer)
         options = {**_optimizer_options(optimizer), "threads": threads, **(options or {})}
         if target == "cuda":
@@ -426,6 +468,27 @@ class CompiledFunction:
         """Copies the executable's parameters back into the nn.Parameters."""
         for name, tensor in self._params.items():
             tensor.data[...] = self.executable.get(name)
+
+    def _stored_args(self) -> Dict[str, Tuple[tuple, Any]]:
+        """The parameter and state arguments: name → (shape, dtype)."""
+        args = self.executable.plan["args"] if self.target == "cuda" else self.executable.info["args"]
+        return {a["name"]: (tuple(a["shape"]), _NP_DTYPES[a["dtype"]]) for a in args if a["role"] in ("param", "state")}
+
+    def save_checkpoint(self, path: str) -> None:
+        """Writes the parameters and the optimizer state to `path` (a .npz file; see minidlc/checkpoint.py)."""
+        arrays = {name: self.executable.get(name) for name in self._stored_args()}
+        checkpoint.save(path, arrays, self.target, self.function.name)
+
+    def load_checkpoint(self, path: str, strict: bool = True) -> None:
+        """Restores parameters and optimizer state from a checkpoint written by any target, and copies the parameters
+        into the nn.Parameters. Every parameter and state argument of the step must be in the file with its shape and
+        dtype; with `strict`, nothing else may be."""
+        arrays, _ = checkpoint.load(path)
+        expected = self._stored_args()
+        checkpoint.check(arrays, expected, path, strict)
+        for name, (_, dtype) in expected.items():
+            self.executable.set(name, np.ascontiguousarray(arrays[name], dtype=dtype))
+        self.sync_params()
 
     def get_profile(self) -> List[Dict[str, Any]]:
         return self.executable.profile()
@@ -479,6 +542,11 @@ def _values(function) -> Dict[str, np.ndarray]:
             for name, value in function.bindings.items()}
 
 
+def loop_ir_hash(loop_ir: str) -> str:
+    import hashlib
+    return hashlib.sha256(loop_ir.encode()).hexdigest()
+
+
 def _gpu_artifact(_minidlc, function, options, inputs, training, ptx=True, arch="sm_75"):
     from . import gpu
     compiled, dumps = _minidlc.compile_gpu(function.to_text(), options, ptx, arch)
@@ -486,7 +554,7 @@ def _gpu_artifact(_minidlc, function, options, inputs, training, ptx=True, arch=
         plan=json.loads(compiled.plan_json), ptx=compiled.ptx, arch=arch,
         inputs={name: [arg, "i32" if dtype == np.int32 else "f32"] for name, (arg, dtype) in inputs.items()},
         values=_values(function), training=training, source=function.to_text(), options=dict(options),
-        compiled=compiled)
+        loop_ir_sha256=loop_ir_hash(dumps["loopir"]), compiled=compiled)
     return artifact, dumps
 
 
@@ -504,6 +572,29 @@ def compile_gpu(loss: Tensor, optimizer: Optional[Optimizer] = None, arch: str =
     _minidlc = _compiler_module("cuda")
     function, training, param_tensors, inputs = _export(loss, optimizer)
     artifact, _ = _gpu_artifact(_minidlc, function, _optimizer_options(optimizer), inputs, training, ptx, arch)
+    numbering = parameters if parameters is not None else (optimizer.parameters if optimizer is not None else [])
+    index = {id(t): i for i, t in enumerate(numbering)}
+    artifact.params = {arg: index[id(t)] for arg, t in param_tensors.items() if id(t) in index}
+    if not include_params:
+        artifact.values = {arg: v for arg, v in artifact.values.items() if arg not in artifact.params}
+    return artifact
+
+
+def compile_cpu(loss: Tensor, optimizer: Optional[Optimizer] = None, parameters: Optional[List[Tensor]] = None,
+                include_params: bool = True, options: Optional[Dict[str, Any]] = None):
+    """Compiles the graph that computes `loss` (a training step with an optimizer) for this CPU and returns a
+    `minidlc.cpu.CpuArtifact`: the plan, an object file of the kernels, the initial values and the input names.
+    `save()` it and run it later, or on another machine with a compatible CPU, with `minidlc.cpu.load` — no
+    recompilation. `parameters` and `include_params` work as in `compile_gpu`."""
+    from . import cpu
+    _minidlc = _compiler_module("cpu")
+    function, training, param_tensors, inputs = _export(loss, optimizer)
+    compiled, _ = _minidlc.compile_cpu(function.to_text(), {**_optimizer_options(optimizer), **(options or {})})
+    artifact = cpu.CpuArtifact(
+        plan=json.loads(compiled.plan_json), object=compiled.object, kernel_names=list(compiled.kernel_names),
+        triple=compiled.triple, cpu=compiled.cpu, features=compiled.features,
+        inputs={name: [arg, "i32" if dtype == np.int32 else "f32"] for name, (arg, dtype) in inputs.items()},
+        values=_values(function), training=training)
     numbering = parameters if parameters is not None else (optimizer.parameters if optimizer is not None else [])
     index = {id(t): i for i, t in enumerate(numbering)}
     artifact.params = {arg: index[id(t)] for arg, t in param_tensors.items() if id(t) in index}

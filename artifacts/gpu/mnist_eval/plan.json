@@ -107,6 +107,7 @@
     16,
     1
    ],
+   "parallel_extent": 64,
    "flops": 401920000,
    "bytes": 4963840,
    "args": [
@@ -145,6 +146,7 @@
     16,
     1
    ],
+   "parallel_extent": 16,
    "flops": 5130000,
    "bytes": 1074280,
    "args": [

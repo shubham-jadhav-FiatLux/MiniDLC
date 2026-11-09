@@ -1,0 +1,37 @@
+// Partial tiles on the GPU. M = 130 and N = 97 are not multiples of 64, K = 70 not of 16: the matmul body is
+// versioned on the block index, so that interior blocks (by < 2, bx < 1) run a copy whose row and column guards range
+// analysis proves true and deletes, while edge blocks keep them; and the k loop runs over the four full tiles before
+// one guarded partial tile (k0 = 64), so the main loop has no k guards either. The conditions are uniform across a
+// block, so the barriers in each copy are reached by all its threads.
+// RUN: %dlc-opt --target=gpu --emit-loopir %s | FileCheck %s
+// RUN: %dlc-opt --target=gpu --print-loop-report %s | FileCheck %s --check-prefix=REPORT
+
+// CHECK-LABEL: kernel @k0_matmul(%a: f32[130,70], %b: f32[70,97], %0: f32[130,97]) grid(2,3,1) block(16,16,1) {
+// CHECK:          if (by < 2) {
+// CHECK-NEXT:       if (bx < 1) {
+// The interior copy: no guards in the main k loop, then the partial k tile with its k guards only.
+// CHECK:                for kt in 0..4 {
+// CHECK-NOT:              if (
+// CHECK:                  As0[(((e % 16) * 66) + (e / 16))] = %a[((ar * 70) + ak)];
+// CHECK-NOT:              if (
+// CHECK:                  Bs1[e] = %b[((bk * 97) + bc)];
+// CHECK:                i64 kt = 4;
+// CHECK:                  if (ak < 70) {
+// CHECK:                  if (bk < 70) {
+// CHECK:                for i in 0..4 unroll {
+// CHECK-NOT:              if (
+// CHECK:                      %0[((row * 97) + col)] = acc{{[0-9]+}};
+// The edge copies keep their row and column guards.
+// CHECK:              } else {
+// CHECK:                  if (bc < 97) {
+// CHECK:                      if (col < 97) {
+// CHECK:            } else {
+// CHECK:                  if (ar < 130) {
+// CHECK:                    if (row < 130) {
+
+// REPORT: k0_matmul: 69 accesses, 69 proven in bounds, 0 guarded, 15 guards eliminated; grid (2, 3, 1), block (16, 16, 1)
+
+func @f(%a: f32[130,70], %b: f32[70,97]) -> f32[130,97] {
+  %0 = matmul(%a, %b) : f32[130,97]
+  return %0
+}

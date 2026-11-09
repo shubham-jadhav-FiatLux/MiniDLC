@@ -3,6 +3,8 @@
 #include "dlc/ir/Error.h"
 #include "dlc/ir/Parser.h"
 #include "dlc/loopir/Analysis.h"
+#include "dlc/loopir/GpuPasses.h"
+#include "dlc/loopir/Transforms.h"
 #include "dlc/loopir/Interpreter.h"
 #include "dlc/loopir/LoopIR.h"
 #include <gtest/gtest.h>
@@ -251,6 +253,256 @@ TEST(GpuInterpreter, RejectsDivergentBarriersAndShufflesOfInactiveLanes) {
     EXPECT_THROW(launch(g, inactive, a, out), IRError);
 }
 
+// Lockstep execution hides missing barriers: every statement finishes for all threads before the next. The race
+// check catches them: thread t reads the element thread t+1 wrote, with and without a barrier between.
+TEST(GpuInterpreter, DetectsAMissingBarrier) {
+    for (bool withBarrier : {true, false}) {
+        GpuKernel g = oneBlock(64);
+        int tile = g.k.addBuffer({"tile", ScalarType::F32, {64}, MemScope::Shared});
+        Body body = {store(tile, i64("tx"), load(g.a, i64("tx"), ScalarType::F32))};
+        if (withBarrier) body.push_back(barrier());
+        body.push_back(store(g.out, i64("tx"), load(tile, rem(add(i64("tx"), intConst(1)), intConst(64)), ScalarType::F32)));
+        std::vector<float> a(64), out(64);
+        for (int i = 0; i < 64; ++i) a[i] = static_cast<float>(i);
+        if (withBarrier) {
+            launch(g, body, a, out);
+            for (int i = 0; i < 64; ++i) EXPECT_EQ(out[i], static_cast<float>((i + 1) % 64));
+        } else {
+            try {
+                launch(g, body, a, out);
+                FAIL() << "a read of another thread's write with no barrier between must be rejected";
+            } catch (const IRError& e) {
+                EXPECT_NE(std::string(e.what()).find("race"), std::string::npos) << e.what();
+                EXPECT_NE(std::string(e.what()).find("tile["), std::string::npos) << e.what();
+            }
+        }
+    }
+}
+
+// A tile overwritten while other threads may still be reading it (the second barrier of a tiled loop forgotten).
+TEST(GpuInterpreter, DetectsAWriteAfterReadWithoutABarrier) {
+    GpuKernel g = oneBlock(32);
+    int tile = g.k.addBuffer({"tile", ScalarType::F32, {32}, MemScope::Shared});
+    Body body = {store(tile, i64("tx"), load(g.a, i64("tx"), ScalarType::F32)), barrier(),
+                 let("v", ScalarType::F32, load(tile, rem(add(i64("tx"), intConst(1)), intConst(32)), ScalarType::F32)),
+                 store(tile, i64("tx"), var("v", ScalarType::F32)), // no barrier since the neighbour's read
+                 barrier(), store(g.out, i64("tx"), load(tile, i64("tx"), ScalarType::F32))};
+    std::vector<float> a(32), out(32);
+    EXPECT_THROW(launch(g, body, a, out), IRError);
+}
+
+// Global memory: blocks of a launch are unordered. Two blocks writing one element is a race; atomic adds from every
+// block are not, but a block reading what another adds to is; a thread may read and then write its own element.
+TEST(GpuInterpreter, DetectsGlobalRacesBetweenBlocks) {
+    auto twoBlocks = [](Body body, bool split) {
+        loopir::Kernel k;
+        k.name = "blocks";
+        k.gpu = true;
+        k.grid = {2, 1, 1};
+        k.block = {32, 1, 1};
+        int a = k.addBuffer({"%a", ScalarType::F32, {64}, MemScope::Global});
+        int out = k.addBuffer({"%out", ScalarType::F32, {64}, MemScope::Global});
+        (void)a;
+        (void)out;
+        k.body = {boundLoop("bx", 2, BindAxis::BlockX, {boundLoop("tx", 32, BindAxis::ThreadX, std::move(body))})};
+        std::vector<float> av(64, 1.0f), ov(64, 0.0f);
+        if (!split) {
+            interpret(k, {av.data(), ov.data()});
+        } else { // the blocks in separate calls (chunks on different host threads), sharing the launch's check
+            GpuLaunchCheck check(k);
+            interpret(k, {av.data(), ov.data()}, 0, 1, &check);
+            interpret(k, {av.data(), ov.data()}, 1, 2, &check);
+        }
+        return ov;
+    };
+    ExprPtr i = add(mul(i64("bx"), intConst(32)), i64("tx"));
+    for (bool split : {false, true}) {
+        // Every block writes out[tx]: a write-write race between blocks.
+        EXPECT_THROW(twoBlocks({store(1, i64("tx"), floatConst(1.0))}, split), IRError) << split;
+        // Atomic adds from both blocks: allowed.
+        auto sums = twoBlocks({atomicAdd(1, i64("tx"), floatConst(1.0))}, split);
+        EXPECT_EQ(sums[0], 2.0f);
+        // One block adds to out[tx] while the other reads it: a race.
+        EXPECT_THROW(twoBlocks({ifThen(compare(CompareOp::EQ, i64("bx"), intConst(0)), {atomicAdd(1, i64("tx"), floatConst(1.0))},
+                                      {store(0, i, load(1, i64("tx"), ScalarType::F32))})},
+                               split),
+                     IRError);
+        // In place: each thread reads and updates its own element.
+        auto doubled = twoBlocks({store(0, i, mul(load(0, i, ScalarType::F32), floatConst(2.0))), store(1, i, floatConst(3.0))}, split);
+        EXPECT_EQ(doubled[63], 3.0f);
+    }
+    // Threads of one block: two threads writing one element.
+    GpuKernel g = oneBlock(32);
+    std::vector<float> a(32), out(32);
+    EXPECT_THROW(launch(g, {store(g.out, div(i64("tx"), intConst(2)), floatConst(1.0))}, a, out), IRError);
+}
+
+// --- Simplification ---
+
+// Constant propagation, division folding with range facts, and LICM, checked on the statements and on the results
+// (the interpreter runs the kernel before and after).
+TEST(Simplify, PropagatesFoldsAndHoists) {
+    loopir::Kernel k;
+    k.name = "simplify";
+    int a = k.addBuffer({"%a", ScalarType::F32, {6, 8}, MemScope::Global});
+    int out = k.addBuffer({"%out", ScalarType::F32, {6, 8}, MemScope::Global});
+    // for i in 0..6 { for j in 0..8 { let w = 8; let row = i * w; let q = j / 8; let scale = 2.0 * 3.0;
+    //   out[row + j + q] = a[row + j] * scale } }
+    Body inner = {let("w", ScalarType::I64, intConst(8)),
+                  let("row", ScalarType::I64, mul(i64("i"), var("w"))),
+                  let("q", ScalarType::I64, div(i64("j"), intConst(8))),
+                  let("scale", ScalarType::F32, mul(floatConst(2.0), floatConst(3.0))),
+                  store(out, add(add(var("row"), i64("j")), var("q")),
+                        mul(load(a, add(var("row"), i64("j")), ScalarType::F32), var("scale", ScalarType::F32)))};
+    k.body = {forLoop("i", 6, LoopKind::Serial, {forLoop("j", 8, LoopKind::Serial, inner)})};
+    std::vector<float> av(48), before(48), after(48);
+    for (int i = 0; i < 48; ++i) av[i] = static_cast<float>(i);
+    interpret(k, {av.data(), before.data()});
+
+    SimplifyReport r = simplify(k);
+    EXPECT_EQ(r.propagated, 1);   // w
+    EXPECT_EQ(r.folded, 1);       // j / 8 = 0 for j in [0, 8)
+    EXPECT_GE(r.hoisted, 2);      // row out of the j loop; scale out of both loops
+    interpret(k, {av.data(), after.data()});
+    EXPECT_EQ(before, after);
+    std::string text = toString(k);
+    EXPECT_EQ(text.find(" w "), std::string::npos) << text;
+    EXPECT_EQ(text.find("/ 8"), std::string::npos) << text;
+    // `row` now sits between the loops, `scale` before them.
+    size_t rowAt = text.find("i64 row"), jLoop = text.find("for j in"), scaleAt = text.find("f32 scale"), iLoop = text.find("for i in");
+    EXPECT_LT(rowAt, jLoop) << text;
+    EXPECT_LT(scaleAt, iLoop) << text;
+}
+
+// LICM leaves alone what it must: a Let that is later assigned (an accumulator re-initialized every iteration), a Let
+// that loads, and anything in a parallel or bound loop (the runtime and the GPU launch depend on their structure).
+TEST(Simplify, KeepsAccumulatorsLoadsAndParallelLoops) {
+    loopir::Kernel k;
+    k.name = "keep";
+    int a = k.addBuffer({"%a", ScalarType::F32, {4, 4}, MemScope::Global});
+    int out = k.addBuffer({"%out", ScalarType::F32, {4}, MemScope::Global});
+    Body row = {let("acc", ScalarType::F32, floatConst(0.0)),
+                let("first", ScalarType::F32, load(a, intConst(0), ScalarType::F32)),
+                let("c", ScalarType::F32, floatConst(1.5)),
+                forLoop("j", 4, LoopKind::Serial,
+                        {assign("acc", add(var("acc", ScalarType::F32), load(a, add(mul(i64("i"), intConst(4)), i64("j")), ScalarType::F32)))}),
+                store(out, i64("i"), add(add(var("acc", ScalarType::F32), var("first", ScalarType::F32)), var("c", ScalarType::F32)))};
+    k.body = {forLoop("i", 4, LoopKind::Parallel, row)};
+    SimplifyReport r = simplify(k);
+    EXPECT_EQ(r.hoisted, 0);
+    ASSERT_EQ(k.body.size(), 1u);
+    EXPECT_EQ(k.parallelExtent(), 4);
+}
+
+// A hoisted value runs even when its loop does not: an integer division in a loop that runs zero times (zero-size
+// dimensions) must stay inside, or it would divide by zero (an interpreter error, a SIGFPE on x86).
+TEST(Simplify, NeverHoistsATrapOutOfALoopThatDoesNotRun) {
+    loopir::Kernel k;
+    k.name = "empty";
+    int out = k.addBuffer({"%out", ScalarType::I32, {1}, MemScope::Global});
+    Body inner = {let("q", ScalarType::I64, div(intConst(10), var("z"))), store(out, intConst(0), cast(ScalarType::I32, var("q")))};
+    k.body = {let("z", ScalarType::I64, intConst(0)), forLoop("i", 0, LoopKind::Serial, inner)};
+    simplify(k);
+    std::vector<int32_t> o(1, 7);
+    EXPECT_NO_THROW(interpret(k, {o.data()})) << toString(k);
+    EXPECT_EQ(o[0], 7);
+    // Nor out of a loop that does run, unless the divisor is a nonzero constant.
+    loopir::Kernel h;
+    h.name = "divisions";
+    int a = h.addBuffer({"%a", ScalarType::I32, {4}, MemScope::Global});
+    h.body = {forLoop("j", 4, LoopKind::Serial,
+                      {let("byVar", ScalarType::I64, div(intConst(10), cast(ScalarType::I64, load(a, intConst(0), ScalarType::I32)))),
+                       let("byZero", ScalarType::I64, rem(intConst(10), mul(intConst(0), intConst(1)))),
+                       let("byThree", ScalarType::I64, div(intConst(10), intConst(3) )),
+                       let("w", ScalarType::I64, add(var("byVar"), add(var("byZero"), var("byThree")))),
+                       store(a, i64("j"), cast(ScalarType::I32, var("w")))})};
+    simplify(h);
+    std::string text = toString(h);
+    size_t loop = text.find("for j");
+    EXPECT_GT(text.find("i64 byVar"), loop) << text;  // loads: stays
+    EXPECT_GT(text.find("i64 byZero"), loop) << text; // division by zero: stays
+}
+
+// --- GPU passes ---
+
+TEST(GpuPasses, ResourceCheckRejectsWhatABlockCannotHave) {
+    GpuKernel g = oneBlock(256);
+    g.k.addBuffer({"big", ScalarType::F32, {64, 256}, MemScope::Shared}); // 64 KiB
+    g.k.body = {boundLoop("bx", 1, BindAxis::BlockX, {boundLoop("tx", 256, BindAxis::ThreadX, {})})};
+    EXPECT_THROW(checkResources(g.k), IRError);
+    GpuLimits roomy;
+    roomy.maxSharedBytes = 96 * 1024;
+    EXPECT_EQ(checkResources(g.k, roomy).sharedBytes, 64 * 1024);
+    GpuKernel h = oneBlock(2048);
+    EXPECT_THROW(checkResources(h.k), IRError);
+}
+
+// A 32x32 tile written row by row and read by columns (a transpose): with a pitch of 32 every lane of a column read
+// hits the same bank (32-way); the padding pass picks 33, conflict-free, and the kernel still transposes.
+TEST(GpuPasses, PaddingRemovesTheBankConflictsOfATransposedTile) {
+    GpuKernel g = oneBlock(32);
+    g.k.buffers[g.a].shape = {32, 32};
+    g.k.buffers[g.out].shape = {32, 32};
+    int tile = g.k.addBuffer({"T", ScalarType::F32, {32, 32}, MemScope::Shared});
+    Body body = {let("T_pitch", ScalarType::I64, intConst(32)),
+                 forLoop("r", 32, LoopKind::Serial,
+                         {store(tile, add(mul(var("r"), var("T_pitch")), i64("tx")), load(g.a, add(mul(var("r"), intConst(32)), i64("tx")), ScalarType::F32))}),
+                 barrier(),
+                 forLoop("c", 32, LoopKind::Serial,
+                         {store(g.out, add(mul(var("c"), intConst(32)), i64("tx")), load(tile, add(mul(i64("tx"), var("T_pitch")), var("c")), ScalarType::F32))})};
+    g.k.body = {boundLoop("bx", 1, BindAxis::BlockX, {boundLoop("tx", 32, BindAxis::ThreadX, body)})};
+    auto decisions = padSharedBuffers(g.k);
+    ASSERT_EQ(decisions.size(), 1u);
+    EXPECT_EQ(decisions[0].waysBefore, 32);
+    EXPECT_EQ(decisions[0].to, 33);
+    EXPECT_EQ(decisions[0].waysAfter, 1);
+    EXPECT_EQ(g.k.buffers[tile].shape, (Shape{32, 33}));
+    for (const AccessStats& s : analyzeAccesses(g.k)) {
+        if (g.k.buffers[s.buffer].scope == MemScope::Shared) {
+            EXPECT_EQ(s.maxWays, 1) << s.index;
+        }
+    }
+    std::vector<float> a(1024), out(1024);
+    for (int i = 0; i < 1024; ++i) a[i] = static_cast<float>(i);
+    interpret(g.k, {a.data(), out.data()});
+    for (int r = 0; r < 32; ++r) {
+        for (int c = 0; c < 32; ++c) EXPECT_EQ(out[c * 32 + r], a[r * 32 + c]);
+    }
+}
+
+// Coalescing: lanes reading consecutive words use every fetched byte; lanes 32 words apart fetch a sector each.
+TEST(GpuPasses, CoalescingStatisticsSeeStrides) {
+    GpuKernel g = oneBlock(32);
+    g.k.buffers[g.a].shape = {32 * 32};
+    Body body = {store(g.out, i64("tx"), add(load(g.a, i64("tx"), ScalarType::F32), load(g.a, mul(i64("tx"), intConst(32)), ScalarType::F32)))};
+    g.k.body = {boundLoop("bx", 1, BindAxis::BlockX, {boundLoop("tx", 32, BindAxis::ThreadX, body)})};
+    auto stats = analyzeAccesses(g.k);
+    ASSERT_EQ(stats.size(), 3u);
+    EXPECT_DOUBLE_EQ(stats[0].sectors, 4.0);
+    EXPECT_DOUBLE_EQ(stats[0].efficiency, 1.0);
+    EXPECT_DOUBLE_EQ(stats[1].sectors, 32.0);
+    EXPECT_DOUBLE_EQ(stats[1].efficiency, 0.125);
+    EXPECT_TRUE(stats[2].store);
+}
+
+// The plan survives JSON (CPU artifacts and the GPU runtime read it): parse(print(plan)) prints the same.
+TEST(PlanJson, RoundTrips) {
+    const char* ir = "func @f(%x: f32[8,5], %y: i32[8], %w: f32[5,3] {param}, %b: f32[3] {param}) -> f32[] {\n"
+                     "  %0 = matmul(%x, %w) : f32[8,3]\n  %1 = add(%0, %b) : f32[8,3]\n"
+                     "  %2 = cross_entropy(%1, %y) : f32[]\n  return %2\n}\n";
+    compiler::CompileOptions options;
+    options.optimizer = OptimizerConfig{};
+    options.optimizer->kind = OptimizerConfig::Kind::Adam;
+    for (const char* target : {"cpu", "gpu"}) {
+        runtime::Plan plan = std::string(target) == "cpu" ? compiler::compileCpu(ir, options).plan
+                                                          : compiler::compileGpu(ir, options, nullptr, false).plan;
+        std::string json = runtime::toJson(plan);
+        EXPECT_EQ(runtime::toJson(compiler::planFromJson(json)), json) << target;
+    }
+    EXPECT_THROW(compiler::planFromJson("{\"function\": 3}"), IRError);
+    EXPECT_THROW(compiler::planFromJson("not json"), IRError);
+}
+
 TEST(GpuSchedules, MatmulGuardsDisappearForDivisibleShapes) {
     auto lowered = [](const char* ir) {
         ModulePtr m = IRParser::parseModule(ir);
@@ -268,7 +520,7 @@ TEST(GpuSchedules, MatmulGuardsDisappearForDivisibleShapes) {
 
 TEST(CpuJit, CompiledKernelMatchesTheInterpreter) {
     std::vector<loopir::Kernel> kernels = {vectorAdd(1000)};
-    backends::llvm_emit::CpuJit jit(kernels);
+    backends::llvm_emit::CpuJit jit(kernels, /*keepIR=*/true);
     EXPECT_NE(jit.optimizedIR().find("<8 x float>"), std::string::npos) << "the vectorize(8) loop was not vectorized";
     std::vector<float> a(1000), b(1000), viaJit(1000), viaInterp(1000);
     for (int i = 0; i < 1000; ++i) {

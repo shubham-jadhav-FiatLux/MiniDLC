@@ -1,0 +1,21 @@
+{
+ "arch": "sm_75",
+ "inputs": {
+  "bias": [
+   "bias",
+   "f32"
+  ],
+  "b": [
+   "b",
+   "f32"
+  ],
+  "a": [
+   "a",
+   "f32"
+  ]
+ },
+ "training": false,
+ "params": {},
+ "options": {},
+ "loop_ir_sha256": "38cd5032f8f707af0420837de003806a630647490f061387138094c9979b28e5"
+}

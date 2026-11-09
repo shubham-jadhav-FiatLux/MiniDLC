@@ -363,3 +363,44 @@ pass, and re-measurement — found that v1 was not the integrated compiler the e
 - **Docs:** `docs/walkthrough.md` follows one training step through every stage with real output; the perf report is
   rewritten around these measurements.
 
+
+## P8 — Completion after a second audit (2026-11-04)
+
+A second audit compared the code with the design's every line. Two defects, and the parts of the design that P4–P7
+had left out:
+
+- **Races hid behind lockstep execution.** The GPU interpreter ran each block one statement at a time for all threads,
+  so a missing barrier produced exactly the barrier-correct results: `docs/gpu.md` claimed otherwise. It now tracks
+  every access — per shared element, the last writer and the readers since the last barrier; per global element, who
+  read, wrote and atomically added within the launch, merged across blocks (and across the host threads that run
+  them) by `GpuLaunchCheck` — and a conflicting pair that no barrier orders is an error. No schedule had a race; the
+  tests show a missing barrier, a write after another thread's read, and write-write races between blocks caught.
+- **The thread pool** returned from `parallelChunks` as soon as the caller's chunk threw, leaving workers running on a
+  destroyed function object; it now waits for every chunk, then rethrows.
+- **GPU loop passes.** A warp probe runs each warp of block 0 with symbolic memory and records every lane's index per
+  request. From it: bank-conflict analysis and **padding** — the matmul's transposed A tile is declared with a
+  variable pitch, and the pass picks 66 words (conflict-free; the hand-written 65 left 2-way conflicts, the unpadded 64
+  16-way) — and coalescing statistics (sectors per request). A **resource check** rejects launches the hardware cannot
+  run (e.g. a 70,000-batch matmul's grid.z). **Partial tiles** are versioned: the k loop splits off its last tile, and
+  interior blocks run a copy of the body whose guards bounds-check elimination deletes. Rows and reduced suffixes of
+  1024 or more get a **block**, whose warps combine through shared memory. `--print-gpu-report` shows all of it.
+- **Loop simplification** on both targets: constant propagation, division folding with range facts, LICM of pure
+  `let`s (never out of parallel or bound loops). Strength reduction stays with LLVM.
+- **Kernel cache:** the JIT now compiles to an object file and links it, so the object file can be cached, keyed by a
+  SHA-256 of the loop IR, the CPU and the code generator's build; PTX too. The Char-GPT step compiles in 0.09 s instead
+  of 4.4 s the second time.
+- **CPU artifacts**, the CPU half of the design's "plan + PTX or object code": `dl.compile_cpu` saves the plan (JSON,
+  now read back in C++ with `llvm::json`) and the object file; `minidlc.cpu.load` links it without compiling, and
+  refuses a host with another triple or without a CPU feature the code uses.
+- **Checkpoints** keyed by the compiled step's argument names, so a checkpoint from `cpu`, `gpu-sim`, the GPU runtime
+  or the reference interpreter resumes on any of them (the reference Adam now keeps β^t as running products, like the
+  compiled step).
+- **GPU measurements, prepared:** CUDA events in the runtime; `colab_gpu.py baselines` trains the same models in
+  PyTorch on the GPU and times MiniDLC's GEMM kernels against cuBLAS; artifacts carry a hash of their loop IR, and a
+  test fails when they fall behind the compiler.
+- **Testing:** a whole-pipeline fuzzer (24 seeds of random models — linear layers around the tile sizes, attention
+  blocks, 3-D reshapes, embeddings — trained on `cpu`, `gpu-sim` and `interp` against eager training in the reference);
+  end-to-end tests (MNIST ≥ 96.5% on all 10,000 test images: 96.92%; Char-GPT 1.9306 nats held-out vs PyTorch 1.9329
+  and bigram 2.4819) in a nightly workflow; ctest fails, instead of skipping, when the compiled module is missing.
+- **Examples:** MNIST is evaluated on all 10,000 test images (the last batch padded); Char-GPT trains the benchmark
+  configuration for 1,500 steps by default, so its samples look like the play.

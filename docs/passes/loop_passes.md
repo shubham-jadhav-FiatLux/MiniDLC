@@ -17,14 +17,27 @@ translates it.
 | Transpose, fill | Parallel outer loop, vectorized inner loop. |
 
 ## Loop passes
-Range analysis, bounds checking with guard insertion, bounds-check elimination and schedule verification; see
-[bounds_check_elim.md](bounds_check_elim.md) and the [IR spec](../ir-spec.md#5-loop-ir-v2).
+Per kernel, in order (`lowerFunction`): range analysis, bounds checking with guard insertion and bounds-check
+elimination ([bounds_check_elim.md](bounds_check_elim.md)); the dependence check of every parallel and vectorized loop;
+simplification — constant propagation, division folding with range facts, loop-invariant code motion
+([simplify.md](simplify.md)). GPU kernels add bank-conflict padding before and a resource check after
+([gpu_passes.md](gpu_passes.md)). See also the [IR spec](../ir-spec.md#5-loop-ir-v2).
 
 ## What LLVM does
-Index simplification as expressions are built is ours. Loop-invariant code motion and strength reduction are left to
-LLVM's O3 pipeline, as is the mechanical widening of `vectorize(8)` loops (loop vectorizer) and unrolled register tiles
-(SLP vectorizer) into `<8 x float>` instructions; `tests/lit/loopir_lowering.dlc` checks that the matmul tile becomes
-`llvm.fmuladd.v8f32`.
+Constant folding of index arithmetic as expressions are built, constant propagation, range-based division folding and
+LICM of `let`s are ours. Strength reduction of induction variables is left to LLVM's O3 pipeline (it would hide the
+affine indices our analyses read), as is the mechanical widening of `vectorize(8)` loops (loop vectorizer) and
+unrolled register tiles (SLP vectorizer) into `<8 x float>` instructions; `tests/lit/loopir_lowering.dlc` checks that
+the matmul tile becomes `llvm.fmuladd.v8f32`.
+
+## Compiled code and the kernel cache
+The emitter's module goes through O3 and code generation to an object file, which ORC LLJIT links into the process.
+The object file is cached on disk, keyed by a SHA-256 of the kernels' loop IR, the host CPU (triple, name, features),
+the LLVM version and the build of the code generator (`lib/backends/llvm/KernelCache.cpp`): compiling the Char-GPT
+training step takes 4.4 s the first time and 0.09 s from the cache. `MINIDLC_CACHE_DIR` moves it, `MINIDLC_CACHE=off`
+disables it, `minidlc.cache_info()` and `minidlc.clear_cache()` inspect and empty it. The same object file, saved with
+the plan by `dl.compile_cpu`, is a CPU artifact: `minidlc.cpu.load` links it later, or on another machine with the
+same triple and CPU features, without compiling.
 
 ## Status (P4)
 Differential tests (`tests/python/test_cpu_backend.py`) run every op through the schedules on shapes that are not

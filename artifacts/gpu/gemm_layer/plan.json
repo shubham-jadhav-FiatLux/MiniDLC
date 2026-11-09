@@ -1,0 +1,109 @@
+{
+ "function": "forward",
+ "persistent_bytes": 0,
+ "transient_bytes": 1336320,
+ "args": [
+  {
+   "name": "a",
+   "role": "input",
+   "dtype": "f32",
+   "shape": [
+    128,
+    784
+   ],
+   "slot": {
+    "region": "transient",
+    "offset": 802816,
+    "bytes": 401408
+   },
+   "init": null
+  },
+  {
+   "name": "b",
+   "role": "input",
+   "dtype": "f32",
+   "shape": [
+    784,
+    256
+   ],
+   "slot": {
+    "region": "transient",
+    "offset": 0,
+    "bytes": 802816
+   },
+   "init": null
+  },
+  {
+   "name": "bias",
+   "role": "input",
+   "dtype": "f32",
+   "shape": [
+    256
+   ],
+   "slot": {
+    "region": "transient",
+    "offset": 1335296,
+    "bytes": 1024
+   },
+   "init": null
+  }
+ ],
+ "results": [
+  {
+   "kind": "value",
+   "arg": "",
+   "dtype": "f32",
+   "shape": [
+    128,
+    256
+   ],
+   "slot": {
+    "region": "transient",
+    "offset": 1204224,
+    "bytes": 131072
+   }
+  }
+ ],
+ "launches": [
+  {
+   "kernel": 0,
+   "name": "k0_matmul_add_relu",
+   "grid": [
+    4,
+    2,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "parallel_extent": 8,
+   "flops": 51445760,
+   "bytes": 1336320,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 802816,
+     "bytes": 401408
+    },
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 802816
+    },
+    {
+     "region": "transient",
+     "offset": 1335296,
+     "bytes": 1024
+    },
+    {
+     "region": "transient",
+     "offset": 1204224,
+     "bytes": 131072
+    }
+   ]
+  }
+ ],
+ "copies": []
+}

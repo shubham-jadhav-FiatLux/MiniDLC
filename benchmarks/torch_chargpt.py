@@ -15,19 +15,26 @@ import torch.nn.functional as F
 
 
 class TorchCharGPT:
-    def __init__(self, model, dtype=torch.float32, threads: int = 0):
+    def __init__(self, model, dtype=torch.float32, threads: int = 0, device: str = "cpu"):
         if threads:
             torch.set_num_threads(threads)
         self.dtype = dtype
+        self.device = torch.device(device)
         self.layers = len(model.blocks)
         self.heads = model.blocks[0].attn.num_heads
         self.params: Dict[str, torch.Tensor] = {
-            name: torch.tensor(np.asarray(p.data), dtype=dtype, requires_grad=True) for name, p in model.named_parameters()}
-        self.mask = torch.tensor(np.asarray(_causal_mask(model.block_size)), dtype=dtype)
+            name: torch.tensor(np.asarray(p.data), dtype=dtype, device=self.device, requires_grad=True)
+            for name, p in model.named_parameters()}
+        self.mask = torch.tensor(np.asarray(_causal_mask(model.block_size)), dtype=dtype, device=self.device)
 
-    def logits(self, idx: np.ndarray) -> torch.Tensor:
+    def _ids(self, ids) -> torch.Tensor:
+        if isinstance(ids, torch.Tensor):  # already a tensor, perhaps on the GPU
+            return ids.to(device=self.device, dtype=torch.int64)
+        return torch.as_tensor(np.asarray(ids, dtype=np.int64), device=self.device)
+
+    def logits(self, idx) -> torch.Tensor:
         P = self.params
-        idx = torch.as_tensor(np.asarray(idx, dtype=np.int64))
+        idx = self._ids(idx)
         b, t = idx.shape
         x = P["token_emb.weight"][idx] + P["pos_emb.weight"][:t]
         for i in range(self.layers):
@@ -39,7 +46,8 @@ class TorchCharGPT:
 
     def loss(self, x: np.ndarray, y: np.ndarray) -> torch.Tensor:
         logits = self.logits(x)
-        return F.cross_entropy(logits.reshape(-1, logits.shape[-1]), torch.as_tensor(np.asarray(y, dtype=np.int64)).reshape(-1))
+        target = self._ids(y).reshape(-1)
+        return F.cross_entropy(logits.reshape(-1, logits.shape[-1]), target)
 
     def _ln(self, x, name):
         return F.layer_norm(x, x.shape[-1:], self.params[name + ".gamma"], self.params[name + ".beta"], eps=1e-5)

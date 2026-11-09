@@ -1,0 +1,90 @@
+{
+ "function": "forward",
+ "persistent_bytes": 0,
+ "transient_bytes": 12582912,
+ "args": [
+  {
+   "name": "a",
+   "role": "input",
+   "dtype": "f32",
+   "shape": [
+    1024,
+    1024
+   ],
+   "slot": {
+    "region": "transient",
+    "offset": 0,
+    "bytes": 4194304
+   },
+   "init": null
+  },
+  {
+   "name": "b",
+   "role": "input",
+   "dtype": "f32",
+   "shape": [
+    1024,
+    1024
+   ],
+   "slot": {
+    "region": "transient",
+    "offset": 4194304,
+    "bytes": 4194304
+   },
+   "init": null
+  }
+ ],
+ "results": [
+  {
+   "kind": "value",
+   "arg": "",
+   "dtype": "f32",
+   "shape": [
+    1024,
+    1024
+   ],
+   "slot": {
+    "region": "transient",
+    "offset": 8388608,
+    "bytes": 4194304
+   }
+  }
+ ],
+ "launches": [
+  {
+   "kernel": 0,
+   "name": "k0_matmul",
+   "grid": [
+    16,
+    16,
+    1
+   ],
+   "block": [
+    16,
+    16,
+    1
+   ],
+   "parallel_extent": 256,
+   "flops": 2147483648,
+   "bytes": 12582912,
+   "args": [
+    {
+     "region": "transient",
+     "offset": 0,
+     "bytes": 4194304
+    },
+    {
+     "region": "transient",
+     "offset": 4194304,
+     "bytes": 4194304
+    },
+    {
+     "region": "transient",
+     "offset": 8388608,
+     "bytes": 4194304
+    }
+   ]
+  }
+ ],
+ "copies": []
+}

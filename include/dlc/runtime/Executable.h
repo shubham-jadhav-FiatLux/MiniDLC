@@ -15,6 +15,9 @@ namespace dlc::runtime {
 class KernelRunner {
 public:
     virtual ~KernelRunner() = default;
+    // Around each launch, before its first and after its last call to run() (which may come from several threads).
+    virtual void beginLaunch(int /*kernel*/) {}
+    virtual void endLaunch(int /*kernel*/) {}
     virtual void run(int kernel, void** args, int64_t begin, int64_t end) = 0;
     virtual std::string name() const = 0;
 };

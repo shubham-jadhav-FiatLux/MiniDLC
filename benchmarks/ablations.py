@@ -6,7 +6,7 @@ interquartile range across repeats, and the load average is recorded before and 
 busy machine). All MiniDLC variants compute the same losses; the script checks that.
 
   - MNIST MLP training step (784-256-10, batch 128, Adam): MiniDLC, its ablations (no fusion; run-time bounds checks
-    on every access instead of proofs; untiled matmuls), thread scaling, and baselines: PyTorch CPU, the NumPy
+    on every access instead of proofs; no loop simplification; untiled matmuls), thread scaling, and baselines: PyTorch CPU, the NumPy
     reference interpreter (with the NumPy's BLAS), and v1's hand-written AVX2 kernels.
   - A GEMM ladder for the first layer (128x784 @ 784x256 + bias + ReLU): untiled vs register-tiled, 1 thread vs all,
     against OpenBLAS (NumPy) and PyTorch.
@@ -115,6 +115,7 @@ def mnist(table):
             run(f"MiniDLC cpu, {t} thread{'s' if t > 1 else ''}", threads=t)
     run("ablation: no fusion (a kernel per op)", options={"fuse": False})
     run("ablation: run-time checks on every access", options={"check_all": True})
+    run("ablation: no loop simplification", options={"simplify": False})
     run("ablation: untiled matmuls", options={"matmul_schedule": "naive"})
     run("ablation: untiled matmuls, 1 thread", options={"matmul_schedule": "naive"}, threads=1)
     reference = losses["MiniDLC cpu"]

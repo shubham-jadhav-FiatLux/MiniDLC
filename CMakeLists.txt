@@ -67,6 +67,8 @@ add_library(dlc_loopir
     lib/loopir/Lowering.cpp
     lib/loopir/Interpreter.cpp
     lib/loopir/Analysis.cpp
+    lib/loopir/GpuPasses.cpp
+    lib/loopir/Transforms.cpp
 )
 target_link_libraries(dlc_loopir PUBLIC dlc_passes)
 
@@ -90,6 +92,7 @@ add_library(dlc_llvm
     lib/backends/llvm/Emitter.cpp
     lib/backends/llvm/CpuJit.cpp
     lib/backends/llvm/Ptx.cpp
+    lib/backends/llvm/KernelCache.cpp
 )
 target_include_directories(dlc_llvm SYSTEM PUBLIC ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(dlc_llvm PUBLIC ${LLVM_DEFINITIONS})
@@ -184,8 +187,15 @@ if(DLC_BUILD_TESTS)
                     tests/python/test_translation_validation.py tests/python/test_training_graph.py
                     tests/python/test_cpu_backend.py tests/python/test_cpu_training.py
                     tests/python/test_gpu_backend.py tests/python/test_pytorch_crosscheck.py
+                    tests/python/test_runtime_features.py tests/python/test_pipeline_fuzzer.py
+                    tests/python/test_end_to_end.py
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-        set_tests_properties(python_compiler_tests PROPERTIES ENVIRONMENT "DLC_OPT=$<TARGET_FILE:dlc-opt>")
+        # When this build makes the _minidlc module, a missing module must fail the tests rather than skip them.
+        set(DLC_PYTHON_TEST_ENV "DLC_OPT=$<TARGET_FILE:dlc-opt>")
+        if(TARGET _minidlc)
+            list(APPEND DLC_PYTHON_TEST_ENV "MINIDLC_REQUIRE_COMPILED=1")
+        endif()
+        set_tests_properties(python_compiler_tests PROPERTIES ENVIRONMENT "${DLC_PYTHON_TEST_ENV}" TIMEOUT 1800)
     else()
         message(STATUS "Python compiler tests disabled: they need dlc-opt and a Python 3 with numpy and pytest")
     endif()

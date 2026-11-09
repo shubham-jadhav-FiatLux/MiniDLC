@@ -4,7 +4,7 @@ plan.json + kernels.ptx + values.npz + meta.json. A machine with an NVIDIA GPU r
 and needs only NumPy and the CUDA driver (no LLVM, no compiled module). The evaluation artifacts carry no weights:
 the runner gives them the training step's.
 
-    PYTHONPATH=python python3 examples/gpu_artifacts.py [mnist|chargpt|all] [--out=artifacts/gpu] [--arch=sm_75]
+    PYTHONPATH=python python3 examples/gpu_artifacts.py [mnist|chargpt|gemm|all] [--out=artifacts/gpu] [--arch=sm_75]
 """
 from __future__ import annotations
 
@@ -46,6 +46,10 @@ def main():
         params = model.parameters()
         save("chargpt_train", dl.compile_gpu(loss, optimizer, arch=arch), out)
         save("chargpt_eval", dl.compile_gpu(eval_loss, arch=arch, parameters=params, include_params=False), out)
+    if which in ("gemm", "all"):
+        print("GEMMs (against cuBLAS):")
+        for name in gpu_models.GEMMS:
+            save(name, dl.compile_gpu(gpu_models.gemm_graph(name), arch=arch), out)
     print(f"done in {time.time() - t0:.1f}s")
 
 

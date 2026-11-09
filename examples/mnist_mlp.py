@@ -86,10 +86,16 @@ def main():
     correct = 0
     total = 0
 
-    for xb, yb in dl.data.mnist_batches(ts_x, ts_y, batch_size=batch_size, shuffle=False):
-        preds = np.argmax(forward(xb), axis=-1)
+    # Every test image: the compiled function has a fixed batch, so the last partial batch is padded with zeros and
+    # only its real rows are scored.
+    for i in range(0, len(ts_x), batch_size):
+        xb, yb = ts_x[i:i + batch_size], ts_y[i:i + batch_size]
+        n = len(yb)
+        if n < batch_size:
+            xb = np.concatenate([xb, np.zeros((batch_size - n, xb.shape[1]), dtype=xb.dtype)])
+        preds = np.argmax(forward(xb), axis=-1)[:n]
         correct += int(np.sum(preds == yb))
-        total += len(yb)
+        total += n
 
     test_acc = 100.0 * correct / total
     print(f"Final Test Accuracy: {test_acc:.2f}% ({correct}/{total})")

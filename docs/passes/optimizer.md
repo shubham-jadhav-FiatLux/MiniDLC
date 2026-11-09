@@ -27,5 +27,8 @@ dlc-opt --passes="autodiff,adam{lr=0.001},canonicalize,cse,dce" model.dlc
 reference interpreter, feeding the donated results back, and matches eager training with `optim.Adam` / `optim.SGD`.
 
 ## Course link
-Graph construction; in-place updates through donation are the input-output aliasing of XLA and the buffer donation of
-JAX, and they are what [buffer assignment](mem_plan.md) relies on to keep parameters in a persistent region.
+CS6843 Program Analysis: the update is a transformation of the SSA function (one graph is one training step), and
+donation is an aliasing contract — the input-output aliasing of XLA, the buffer donation of JAX — that
+[buffer assignment](mem_plan.md) exploits to keep parameters in a persistent region and its checker verifies.
+ID5130 (floating point): Adam's bias correction keeps β₁ᵗ and β₂ᵗ as running products, the same state the reference
+optimizer and checkpoints carry.

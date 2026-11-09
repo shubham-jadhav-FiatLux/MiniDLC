@@ -19,14 +19,18 @@ struct CompileOptions {
     // Ablations (benchmarks/ablations.py): no fusion, run-time checks on every access, untiled matmuls.
     bool fuse{true};
     loopir::LoweringOptions lowering;
+    // Keep the LLVM IR (as emitted and after O3) in CompileDumps. It needs LLVM's pipeline to run, so the kernel
+    // cache (KernelCache.h) is not read.
+    bool llvmDumps{false};
 };
 
 // The compiler's intermediate forms, for inspection.
 struct CompileDumps {
     std::string graphIR;    // after the graph pipeline, annotated with fusion and buffers
     std::string loopIR;     // every loop kernel
-    std::string llvmIR;     // the emitted LLVM module (cpu)
-    std::string llvmIROpt;  // after LLVM's O3 pipeline (cpu)
+    std::string llvmIR;     // the emitted LLVM module (cpu, cuda; with CompileOptions::llvmDumps)
+    std::string llvmIROpt;  // after LLVM's O3 pipeline (with CompileOptions::llvmDumps)
+    bool fromCache{false};  // the machine code (cpu) or PTX (cuda) came from the kernel cache
     std::string costReport;
     std::string memoryReport;
 };
@@ -53,7 +57,28 @@ GpuArtifact compileGpu(const std::string& irText, const CompileOptions& options,
 // Runs kernel `kernel` of `artifact` (every block) with the lockstep GPU interpreter; `args` are its buffers.
 void simulateLaunch(const GpuArtifact& artifact, int kernel, const std::vector<void*>& args);
 
+// A compiled step for the host CPU that can be saved and run elsewhere without recompiling: the plan and an object
+// file of its kernels (python/minidlc/cpu.py saves and loads it). It runs on any machine with the same target triple
+// whose CPU has every feature the code was compiled for.
+struct CpuArtifact {
+    runtime::Plan plan;
+    std::string object;
+    std::vector<std::string> kernelNames; // in launch order
+    std::string triple, cpu, features;
+};
+
+CpuArtifact compileCpu(const std::string& irText, const CompileOptions& options, CompileDumps* dumps = nullptr);
+
+// An executable from a saved CPU artifact (IRError if this host cannot run it).
+std::unique_ptr<runtime::Executable> loadCpu(const runtime::Plan& plan, const std::string& object,
+                                             const std::vector<std::string>& kernelNames, const std::string& triple,
+                                             const std::string& features, size_t threads = 0);
+
+// The plan of runtime::toJson, read back (IRError if malformed).
+runtime::Plan planFromJson(const std::string& json);
+
 // Fuses, assigns buffers and lowers `func` as it is (no graph passes), for dumps: the loop kernels in launch order.
-std::vector<loopir::LoweredKernel> lowerForInspection(Function& func, loopir::Target target);
+std::vector<loopir::LoweredKernel> lowerForInspection(Function& func, loopir::Target target,
+                                                      const loopir::LoweringOptions& options = {});
 
 } // namespace dlc::compiler

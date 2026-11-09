@@ -70,6 +70,8 @@ public:
         return out_.kernel.addBuffer({fresh(base), type, std::move(shape), scope});
     }
 
+    const std::string& bufferName(int id) const { return out_.kernel.buffers[id].name; }
+
     ExprPtr loadValue(const Value* v, ExprPtr index) { return load(param(v), std::move(index), typeOf(v)); }
 
     std::string fresh(const std::string& base) { return base + std::to_string(counter_++); }
@@ -764,6 +766,9 @@ std::vector<LoweredKernel> lowerOther(const dlc::Kernel& k, const BufferAssignme
 
 constexpr int64_t kThreads = 256;
 constexpr int64_t kWarp = 32;
+// Rows (and reduced suffixes) at least this long get a block of kThreads threads instead of one warp: eight warps
+// reduce with shuffles, then combine their partial results through shared memory.
+constexpr int64_t kBlockRow = 1024;
 
 bool mentions(const ExprPtr& e, const std::string& name) {
     if (!e) return false;
@@ -822,6 +827,22 @@ void warpAllReduce(Body& body, const std::string& name, const std::function<Expr
     }
 }
 
+// Every thread of a block ends with the reduction of the block's values: a warp reduction, then lane 0 of each warp
+// writes its warp's result to `partials` (one element per warp), a barrier, every thread combines the partials in
+// warp order (so all threads hold the same value), and a barrier before `partials` is reused.
+void blockAllReduce(Body& body, const std::string& name, const std::function<ExprPtr(ExprPtr, ExprPtr)>& combine,
+                    int partials, int64_t threads) {
+    warpAllReduce(body, name, combine);
+    body.push_back(ifThen(compare(CompareOp::EQ, rem(var("tx"), intConst(kWarp)), intConst(0)),
+                          {store(partials, div(var("tx"), intConst(kWarp)), var(name, ScalarType::F32))}));
+    body.push_back(barrier());
+    body.push_back(assign(name, load(partials, intConst(0), ScalarType::F32)));
+    body.push_back(forLoop("w", threads / kWarp - 1, LoopKind::Unrolled,
+                           {assign(name, combine(var(name, ScalarType::F32),
+                                                 load(partials, add(var("w"), intConst(1)), ScalarType::F32)))}));
+    body.push_back(barrier());
+}
+
 int64_t gridFor(int64_t n, int64_t threads) { return std::max<int64_t>(1, ceilDiv(n, threads)); }
 
 std::vector<LoweredKernel> gpuElementwise(const dlc::Kernel& k, const BufferAssignment& ba, const SlotTracker& names) {
@@ -856,9 +877,17 @@ std::vector<LoweredKernel> gpuElementwise(const dlc::Kernel& k, const BufferAssi
 
 // C = op(A) op(B): 64x64 output tiles per block of 16x16 threads, k in steps of 16 staged in shared memory, a 4x4
 // register tile per thread. Thread (ty, tx) owns rows ty + 16i and columns tx + 16j of its tile, so a warp reads
-// consecutive words of the B tile, and the A tile is padded to 65 columns so its stores don't conflict on banks.
+// consecutive words of the B tile. The A tile is stored transposed (k-major); its row pitch is the variable
+// `<As>_pitch`, which the bank-conflict pass (padSharedBuffers) sets — the unpadded 64 would put a warp's stores in
+// two banks.
+//
+// Partial tiles: the k loop runs over the full 16-wide tiles, then the last partial tile, so that range analysis
+// removes the k guards from the main loop. When M or N is not a multiple of 64, the body is versioned on the block
+// index: interior blocks (by < M/64, bx < N/64) run a copy whose row and column guards bounds-check elimination
+// deletes, edge blocks the guarded copy. The condition is uniform across a block, so the barriers inside stay
+// convergent.
 std::vector<LoweredKernel> gpuMatmul(const dlc::Kernel& k, const BufferAssignment& ba, const SlotTracker& names) {
-    constexpr int64_t BM = 64, BN = 64, BK = 16, T = 16, R = 4, PAD = BM + 1;
+    constexpr int64_t BM = 64, BN = 64, BK = 16, T = 16, R = 4;
     KernelBuilder kb(k.name, ba, names);
     kb.declare(k);
     const Operation* mm = nullptr;
@@ -869,79 +898,111 @@ std::vector<LoweredKernel> gpuMatmul(const dlc::Kernel& k, const BufferAssignmen
     const Value* A = mm->getOperand(0).get();
     const Value* B = mm->getOperand(1).get();
     const Value* C = mm->getResult(0).get();
-    int as = kb.local("As", ScalarType::F32, {BK, PAD}, MemScope::Shared);
+    int as = kb.local("As", ScalarType::F32, {BK, BM}, MemScope::Shared);
     int bs = kb.local("Bs", ScalarType::F32, {BK, BN}, MemScope::Shared);
     int acc = kb.local("acc", ScalarType::F32, {R, R}, MemScope::Register);
-    const int64_t kTiles = std::max<int64_t>(1, ceilDiv(s.k, BK));
+    const std::string pitch = kb.bufferName(as) + "_pitch";
+    const int64_t kFull = s.k / BK;
+    const bool kTail = s.k % BK != 0 || s.k == 0;
     const int64_t gx = gridFor(s.n, BN), gy = gridFor(s.m, BM);
     ExprPtr b = s.batch > 1 ? var("bz") : intConst(0);
     auto f32v = [](const char* n) { return var(n, ScalarType::F32); };
-
-    Body body;
-    body.push_back(forLoop("i", R, LoopKind::Unrolled,
-                           {forLoop("j", R, LoopKind::Unrolled, {store(acc, add(mul(var("i"), intConst(R)), var("j")), floatConst(0.0))})}));
-    body.push_back(let("lin", ScalarType::I64, add(mul(var("ty"), intConst(T)), var("tx"))));
-    Body tile;
-    // Cooperative loads: 1024 elements of each tile, four per thread; out-of-range elements are zero.
-    Body loadA = {let("e", ScalarType::I64, add(var("lin"), mul(var("l"), intConst(T * T)))),
-                  let("ar", ScalarType::I64, add(mul(var("by"), intConst(BM)), div(var("e"), intConst(BK)))),
-                  let("ak", ScalarType::I64, add(mul(var("kt"), intConst(BK)), rem(var("e"), intConst(BK))))};
-    ExprPtr aIdx = add(mul(b, intConst(s.aBatchStride)), s.ta ? add(mul(var("ak"), intConst(s.m)), var("ar"))
-                                                             : add(mul(var("ar"), intConst(s.k)), var("ak")));
-    ExprPtr asIdx = add(mul(rem(var("e"), intConst(BK)), intConst(PAD)), div(var("e"), intConst(BK)));
-    Body aIn = {store(as, asIdx, kb.loadValue(A, aIdx))};
-    Body aZero = {store(as, asIdx, floatConst(0.0))};
-    loadA.push_back(ifThen(compare(CompareOp::LT, var("ar"), intConst(s.m)),
-                           {ifThen(compare(CompareOp::LT, var("ak"), intConst(s.k)), aIn, aZero)}, aZero));
-    Body loadB = {let("e", ScalarType::I64, add(var("lin"), mul(var("l"), intConst(T * T)))),
-                  let("bk", ScalarType::I64, add(mul(var("kt"), intConst(BK)), div(var("e"), intConst(BN)))),
-                  let("bc", ScalarType::I64, add(mul(var("bx"), intConst(BN)), rem(var("e"), intConst(BN))))};
-    ExprPtr bIdx = add(mul(b, intConst(s.bBatchStride)), s.tb ? add(mul(var("bc"), intConst(s.k)), var("bk"))
-                                                             : add(mul(var("bk"), intConst(s.n)), var("bc")));
-    Body bIn = {store(bs, var("e"), kb.loadValue(B, bIdx))};
-    Body bZero = {store(bs, var("e"), floatConst(0.0))};
-    loadB.push_back(ifThen(compare(CompareOp::LT, var("bk"), intConst(s.k)),
-                           {ifThen(compare(CompareOp::LT, var("bc"), intConst(s.n)), bIn, bZero)}, bZero));
-    tile.push_back(forLoop("l", (BM * BK) / (T * T), LoopKind::Unrolled, std::move(loadA)));
-    tile.push_back(forLoop("l", (BN * BK) / (T * T), LoopKind::Unrolled, std::move(loadB)));
-    tile.push_back(barrier());
-    ExprPtr accIdx = add(mul(var("i"), intConst(R)), var("j"));
-    Body inner = {let("a", ScalarType::F32, load(as, add(mul(var("kk"), intConst(PAD)), add(var("ty"), mul(var("i"), intConst(T)))),
-                                                 ScalarType::F32)),
-                  forLoop("j", R, LoopKind::Unrolled,
-                          {store(acc, accIdx, fma(f32v("a"),
-                                                  load(bs, add(mul(var("kk"), intConst(BN)), add(var("tx"), mul(var("j"), intConst(T)))),
-                                                       ScalarType::F32),
-                                                  load(acc, accIdx, ScalarType::F32)))})};
-    tile.push_back(forLoop("kk", BK, LoopKind::Serial, {forLoop("i", R, LoopKind::Unrolled, std::move(inner))}));
-    tile.push_back(barrier());
-    body.push_back(forLoop("kt", kTiles, LoopKind::Serial, std::move(tile)));
-
-    // The epilogue on each of the thread's outputs, guarded at the edges of the matrix.
     Shape batchShape(s.outShape.begin(), s.outShape.end() - 2);
-    Body perOutput = {let("row", ScalarType::I64, add(mul(var("by"), intConst(BM)), add(var("ty"), mul(var("i"), intConst(T))))),
-                      let("col", ScalarType::I64, add(mul(var("bx"), intConst(BN)), add(var("tx"), mul(var("j"), intConst(T)))))};
-    Body epi;
-    ExprPtr flat = add(mul(add(mul(b, intConst(s.m)), var("row")), intConst(s.n)), var("col"));
-    std::vector<ExprPtr> idx;
-    if (s.flattened) {
-        int64_t rows = s.outShape[1];
-        idx = {div(var("row"), intConst(rows)), rem(var("row"), intConst(rows)), var("col")};
+
+    // One copy of the thread's work: zero the tile, accumulate over k, apply the epilogue.
+    auto version = [&]() {
+        Body body;
+        body.push_back(forLoop("i", R, LoopKind::Unrolled,
+                               {forLoop("j", R, LoopKind::Unrolled, {store(acc, add(mul(var("i"), intConst(R)), var("j")), floatConst(0.0))})}));
+        body.push_back(let("lin", ScalarType::I64, add(mul(var("ty"), intConst(T)), var("tx"))));
+        // One k tile (k0 = kt * 16): cooperative loads of 1024 elements of each operand, four per thread (zero
+        // outside the matrix), a barrier, 16 rank-1 updates of the register tile, a barrier.
+        auto tile = [&]() {
+            Body t;
+            Body loadA = {let("e", ScalarType::I64, add(var("lin"), mul(var("l"), intConst(T * T)))),
+                          let("ar", ScalarType::I64, add(mul(var("by"), intConst(BM)), div(var("e"), intConst(BK)))),
+                          let("ak", ScalarType::I64, add(mul(var("kt"), intConst(BK)), rem(var("e"), intConst(BK))))};
+            ExprPtr aIdx = add(mul(b, intConst(s.aBatchStride)), s.ta ? add(mul(var("ak"), intConst(s.m)), var("ar"))
+                                                                     : add(mul(var("ar"), intConst(s.k)), var("ak")));
+            ExprPtr asIdx = add(mul(rem(var("e"), intConst(BK)), var(pitch)), div(var("e"), intConst(BK)));
+            Body aIn = {store(as, asIdx, kb.loadValue(A, aIdx))};
+            Body aZero = {store(as, asIdx, floatConst(0.0))};
+            loadA.push_back(ifThen(compare(CompareOp::LT, var("ar"), intConst(s.m)),
+                                   {ifThen(compare(CompareOp::LT, var("ak"), intConst(s.k)), aIn, aZero)}, aZero));
+            Body loadB = {let("e", ScalarType::I64, add(var("lin"), mul(var("l"), intConst(T * T)))),
+                          let("bk", ScalarType::I64, add(mul(var("kt"), intConst(BK)), div(var("e"), intConst(BN)))),
+                          let("bc", ScalarType::I64, add(mul(var("bx"), intConst(BN)), rem(var("e"), intConst(BN))))};
+            ExprPtr bIdx = add(mul(b, intConst(s.bBatchStride)), s.tb ? add(mul(var("bc"), intConst(s.k)), var("bk"))
+                                                                     : add(mul(var("bk"), intConst(s.n)), var("bc")));
+            Body bIn = {store(bs, var("e"), kb.loadValue(B, bIdx))};
+            Body bZero = {store(bs, var("e"), floatConst(0.0))};
+            loadB.push_back(ifThen(compare(CompareOp::LT, var("bk"), intConst(s.k)),
+                                   {ifThen(compare(CompareOp::LT, var("bc"), intConst(s.n)), bIn, bZero)}, bZero));
+            t.push_back(forLoop("l", (BM * BK) / (T * T), LoopKind::Unrolled, std::move(loadA)));
+            t.push_back(forLoop("l", (BN * BK) / (T * T), LoopKind::Unrolled, std::move(loadB)));
+            t.push_back(barrier());
+            ExprPtr accIdx = add(mul(var("i"), intConst(R)), var("j"));
+            Body inner = {let("a", ScalarType::F32, load(as, add(mul(var("kk"), var(pitch)), add(var("ty"), mul(var("i"), intConst(T)))),
+                                                         ScalarType::F32)),
+                          forLoop("j", R, LoopKind::Unrolled,
+                                  {store(acc, accIdx, fma(f32v("a"),
+                                                          load(bs, add(mul(var("kk"), intConst(BN)), add(var("tx"), mul(var("j"), intConst(T)))),
+                                                               ScalarType::F32),
+                                                          load(acc, accIdx, ScalarType::F32)))})};
+            t.push_back(forLoop("kk", BK, LoopKind::Serial, {forLoop("i", R, LoopKind::Unrolled, std::move(inner))}));
+            t.push_back(barrier());
+            return t;
+        };
+        if (kFull > 0) body.push_back(forLoop("kt", kFull, LoopKind::Serial, tile()));
+        if (kTail) {
+            Body last = {let("kt", ScalarType::I64, intConst(kFull))};
+            Body t = tile();
+            last.insert(last.end(), t.begin(), t.end());
+            body.insert(body.end(), last.begin(), last.end());
+        }
+
+        // The epilogue on each of the thread's outputs, guarded at the edges of the matrix.
+        ExprPtr accIdx = add(mul(var("i"), intConst(R)), var("j"));
+        Body perOutput = {let("row", ScalarType::I64, add(mul(var("by"), intConst(BM)), add(var("ty"), mul(var("i"), intConst(T))))),
+                          let("col", ScalarType::I64, add(mul(var("bx"), intConst(BN)), add(var("tx"), mul(var("j"), intConst(T)))))};
+        Body epi;
+        ExprPtr flat = add(mul(add(mul(b, intConst(s.m)), var("row")), intConst(s.n)), var("col"));
+        std::vector<ExprPtr> idx;
+        if (s.flattened) {
+            int64_t rows = s.outShape[1];
+            idx = {div(var("row"), intConst(rows)), rem(var("row"), intConst(rows)), var("col")};
+        } else {
+            idx = unflatten(b, batchShape);
+            idx.push_back(var("row"));
+            idx.push_back(var("col"));
+        }
+        PointEmitter pe(kb, epi, [&](const Value* v) { return shapeOf(v) == s.outShape ? flat : broadcastIndex(v, s.outShape, idx); });
+        pe.bind(C, bindLocal(kb, epi, "acc", load(acc, accIdx, ScalarType::F32)));
+        for (const Operation* op : k.ops) {
+            if (op != mm) pe.member(*op);
+        }
+        pe.storeOutputs(k.outputs);
+        Body colGuard = guarded(var("col"), s.n, gx * BN, std::move(epi));
+        Body rowGuard = guarded(var("row"), s.m, gy * BM, std::move(colGuard));
+        perOutput.insert(perOutput.end(), rowGuard.begin(), rowGuard.end());
+        body.push_back(forLoop("i", R, LoopKind::Unrolled, {forLoop("j", R, LoopKind::Unrolled, std::move(perOutput))}));
+        return body;
+    };
+
+    Body body = {let(pitch, ScalarType::I64, intConst(BM))};
+    const int64_t mFull = s.m / BM, nFull = s.n / BN;
+    const bool splitM = s.m % BM != 0 && mFull > 0, splitN = s.n % BN != 0 && nFull > 0;
+    if (splitM && splitN) {
+        Body interior = version(), edgeN = version(), edgeM = version(); // built in order: deterministic names
+        body.push_back(ifThen(compare(CompareOp::LT, var("by"), intConst(mFull)),
+                              {ifThen(compare(CompareOp::LT, var("bx"), intConst(nFull)), interior, edgeN)}, edgeM));
+    } else if (splitM || splitN) {
+        Body interior = version(), edge = version();
+        body.push_back(ifThen(compare(CompareOp::LT, var(splitM ? "by" : "bx"), intConst(splitM ? mFull : nFull)), interior, edge));
     } else {
-        idx = unflatten(b, batchShape);
-        idx.push_back(var("row"));
-        idx.push_back(var("col"));
+        Body only = version();
+        body.insert(body.end(), only.begin(), only.end());
     }
-    PointEmitter pe(kb, epi, [&](const Value* v) { return shapeOf(v) == s.outShape ? flat : broadcastIndex(v, s.outShape, idx); });
-    pe.bind(C, bindLocal(kb, epi, "acc", load(acc, accIdx, ScalarType::F32)));
-    for (const Operation* op : k.ops) {
-        if (op != mm) pe.member(*op);
-    }
-    pe.storeOutputs(k.outputs);
-    Body colGuard = guarded(var("col"), s.n, gx * BN, std::move(epi));
-    Body rowGuard = guarded(var("row"), s.m, gy * BM, std::move(colGuard));
-    perOutput.insert(perOutput.end(), rowGuard.begin(), rowGuard.end());
-    body.push_back(forLoop("i", R, LoopKind::Unrolled, {forLoop("j", R, LoopKind::Unrolled, std::move(perOutput))}));
 
     std::vector<LoweredKernel> out;
     out.push_back(kb.finish({}, k, true));
@@ -963,7 +1024,8 @@ LoweredKernel gpuZero(const std::string& name, const Value* y, const BufferAssig
     return l;
 }
 
-// One warp per row: each lane strides over the row, then butterfly shuffles combine the lanes.
+// One warp per row: each lane strides over the row, then butterfly shuffles combine the lanes. Rows of kBlockRow or
+// more elements get a block of kThreads threads, whose warps combine through shared memory (blockAllReduce).
 std::vector<LoweredKernel> gpuRow(const dlc::Kernel& k, const BufferAssignment& ba, const SlotTracker& names) {
     const Operation& op = *k.ops[0];
     const std::string& name = op.getOpName();
@@ -984,18 +1046,20 @@ std::vector<LoweredKernel> gpuRow(const dlc::Kernel& k, const BufferAssignment& 
     for (int64_t d = 0; d < axis; ++d) outer *= xs[d];
     for (int64_t d = axis + 1; d < rank; ++d) inner *= xs[d];
     const int64_t rows = outer * inner;
-    const int64_t steps = std::max<int64_t>(1, ceilDiv(L, kWarp));
+    const int64_t threads = L >= kBlockRow ? kThreads : kWarp;
+    const int64_t steps = std::max<int64_t>(1, ceilDiv(L, threads));
     auto at = [&](const ExprPtr& l) { return add(mul(add(mul(var("o"), intConst(L)), l), intConst(inner)), var("q")); };
 
     std::vector<LoweredKernel> out;
     KernelBuilder kb(name == "cross_entropy" ? k.name + "_rows" : k.name, ba, names);
     kb.declare(k);
+    const int partials = threads > kWarp ? kb.local("partials", ScalarType::F32, {threads / kWarp}, MemScope::Shared) : -1;
     Body body = {let("o", ScalarType::I64, div(var("bx"), intConst(inner))),
                  let("q", ScalarType::I64, rem(var("bx"), intConst(inner)))};
-    // A pass over the row: `update(l)` for each of this lane's elements l = t*32 + lane.
+    // A pass over the row: `update(l)` for each of this thread's elements l = t*threads + tx.
     auto lanePass = [&](Body update) {
-        Body perStep = {let("l", ScalarType::I64, add(mul(var("t"), intConst(kWarp)), var("tx")))};
-        Body g = guarded(var("l"), L, steps * kWarp, std::move(update));
+        Body perStep = {let("l", ScalarType::I64, add(mul(var("t"), intConst(threads)), var("tx")))};
+        Body g = guarded(var("l"), L, steps * threads, std::move(update));
         perStep.insert(perStep.end(), g.begin(), g.end());
         return forLoop("t", steps, LoopKind::Serial, std::move(perStep));
     };
@@ -1003,7 +1067,8 @@ std::vector<LoweredKernel> gpuRow(const dlc::Kernel& k, const BufferAssignment& 
                          std::function<ExprPtr()> term) {
         body.push_back(let(acc, ScalarType::F32, floatConst(init)));
         body.push_back(lanePass({assign(acc, combine(f32(acc), term()))}));
-        warpAllReduce(body, acc, combine);
+        if (threads > kWarp) blockAllReduce(body, acc, combine, partials, threads);
+        else warpAllReduce(body, acc, combine);
     };
     if (name == "softmax" || name == "log_softmax" || name == "cross_entropy") {
         reduceRow("m", -std::numeric_limits<double>::infinity(), maxNaN, [&] { return kb.loadValue(x, at(var("l"))); });
@@ -1047,12 +1112,13 @@ std::vector<LoweredKernel> gpuRow(const dlc::Kernel& k, const BufferAssignment& 
         throw IRError("GPU lowering: no row kernel for '" + name + "'");
     }
     out.push_back(kb.finish({}, k, true));
-    out.back().kernel.body = gpuLaunch(out.back().kernel, {std::max<int64_t>(rows, 1), 1, 1}, {kWarp, 1, 1}, std::move(body));
+    out.back().kernel.body = gpuLaunch(out.back().kernel, {std::max<int64_t>(rows, 1), 1, 1}, {threads, 1, 1}, std::move(body));
     if (rows == 0) out.back().kernel.body = {};
     return out;
 }
 
-// Reduced axes at the end: one warp per output. Otherwise one thread per output, looping over the reduced axes.
+// Reduced axes at the end: one warp per output (a block of kThreads threads from kBlockRow elements on). Otherwise one
+// thread per output, looping over the reduced axes.
 std::vector<LoweredKernel> gpuReduction(const dlc::Kernel& k, const BufferAssignment& ba, const SlotTracker& names) {
     KernelBuilder kb(k.name, ba, names);
     kb.declare(k);
@@ -1085,17 +1151,20 @@ std::vector<LoweredKernel> gpuReduction(const dlc::Kernel& k, const BufferAssign
     int xb = kb.param(x), yb = kb.param(y);
     (void)xb;
     if (suffix && count >= kWarp) {
-        int64_t steps = ceilDiv(count, kWarp);
+        const int64_t threads = count >= kBlockRow ? kThreads : kWarp;
+        const int partials = threads > kWarp ? kernel.addBuffer({kb.fresh("partials"), ScalarType::F32, {threads / kWarp}, MemScope::Shared}) : -1;
+        int64_t steps = ceilDiv(count, threads);
         Body body = {let("acc", ScalarType::F32, floatConst(r.init))};
-        Body perStep = {let("l", ScalarType::I64, add(mul(var("t"), intConst(kWarp)), var("tx")))};
-        Body g = guarded(var("l"), count, steps * kWarp,
+        Body perStep = {let("l", ScalarType::I64, add(mul(var("t"), intConst(threads)), var("tx")))};
+        Body g = guarded(var("l"), count, steps * threads,
                          {assign("acc", r.combine(var("acc", ScalarType::F32), kb.loadValue(x, add(mul(var("bx"), intConst(count)), var("l")))))});
         perStep.insert(perStep.end(), g.begin(), g.end());
         body.push_back(forLoop("t", steps, LoopKind::Serial, std::move(perStep)));
-        warpAllReduce(body, "acc", r.combine);
+        if (threads > kWarp) blockAllReduce(body, "acc", r.combine, partials, threads);
+        else warpAllReduce(body, "acc", r.combine);
         body.push_back(ifThen(compare(CompareOp::EQ, var("tx"), intConst(0)),
                               {store(yb, var("bx"), finalize(var("acc", ScalarType::F32)))}));
-        kernel.body = gpuLaunch(kernel, {std::max<int64_t>(O, 1), 1, 1}, {kWarp, 1, 1}, std::move(body));
+        kernel.body = gpuLaunch(kernel, {std::max<int64_t>(O, 1), 1, 1}, {threads, 1, 1}, std::move(body));
         if (O == 0) kernel.body = {};
     } else {
         int64_t grid = gridFor(O, kThreads);
@@ -1200,15 +1269,22 @@ std::vector<LoweredKernel> lowerFunction(const Function& func, const std::vector
             default: lowered = gpu ? gpuOther(k, buffers, names) : lowerOther(k, buffers, names); break;
         }
         for (auto& l : lowered) {
-            // Loop passes: guards for data-dependent indices, bounds-check elimination, then the dependence check.
-            // (With run-time checks everywhere, the clamped indices would hide the access pattern from the
-            // dependence check, so it runs on the schedule as written.)
+            // Loop passes: padding of shared tiles; guards for data-dependent indices, bounds-check elimination, then
+            // the dependence check (with run-time checks everywhere, the clamped indices would hide the access
+            // pattern from the dependence check, so it runs on the schedule as written); simplification; the
+            // resource check.
+            if (l.kernel.gpu) l.gpu.padding = padSharedBuffers(l.kernel, options.limits);
             if (options.checkEveryAccess) {
                 verifySchedule(l.kernel);
                 l.bounds = checkEveryAccess(l.kernel);
             } else {
                 l.bounds = checkBounds(l.kernel);
                 verifySchedule(l.kernel);
+            }
+            if (options.simplify) l.simplified = simplify(l.kernel);
+            if (l.kernel.gpu) {
+                l.gpu.resources = checkResources(l.kernel, options.limits);
+                if (options.analyzeAccesses) l.gpu.accesses = analyzeAccesses(l.kernel);
             }
             out.push_back(std::move(l));
         }

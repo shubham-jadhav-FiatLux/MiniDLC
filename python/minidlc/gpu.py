@@ -7,10 +7,11 @@ and transient), loads the PTX with `cuModuleLoadData` (the driver compiles it fo
 plan. Artifacts can be saved to a directory and run elsewhere (e.g. on Colab; see docs/gpu.md).
 
 Devices:
-- `CudaDevice`: libcuda through ctypes.
+- `CudaDevice`: libcuda through ctypes. Kernels are timed with CUDA events (`cuEventRecord` around each launch,
+  `cuEventElapsedTime` once the step has finished), so profiling does not serialize the launches.
 - `SimDevice`: host memory, kernels run by the compiler's lockstep GPU interpreter. It needs the compiled module
   (a saved artifact is recompiled from its source.dlc) and exists to test this runtime — slots, launches, copies,
-  state — without a GPU.
+  state — without a GPU. It has no events; profiles use the host clock.
 """
 from __future__ import annotations
 
@@ -22,6 +23,8 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+
+from . import checkpoint
 
 _DTYPES = {"f32": np.float32, "i32": np.int32}
 
@@ -59,6 +62,13 @@ class CudaDevice:
         self.lib.cuMemcpyDtoD_v2.argtypes = [ctypes.c_uint64, ctypes.c_uint64, ctypes.c_size_t]
         self.lib.cuMemsetD8_v2.argtypes = [ctypes.c_uint64, ctypes.c_ubyte, ctypes.c_size_t]
         self.lib.cuMemFree_v2.argtypes = [ctypes.c_uint64]
+        self.lib.cuEventCreate.argtypes = [ctypes.POINTER(ctypes.c_void_p), ctypes.c_uint]
+        self.lib.cuEventRecord.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        self.lib.cuEventSynchronize.argtypes = [ctypes.c_void_p]
+        self.lib.cuEventElapsedTime.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.c_void_p, ctypes.c_void_p]
+        self.lib.cuEventDestroy_v2.argtypes = [ctypes.c_void_p]
+
+    has_events = True
 
     def _check(self, status: int, what: str) -> None:
         if status != 0:
@@ -111,12 +121,32 @@ class CudaDevice:
     def synchronize(self) -> None:
         self._check(self.lib.cuCtxSynchronize(), "cuCtxSynchronize")
 
+    # --- CUDA events: timestamps recorded in the stream, compared once the work has finished ---
+
+    def event(self) -> ctypes.c_void_p:
+        ev = ctypes.c_void_p()
+        self._check(self.lib.cuEventCreate(ctypes.byref(ev), 0), "cuEventCreate")
+        return ev
+
+    def record(self, event) -> None:
+        self._check(self.lib.cuEventRecord(event, None), "cuEventRecord")
+
+    def elapsed_ms(self, start, end) -> float:
+        self._check(self.lib.cuEventSynchronize(end), "cuEventSynchronize")
+        ms = ctypes.c_float()
+        self._check(self.lib.cuEventElapsedTime(ctypes.byref(ms), start, end), "cuEventElapsedTime")
+        return ms.value
+
+    def destroy_event(self, event) -> None:
+        self.lib.cuEventDestroy_v2(event)
+
 
 class SimDevice:
     """Host memory and the lockstep GPU interpreter, behind the CudaDevice interface (for testing the runtime)."""
 
     name = "simulated GPU (lockstep interpreter)"
     compute_capability = (0, 0)
+    has_events = False
 
     def __init__(self):
         self._memory: Dict[int, np.ndarray] = {}
@@ -175,6 +205,7 @@ class GpuArtifact:
     params: Dict[str, int] = field(default_factory=dict)
     source: str = ""  # the graph IR it was compiled from, and the compile options
     options: Dict[str, Any] = field(default_factory=dict)
+    loop_ir_sha256: str = ""  # of the loop IR the PTX was generated from: tells whether an artifact is current
     compiled: Any = None  # the _minidlc.GpuArtifact, when compiled in this process
 
     @property
@@ -192,7 +223,7 @@ class GpuArtifact:
             f.write(self.ptx)
         with open(os.path.join(directory, "meta.json"), "w") as f:
             json.dump({"arch": self.arch, "inputs": self.inputs, "training": self.training, "params": self.params,
-                       "options": self.options}, f, indent=1)
+                       "options": self.options, "loop_ir_sha256": self.loop_ir_sha256}, f, indent=1)
         with open(os.path.join(directory, "source.dlc"), "w") as f:
             f.write(self.source)
         np.savez_compressed(os.path.join(directory, "values.npz"), **self.values)
@@ -210,7 +241,7 @@ class GpuArtifact:
         source_path = os.path.join(directory, "source.dlc")
         source = open(source_path).read() if os.path.exists(source_path) else ""
         return GpuArtifact(plan, ptx, meta["arch"], meta["inputs"], values, meta["training"], meta.get("params", {}),
-                           source, meta.get("options", {}))
+                           source, meta.get("options", {}), meta.get("loop_ir_sha256", ""))
 
 
 class GpuExecutable:
@@ -226,7 +257,9 @@ class GpuExecutable:
         self.args = {a["name"]: a for a in self.plan["args"]}
         self.profiling = profile
         self.kernel_seconds: Dict[str, float] = {}
+        self.kernel_calls: Dict[str, int] = {}
         self.calls = 0
+        self._events: List[Any] = []  # (start, end) per launch, reused across steps
         self.reset_state()
         for name, value in artifact.values.items():
             self.set(name, value)
@@ -235,6 +268,9 @@ class GpuExecutable:
         try:
             for ptr in self.regions.values():
                 self.device.free(ptr)
+            for start, end in self._events:
+                self.device.destroy_event(start)
+                self.device.destroy_event(end)
         except Exception:  # pragma: no cover - interpreter shutdown
             pass
 
@@ -270,14 +306,23 @@ class GpuExecutable:
             if tuple(value.shape) != tuple(a["shape"]):
                 raise ValueError(f"input '{a['name']}' has shape {value.shape}, expected {tuple(a['shape'])}")
             self.device.htod(self.address(a["slot"]), value)
-        for launch in self.plan["launches"]:
+        events = self.profiling and getattr(self.device, "has_events", False)
+        if events and len(self._events) < len(self.plan["launches"]):
+            self._events = [(self.device.event(), self.device.event()) for _ in self.plan["launches"]]
+        for i, launch in enumerate(self.plan["launches"]):
             start = time.perf_counter() if self.profiling else 0.0
+            if events:
+                self.device.record(self._events[i][0])
             self.device.launch(self.module, launch["kernel"], launch["grid"], launch["block"],
                                [self.address(s) for s in launch["args"]])
-            if self.profiling:
+            if events:
+                self.device.record(self._events[i][1])
+            elif self.profiling:  # no events (simulated device): the host clock around a synchronized launch
                 self.device.synchronize()
-                self.kernel_seconds[launch["name"]] = self.kernel_seconds.get(launch["name"], 0.0) + (
-                    time.perf_counter() - start)
+                self._count(launch["name"], time.perf_counter() - start)
+        if events:
+            for i, launch in enumerate(self.plan["launches"]):
+                self._count(launch["name"], 1e-3 * self.device.elapsed_ms(*self._events[i]))
         for c in self.plan["copies"]:
             self.device.dtod(self.address(c["to"]), self.address(c["from"]), c["from"]["bytes"])
         self.calls += 1
@@ -290,14 +335,23 @@ class GpuExecutable:
             results.append(out)
         return results
 
+    def _count(self, name: str, seconds: float) -> None:
+        self.kernel_seconds[name] = self.kernel_seconds.get(name, 0.0) + seconds
+        self.kernel_calls[name] = self.kernel_calls.get(name, 0) + 1
+
+    def clear_profile(self) -> None:
+        self.kernel_seconds.clear()
+        self.kernel_calls.clear()
+
     def set_profiling(self, enabled: bool) -> None:
-        """Times each launch (synchronizing after it, which serializes the step)."""
+        """Times each launch: with CUDA events on a GPU (the launches stay asynchronous), with the host clock around a
+        synchronized launch on the simulated device."""
         self.profiling = enabled
 
     def profile(self) -> List[Dict[str, Any]]:
         flops = {l["name"]: l["flops"] for l in self.plan["launches"]}
         traffic = {l["name"]: l["bytes"] for l in self.plan["launches"]}
-        return [{"name": n, "calls": self.calls, "seconds": s, "flops": flops[n], "bytes": traffic[n]}
+        return [{"name": n, "calls": self.kernel_calls[n], "seconds": s, "flops": flops[n], "bytes": traffic[n]}
                 for n, s in self.kernel_seconds.items()]
 
 
@@ -329,6 +383,22 @@ class GpuFunction:
         for arg, i in self.artifact.params.items():
             if i in params:
                 self.executable.set(arg, params[i])
+
+    def _stored_args(self) -> Dict[str, Any]:
+        return {a["name"]: (tuple(a["shape"]), _DTYPES[a["dtype"]]) for a in self.executable.plan["args"]
+                if a["role"] in ("param", "state")}
+
+    def save_checkpoint(self, path: str) -> None:
+        """Parameters and optimizer state, loadable by any target (minidlc/checkpoint.py)."""
+        checkpoint.save(path, {name: self.executable.get(name) for name in self._stored_args()}, "cuda",
+                        self.artifact.plan.get("function", ""))
+
+    def load_checkpoint(self, path: str, strict: bool = True) -> None:
+        arrays, _ = checkpoint.load(path)
+        expected = self._stored_args()
+        checkpoint.check(arrays, expected, path, strict)
+        for name, (_, dtype) in expected.items():
+            self.executable.set(name, np.asarray(arrays[name], dtype=dtype))
 
 
 def load(directory: str, device=None, profile: bool = False) -> GpuFunction:

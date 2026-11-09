@@ -11,6 +11,10 @@ Demonstrates:
   6. Autoregressive character generation given prompts.
 
     PYTHONPATH=python python3 examples/char_gpt.py [--target=cpu|reference] [--steps=N] [--block-size=..] ...
+
+The defaults train the configuration of benchmarks/chargpt_heldout.py (d_model 64, 4 heads, 2 layers, context 32,
+batch 16) for 1,500 steps on the CPU target — about 20 s — enough for the samples to look like the play; the
+reference interpreter is much slower, so with --target=reference the default is 40 steps.
 """
 
 import sys
@@ -36,13 +40,13 @@ def main():
     print(f"  Vocabulary sample: {repr(''.join(tokenizer.chars[:20]))} ...")
 
     # 2. Model Architecture Hyperparameters (configurable via CLI)
-    batch_size = 4
+    batch_size = 16
     block_size = 32
-    d_model = 32
-    num_heads = 2
+    d_model = 64
+    num_heads = 4
     num_layers = 2
-    lr = 0.008
-    num_steps = 40
+    lr = 3e-3
+    num_steps = None
     target = "cpu"
 
     for arg in sys.argv[1:]:
@@ -60,6 +64,8 @@ def main():
             lr = float(arg.split("=")[1])
         elif arg.startswith("--target="):
             target = arg.split("=")[1]
+    if num_steps is None:
+        num_steps = 40 if target == "reference" else 1500
 
     np.random.seed(1337)  # before model init, so weights and batches are reproducible
     print(f"\n[2/4] Initializing Transformer model...")
@@ -100,9 +106,9 @@ def main():
         step_loss = train_step(x=bx, y=by)
         losses.append(step_loss)
 
-        if (step + 1) % 5 == 0 or step == 0:
+        if (step + 1) % max(1, num_steps // 15) == 0 or step == 0:
             elapsed = time.time() - t0
-            print(f"  Step {step + 1:2d}/{num_steps:2d} | Loss: {step_loss:.4f} | Elapsed: {elapsed:.2f}s")
+            print(f"  Step {step + 1:5d}/{num_steps} | Loss: {step_loss:.4f} | Elapsed: {elapsed:.2f}s")
 
     print(f"\nTraining complete. Loss decreased from {losses[0]:.4f} to {losses[-1]:.4f}")
 
@@ -114,7 +120,7 @@ def main():
     prompts = ["ROMEO:\n", "First Citizen:\n"]
     for prompt in prompts:
         prompt_tokens = tokenizer.encode(prompt)
-        gen_tokens = model.generate(interp, prompt_tokens, max_new_tokens=40, temperature=0.7)
+        gen_tokens = model.generate(interp, prompt_tokens, max_new_tokens=120, temperature=0.7)
         output_str = tokenizer.decode(gen_tokens)
         print("-" * 50)
         print(f"Prompt: {repr(prompt)}")

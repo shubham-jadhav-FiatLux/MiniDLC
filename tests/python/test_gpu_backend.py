@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import ctypes.util
 import glob
+import json
 import os
+import time
 import shutil
 import subprocess
 import sys
@@ -121,6 +123,61 @@ def test_saved_artifacts_round_trip(tmp_path):
     a = losses(gpu.GpuFunction(artifact, device=gpu.SimDevice()), data)
     b = losses(gpu.GpuFunction(loaded, device=gpu.SimDevice()), data)
     assert a == b
+
+
+class EventClockDevice(gpu.SimDevice):
+    """The simulated device with CUDA-event semantics on the host clock: exercises the runtime's event path."""
+    has_events = True
+
+    def __init__(self):
+        super().__init__()
+        self.created = 0
+
+    def event(self):
+        self.created += 1
+        return [0.0]
+
+    def record(self, event):
+        event[0] = time.perf_counter()
+
+    def elapsed_ms(self, start, end):
+        return 1e3 * (end[0] - start[0])
+
+    def destroy_event(self, event):
+        pass
+
+
+def test_profiling_with_events_times_every_launch():
+    model, loss = mlp_step()
+    artifact = dl.compile_gpu(loss, optimizer=optim.Adam(model.parameters(), lr=0.01), ptx=False)
+    device = EventClockDevice()
+    step = gpu.GpuFunction(artifact, device=device)
+    step.executable.set_profiling(True)
+    for b in batches(3):
+        step(**b)
+    prof = {p["name"]: p for p in step.executable.profile()}
+    assert set(prof) == {l["name"] for l in artifact.plan["launches"]}
+    assert all(p["calls"] == 3 and p["seconds"] > 0 for p in prof.values())
+    assert device.created == 2 * len(artifact.plan["launches"])  # one pair per launch, reused every step
+    step.executable.clear_profile()
+    assert step.executable.profile() == []
+
+
+COMMITTED = os.path.join(os.path.dirname(__file__), "..", "..", "artifacts", "gpu")
+
+
+@pytest.mark.parametrize("name", sorted(os.listdir(COMMITTED)) if os.path.isdir(COMMITTED) else [])
+def test_committed_artifacts_are_current(name):
+    """Each committed artifact's plan and loop IR are what the compiler produces from its source today (else rebuild
+    them: examples/gpu_artifacts.py)."""
+    from minidlc import _minidlc
+    from minidlc.compile import loop_ir_hash
+    artifact = gpu.GpuArtifact.load(os.path.join(COMMITTED, name))
+    compiled, dumps = _minidlc.compile_gpu(artifact.source, artifact.options, False, artifact.arch)
+    assert json.loads(compiled.plan_json) == artifact.plan, "the plan changed: rebuild the artifacts"
+    assert loop_ir_hash(dumps["loopir"]) == artifact.loop_ir_sha256, "the kernels changed: rebuild the artifacts"
+    for kernel in artifact.kernel_names:
+        assert f".entry {kernel}(" in artifact.ptx
 
 
 def test_every_plan_launch_has_a_ptx_entry():
